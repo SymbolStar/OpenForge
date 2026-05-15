@@ -21,6 +21,12 @@ const els = {
   threadTitle: document.getElementById('thread-title'),
   threadSub: document.getElementById('thread-sub'),
   meetingStatus: document.getElementById('meeting-status'),
+  headerMembers: document.getElementById('header-members'),
+  topicTabs: document.getElementById('topic-tabs'),
+  threadList: document.getElementById('thread-list'),
+  composer: document.getElementById('composer'),
+  composerInput: document.getElementById('composer-input'),
+  btnSend: document.getElementById('btn-send'),
 };
 
 const state = {
@@ -29,8 +35,12 @@ const state = {
   currentSquadId: null,
   currentDate: null,
   currentMeeting: null,
+  currentSectionIdx: 0,
   running: false,
 };
+
+const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
+const AGENT_COLOR_CLASS = new Map(AGENTS.map(agent => [agent, `av-${agent}`]));
 
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g,
@@ -40,6 +50,27 @@ function escapeHtml(s) {
 function setStatus(text, ok = true) {
   els.statusText.textContent = text;
   els.statusDot.className = 'dot ' + (ok ? 'dot-ok' : 'dot-warn');
+}
+
+function avatarLabel(name) {
+  return [...(name || '?')][0].toUpperCase();
+}
+
+function avatarClass(name) {
+  return AGENT_COLOR_CLASS.get(name) || 'av-default';
+}
+
+function renderBody(text) {
+  let html = escapeHtml(text);
+  html = html.replace(MENTION_RE, (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
+  html = html.replace(/`([^`\n]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
+  return html;
+}
+
+function tabLabel(section) {
+  if (section.kind === 'opening') return 'opening';
+  if (section.kind === 'closing') return 'closing';
+  return `T${section.idx - 1}`;
 }
 
 async function apiJson(url, options) {
@@ -152,11 +183,17 @@ function renderMeetingShell(meeting) {
     els.threadTitle.textContent = 'No meeting selected';
     els.threadSub.textContent = '';
     els.meetingStatus.textContent = 'idle';
+    els.headerMembers.innerHTML = '';
+    els.topicTabs.innerHTML = '';
+    els.threadList.innerHTML = '<div class="empty">Select a meeting to read the thread.</div>';
     return;
   }
   els.threadTitle.textContent = meeting.title || meeting.date;
-  els.threadSub.textContent = `${meeting.chair} · ${meeting.members.length} members · ${meeting.sections.length} sections`;
+  els.threadSub.textContent = `${meeting.chair} · ${meeting.members.length} members`;
   els.meetingStatus.textContent = meeting.in_progress ? 'in progress' : 'done';
+  renderHeaderMembers(meeting.members);
+  renderTopicTabs(meeting.sections);
+  renderThread();
 }
 
 async function selectMeeting(date) {
@@ -165,6 +202,7 @@ async function selectMeeting(date) {
   renderMeetingList(detail?.meetings || []);
   try {
     state.currentMeeting = await loadMeeting(date);
+    state.currentSectionIdx = 0;
     renderMeetingShell(state.currentMeeting);
     setStatus(`已加载 ${date}`);
   } catch (err) {
@@ -172,6 +210,72 @@ async function selectMeeting(date) {
     renderMeetingShell(null);
     setStatus(`会议加载失败: ${err.message}`, false);
   }
+}
+
+function renderHeaderMembers(members) {
+  els.headerMembers.innerHTML = '';
+  members.slice(0, 5).forEach(member => {
+    const av = document.createElement('div');
+    av.className = `mini-avatar ${avatarClass(member)}`;
+    av.title = member;
+    av.textContent = avatarLabel(member);
+    els.headerMembers.appendChild(av);
+  });
+}
+
+function renderTopicTabs(sections) {
+  els.topicTabs.innerHTML = '';
+  sections.forEach((section, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'topic-tab' + (idx === state.currentSectionIdx ? ' active' : '');
+    btn.textContent = tabLabel(section);
+    btn.title = section.title;
+    btn.onclick = () => {
+      state.currentSectionIdx = idx;
+      renderTopicTabs(sections);
+      renderThread();
+    };
+    els.topicTabs.appendChild(btn);
+  });
+}
+
+function renderThread() {
+  const meeting = state.currentMeeting;
+  const section = meeting?.sections?.[state.currentSectionIdx];
+  if (!section) {
+    els.threadList.innerHTML = '<div class="empty">This meeting has no posts yet.</div>';
+    return;
+  }
+  const posts = section.posts.filter(post => !post.superseded);
+  if (!posts.length) {
+    els.threadList.innerHTML = '<div class="empty">This topic has no posts yet.</div>';
+    return;
+  }
+  els.threadList.innerHTML = '';
+  posts.forEach(post => {
+    const row = document.createElement('article');
+    row.className = 'post';
+    row.innerHTML = `
+      <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
+      <div class="post-content">
+        <div class="post-head">
+          <span class="post-name">${escapeHtml(post.speaker)}</span>
+          <span class="post-time">${escapeHtml(post.time || '')}</span>
+          <div class="post-tools">
+            <button type="button">💬 reply</button>
+            <button type="button">👍</button>
+            <button type="button">...</button>
+          </div>
+        </div>
+        <div class="post-body">${renderBody(post.content)}</div>
+      </div>
+    `;
+    row.querySelectorAll('.post-tools button').forEach(btn => {
+      btn.onclick = () => alert('coming soon');
+    });
+    els.threadList.appendChild(row);
+  });
 }
 
 function openModal() {
@@ -255,6 +359,10 @@ function setRunning(running) {
 }
 
 els.btnRefresh.onclick = loadSquads;
+els.btnSend.onclick = () => alert('Composer 暂未开放，请用 cron 或脚本');
+els.composerInput.onkeydown = event => {
+  if (event.key === 'Enter') alert('Composer 暂未开放，请用 cron 或脚本');
+};
 els.btnRunSquad.onclick = async () => {
   if (!state.currentSquadId || state.running) return;
   setRunning(true);
