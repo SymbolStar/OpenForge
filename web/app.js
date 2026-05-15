@@ -18,12 +18,18 @@ const els = {
   btnCancelModal: document.getElementById('btn-cancel-modal'),
   memberCheckboxes: document.getElementById('member-checkboxes'),
   chairSelect: document.getElementById('chair-select'),
+  threadTitle: document.getElementById('thread-title'),
+  threadSub: document.getElementById('thread-sub'),
+  meetingStatus: document.getElementById('meeting-status'),
 };
 
 const state = {
   squads: [],
   squadDetails: new Map(),
   currentSquadId: null,
+  currentDate: null,
+  currentMeeting: null,
+  running: false,
 };
 
 function escapeHtml(s) {
@@ -55,7 +61,7 @@ async function loadSquads() {
       state.currentSquadId = state.squads[0].id;
     }
     renderSquads();
-    renderCurrentSquadShell();
+    await renderCurrentSquadShell();
     setStatus(`已加载 ${state.squads.length} 个 squad`);
   } catch (err) {
     setStatus(`加载失败: ${err.message}`, false);
@@ -82,24 +88,90 @@ function renderSquads() {
   });
 }
 
-function renderCurrentSquadShell() {
+async function loadMeeting(date) {
+  return apiJson(`/api/standup/${encodeURIComponent(date)}`);
+}
+
+async function renderCurrentSquadShell() {
   const detail = state.squadDetails.get(state.currentSquadId);
   const squad = detail?.squad || state.squads.find(s => s.id === state.currentSquadId);
   if (!squad) {
     els.squadTitle.textContent = 'No squads';
     els.squadDescription.textContent = '';
     els.meetingList.innerHTML = '';
+    renderMeetingShell(null);
     return;
   }
   els.squadTitle.textContent = `${squad.emoji || '#'} ${squad.name || squad.id}`;
   els.squadDescription.textContent = squad.description || `${squad.chair} 主持 · ${squad.members.length} members`;
-  els.meetingList.innerHTML = '<li class="empty-row">Meetings will appear here.</li>';
+  renderMeetingList(detail?.meetings || []);
+  const meetings = detail?.meetings || [];
+  if (!meetings.some(meeting => meeting.date === state.currentDate)) {
+    state.currentDate = meetings[0]?.date || null;
+  }
+  if (state.currentDate) {
+    await selectMeeting(state.currentDate);
+  } else {
+    renderMeetingShell(null);
+  }
 }
 
-function selectSquad(id) {
+async function selectSquad(id) {
   state.currentSquadId = id;
+  state.currentDate = null;
   renderSquads();
-  renderCurrentSquadShell();
+  await renderCurrentSquadShell();
+}
+
+function renderMeetingList(meetings) {
+  const sorted = [...meetings].sort((a, b) => b.date.localeCompare(a.date));
+  els.meetingList.innerHTML = '';
+  if (!sorted.length) {
+    els.meetingList.innerHTML = '<li class="empty-row">No meetings yet.</li>';
+    return;
+  }
+  sorted.forEach(meeting => {
+    const li = document.createElement('li');
+    li.className = 'meeting-item' + (meeting.date === state.currentDate ? ' active' : '');
+    li.innerHTML = `
+      <button type="button">
+        <span class="meeting-live ${meeting.in_progress ? 'is-live' : ''}"></span>
+        <span class="meeting-main">
+          <span class="meeting-date">${escapeHtml(meeting.date)}</span>
+          <span class="meeting-meta">${meeting.topic_count || 0} topics · ${meeting.post_count || 0} posts</span>
+        </span>
+      </button>
+    `;
+    li.querySelector('button').onclick = () => selectMeeting(meeting.date);
+    els.meetingList.appendChild(li);
+  });
+}
+
+function renderMeetingShell(meeting) {
+  if (!meeting) {
+    els.threadTitle.textContent = 'No meeting selected';
+    els.threadSub.textContent = '';
+    els.meetingStatus.textContent = 'idle';
+    return;
+  }
+  els.threadTitle.textContent = meeting.title || meeting.date;
+  els.threadSub.textContent = `${meeting.chair} · ${meeting.members.length} members · ${meeting.sections.length} sections`;
+  els.meetingStatus.textContent = meeting.in_progress ? 'in progress' : 'done';
+}
+
+async function selectMeeting(date) {
+  state.currentDate = date;
+  const detail = state.squadDetails.get(state.currentSquadId);
+  renderMeetingList(detail?.meetings || []);
+  try {
+    state.currentMeeting = await loadMeeting(date);
+    renderMeetingShell(state.currentMeeting);
+    setStatus(`已加载 ${date}`);
+  } catch (err) {
+    state.currentMeeting = null;
+    renderMeetingShell(null);
+    setStatus(`会议加载失败: ${err.message}`, false);
+  }
 }
 
 function openModal() {
@@ -176,8 +248,28 @@ els.form.onsubmit = async event => {
   }
 };
 
+function setRunning(running) {
+  state.running = running;
+  els.btnRunSquad.disabled = running;
+  els.btnRunSquad.textContent = running ? '...' : '+';
+}
+
 els.btnRefresh.onclick = loadSquads;
-els.btnRunSquad.onclick = () => alert('Meeting run will be wired in the meetings rail.');
+els.btnRunSquad.onclick = async () => {
+  if (!state.currentSquadId || state.running) return;
+  setRunning(true);
+  setStatus('启动 meeting...');
+  try {
+    const res = await apiJson(`/api/squads/${encodeURIComponent(state.currentSquadId)}/run`, { method: 'POST' });
+    state.currentDate = res.date;
+    await loadSquads();
+    setStatus(`已启动 ${res.date}`);
+  } catch (err) {
+    setStatus(`启动失败: ${err.message}`, false);
+  } finally {
+    setRunning(false);
+  }
+};
 
 buildMemberControls();
 loadSquads();
