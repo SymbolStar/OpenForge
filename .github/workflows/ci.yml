@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Compile all modules
+        run: |
+          python -m py_compile \
+            forge_store.py \
+            server.py \
+            run_standup.py \
+            restore_main_session.py \
+            migrate_md_to_jsonl.py
+
+      - name: Import smoke test
+        run: |
+          python -c "
+          import importlib
+          for m in ('forge_store', 'server', 'run_standup',
+                   'restore_main_session', 'migrate_md_to_jsonl'):
+              importlib.import_module(m)
+              print(f'  ✓ {m}')
+          "
+
+      - name: Store smoke test (event roundtrip)
+        run: |
+          python - <<'PY'
+          import os, tempfile, pathlib
+          tmp = tempfile.mkdtemp()
+          os.environ['HOME'] = tmp
+          pathlib.Path(tmp, '.openclaw', 'standups').mkdir(parents=True, exist_ok=True)
+
+          import importlib, forge_store
+          importlib.reload(forge_store)
+
+          date = '2099-12-31'
+          forge_store.start_meeting(date, 'milk', ['milk', 'sentry'], title='ci')
+          tid = forge_store.start_topic(date, 1, 'demo')
+          forge_store.add_post(date, tid, 'milk', 'hello @sentry')
+          forge_store.add_post(date, tid, 'sentry', 'hi back')
+          forge_store.finish_meeting(date)
+          forge_store.write_markdown(date)
+
+          m = forge_store.project_meeting(date)
+          assert m['chair'] == 'milk'
+          assert m['ended_at'] is not None
+          posts = sum(len(t['posts']) for t in m['topics'])
+          assert posts == 2, f'expected 2 posts, got {posts}'
+          assert any('@sentry' in p['content']
+                     for t in m['topics'] for p in t['posts'])
+          print('  ✓ event roundtrip OK')
+          PY
+
+      - name: Server smoke test (boot + serve one request)
+        run: |
+          export HOME="${RUNNER_TEMP}/forge-ci-home"
+          mkdir -p "$HOME/.openclaw/standups"
+          python -u server.py --port 17878 &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            sleep 0.5
+            if curl -fsS "http://127.0.0.1:17878/api/squads" > /tmp/squads.json; then
+              echo "  ✓ /api/squads served"
+              break
+            fi
+          done
+          kill $SERVER_PID 2>/dev/null || true
+          test -s /tmp/squads.json || (echo "server failed to respond"; exit 1)
+          python -c "import json; d=json.load(open('/tmp/squads.json')); assert isinstance(d, list); print('  ✓', len(d), 'squad(s) returned')"
