@@ -402,3 +402,88 @@ def iter_summaries() -> Iterator[dict]:
         s = summarize(d)
         if s:
             yield s
+
+
+# ─── squads ───────────────────────────────────────────────────────────
+SQUADS_PATH = STANDUP_DIR / "squads.json"
+DEFAULT_SQUAD_ID = "milk-eng"
+
+DEFAULT_SQUAD = {
+    "id": DEFAULT_SQUAD_ID,
+    "chair": "milk",
+    "members": ["milk", "sentry", "bugfix", "milly", "kb"],
+    "emoji": "🥛",
+    "name": "milk 工程部",
+    "description": "",
+}
+
+
+def _default_squads_doc() -> dict[str, Any]:
+    return {"version": 1, "squads": {DEFAULT_SQUAD_ID: dict(DEFAULT_SQUAD)}}
+
+
+def _write_squads_doc(doc: dict[str, Any]) -> None:
+    STANDUP_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SQUADS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, SQUADS_PATH)
+
+
+def ensure_default_squads() -> dict[str, Any]:
+    """Create squads.json with the default squad when it is missing."""
+    if not SQUADS_PATH.exists():
+        doc = _default_squads_doc()
+        _write_squads_doc(doc)
+        return doc
+    return _read_squads_doc()
+
+
+def _read_squads_doc() -> dict[str, Any]:
+    if not SQUADS_PATH.exists():
+        return ensure_default_squads()
+    with SQUADS_PATH.open("r", encoding="utf-8") as f:
+        doc = json.load(f)
+    if doc.get("version") != 1 or not isinstance(doc.get("squads"), dict):
+        raise ValueError("invalid squads.json schema")
+    return doc
+
+
+def list_squads() -> list[dict[str, Any]]:
+    doc = ensure_default_squads()
+    return [dict(squad) for squad in doc["squads"].values()]
+
+
+def get_squad(squad_id: str) -> dict[str, Any] | None:
+    doc = ensure_default_squads()
+    squad = doc["squads"].get(squad_id)
+    return dict(squad) if squad else None
+
+
+def create_squad(data: dict[str, Any]) -> dict[str, Any]:
+    doc = ensure_default_squads()
+    squad_id = data["id"]
+    if squad_id in doc["squads"]:
+        raise ValueError("squad already exists")
+    squad = {
+        "id": squad_id,
+        "chair": data.get("chair") or data["members"][0],
+        "members": list(data["members"]),
+        "emoji": data.get("emoji") or "#",
+        "name": data.get("name") or squad_id,
+        "description": data.get("description") or "",
+    }
+    doc["squads"][squad_id] = squad
+    _write_squads_doc(doc)
+    return dict(squad)
+
+
+def delete_squad(squad_id: str) -> bool:
+    doc = ensure_default_squads()
+    if squad_id not in doc["squads"]:
+        return False
+    del doc["squads"][squad_id]
+    _write_squads_doc(doc)
+    return True
