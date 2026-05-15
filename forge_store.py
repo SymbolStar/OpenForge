@@ -1,5 +1,5 @@
 """
-huddle_store.py — JSONL event store for Huddle.
+forge_store.py — JSONL event store for Huddle.
 
 Event log is the source of truth. Markdown is a derived view.
 

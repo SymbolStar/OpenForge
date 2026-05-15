@@ -39,7 +39,7 @@ WEB_DIR = ROOT / "web"
 RUN_SCRIPT = ROOT / "run_standup.py"
 
 sys.path.insert(0, str(ROOT))
-import huddle_store as store
+import forge_store as store
 
 SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"

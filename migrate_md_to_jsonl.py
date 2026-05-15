@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import huddle_store as store
+import forge_store as store
 
 RE_TITLE = re.compile(r"^#\s+晨会纪要\s+·\s+(.+)$", re.MULTILINE)
 RE_META = re.compile(r"\*\*主席\*\*:\s*(\S+)\s+·\s+\*\*参会\*\*:\s*(.+)")

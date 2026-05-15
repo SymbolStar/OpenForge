@@ -29,7 +29,7 @@ from pathlib import Path
 
 # allow running as a script or as a module
 sys.path.insert(0, str(Path(__file__).parent))
-import huddle_store as store
+import forge_store as store
 
 AGENTS_ROOT = Path.home() / ".openclaw" / "agents"
 
