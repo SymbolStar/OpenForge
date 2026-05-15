@@ -16,16 +16,122 @@ Key v0.3 changes vs v0.2:
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # allow running as a script or as a module
 sys.path.insert(0, str(Path(__file__).parent))
 import huddle_store as store
+
+AGENTS_ROOT = Path.home() / ".openclaw" / "agents"
+
+
+# ─── main-session snapshot / restore ─────────────────────────────────
+# `openclaw agent --session-id X` MUTATES agent:<id>:main to point at X.
+# That hijacks the agent's primary chat session, polluting future user turns.
+# We work around it by snapshotting each participant's main pointer before the
+# meeting and restoring it afterward (best-effort, also via atexit).
+#
+# Snapshot is also written into events.jsonl so a stale crash can be recovered.
+
+_RESTORE_REGISTERED = False
+_PENDING_RESTORES: dict[str, dict] = {}  # agent_id -> snapshot
+
+
+def _sessions_path(agent_id: str) -> Path:
+    return AGENTS_ROOT / agent_id / "sessions" / "sessions.json"
+
+
+def snapshot_main(agent_id: str) -> dict | None:
+    p = _sessions_path(agent_id)
+    if not p.exists():
+        return None
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return None
+    main = d.get(f"agent:{agent_id}:main")
+    if not isinstance(main, dict):
+        return None
+    return {
+        "agent": agent_id,
+        "sessionId": main.get("sessionId"),
+        "sessionFile": main.get("sessionFile"),
+        "snapshotAt": int(time.time() * 1000),
+    }
+
+
+def restore_main(agent_id: str, snapshot: dict) -> bool:
+    p = _sessions_path(agent_id)
+    if not p.exists() or not snapshot or not snapshot.get("sessionId"):
+        return False
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return False
+    key = f"agent:{agent_id}:main"
+    main = d.get(key)
+    if not isinstance(main, dict):
+        return False
+    # only restore if the current main was clobbered by us
+    cur_sid = main.get("sessionId") or ""
+    if not (cur_sid.startswith("standup-") or cur_sid.startswith("huddle-")):
+        return False
+    main["sessionId"] = snapshot["sessionId"]
+    main["sessionFile"] = snapshot["sessionFile"]
+    main["updatedAt"] = int(time.time() * 1000)
+    main["restoredFromHuddle"] = True
+    d[key] = main
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+    os.replace(tmp, p)
+    return True
+
+
+def snapshot_participants(date: str, agents: list[str]) -> dict[str, dict]:
+    snaps: dict[str, dict] = {}
+    for ag in agents:
+        s = snapshot_main(ag)
+        if s:
+            snaps[ag] = s
+            _PENDING_RESTORES[ag] = s
+    if snaps:
+        # persist into events.jsonl so a hard crash is still recoverable.
+        store.append_event(date, {
+            "kind": "agent_main_snapshot",
+            "snapshots": snaps,
+        })
+    _ensure_atexit_handler()
+    return snaps
+
+
+def restore_participants() -> int:
+    n = 0
+    for ag, snap in list(_PENDING_RESTORES.items()):
+        try:
+            if restore_main(ag, snap):
+                n += 1
+        except Exception as e:
+            print(f"⚠️  restore failed for {ag}: {e}", file=sys.stderr)
+        finally:
+            _PENDING_RESTORES.pop(ag, None)
+    return n
+
+
+def _ensure_atexit_handler():
+    global _RESTORE_REGISTERED
+    if _RESTORE_REGISTERED:
+        return
+    _RESTORE_REGISTERED = True
+    atexit.register(restore_participants)
 
 # ─── config ───────────────────────────────────────────────────────────
 DEFAULT_MEMBERS = ["milk", "sentry", "bugfix", "milly", "kb"]
@@ -225,6 +331,13 @@ def run_standup(date: str, members: list[str], chair: str) -> int:
     store.start_meeting(date, chair, members,
                         title=f"晨会纪要 · {date}")
 
+    # snapshot each participant's main pointer BEFORE we issue any
+    # `openclaw agent --session-id` (which clobbers main). We restore at end
+    # via finally + atexit.
+    snaps = snapshot_participants(date, members)
+    if snaps:
+        print(f"📌 已快照 {len(snaps)} 个 agent 的 main session 指针，会议结束自动恢复")
+
     # ── opening section ─────────────────────────────────────────────
     print("\n[phase 1] chair 开场 + 出议程")
     opening_topic_id = store.start_topic(date, 0, "开场 & 议程", kind="opening")
@@ -306,7 +419,9 @@ topic 选择建议：
     store.finish_meeting(date)
     store.write_markdown(date)
 
-    print(f"\n✅ 会议结束")
+    n_restored = restore_participants()
+    print(f"\n🔓 已恢复 {n_restored} 个 agent 的 main session 指针")
+    print(f"✅ 会议结束")
     print(f"📄 完整纪要: {store.md_path(date)}")
     return 0
 
