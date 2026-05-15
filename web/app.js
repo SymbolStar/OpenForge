@@ -1,4 +1,4 @@
-// Huddle web app — squads UI, vanilla JS.
+// OpenForge web app — squads + threads UI, vanilla JS.
 
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
 

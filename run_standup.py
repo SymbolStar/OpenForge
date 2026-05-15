@@ -6,7 +6,7 @@ Source of truth: ~/.openclaw/standups/data/<date>/events.jsonl
 Markdown view:   ~/.openclaw/standups/standup-<date>.md  (regenerated)
 
 Key v0.3 changes vs v0.2:
-- All state goes through huddle_store (events.jsonl + fcntl lock)
+- All state goes through forge_store (events.jsonl + fcntl lock)
 - subprocess returncode is checked; failed CLI calls do not silently fallback
 - Single-flight: refuses to run a second standup for the same date concurrently
 - Markdown is a derived view, regenerated atomically after every event
@@ -82,13 +82,14 @@ def restore_main(agent_id: str, snapshot: dict) -> bool:
     if not isinstance(main, dict):
         return False
     # only restore if the current main was clobbered by us
+    # (huddle- kept for backward compatibility with pre-rename runs)
     cur_sid = main.get("sessionId") or ""
-    if not (cur_sid.startswith("standup-") or cur_sid.startswith("huddle-")):
+    if not (cur_sid.startswith("standup-") or cur_sid.startswith("forge-") or cur_sid.startswith("huddle-")):
         return False
     main["sessionId"] = snapshot["sessionId"]
     main["sessionFile"] = snapshot["sessionFile"]
     main["updatedAt"] = int(time.time() * 1000)
-    main["restoredFromHuddle"] = True
+    main["restoredFromOpenForge"] = True
     d[key] = main
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2))

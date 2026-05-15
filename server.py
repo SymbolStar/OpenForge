@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-huddle server v0.3 — JSONL-backed Slack-like viewer.
+OpenForge server v0.3 — JSONL-backed multi-agent task tracker.
+
+Product: every thread is a task; @mention assigns the next agent to act.
 
 Routes:
   GET  /                         -> index.html
@@ -140,8 +142,8 @@ def _start_standup_for_date(date: str) -> tuple[dict, int]:
 
 
 # ─── HTTP handler ─────────────────────────────────────────────────────
-class HuddleHandler(BaseHTTPRequestHandler):
-    server_version = "Huddle/0.3"
+class OpenForgeHandler(BaseHTTPRequestHandler):
+    server_version = "OpenForge/0.3"
     auth_token: str | None = None  # populated by main()
     bind_host: str = "127.0.0.1"
 
@@ -312,17 +314,18 @@ def main():
     )
     args = p.parse_args()
 
-    HuddleHandler.bind_host = args.host
+    OpenForgeHandler.bind_host = args.host
     if not _is_local(args.host):
-        HuddleHandler.auth_token = args.token or secrets.token_urlsafe(24)
-        print(f"🔐 auth token: {HuddleHandler.auth_token}")
+        OpenForgeHandler.auth_token = args.token or secrets.token_urlsafe(24)
+        print(f"🔐 auth token: {OpenForgeHandler.auth_token}")
     elif args.token:
-        HuddleHandler.auth_token = args.token
+        OpenForgeHandler.auth_token = args.token
 
+    print(f"🔨 OpenForge")
     print(f"📍 events root: {store.DATA_DIR}")
     print(f"📄 markdown root: {store.STANDUP_DIR}")
-    print(f"🌐 huddle:        http://{args.host}:{args.port}")
-    server = ThreadingHTTPServer((args.host, args.port), HuddleHandler)
+    print(f"🌐 server:        http://{args.host}:{args.port}")
+    server = ThreadingHTTPServer((args.host, args.port), OpenForgeHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

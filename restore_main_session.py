@@ -30,8 +30,9 @@ from pathlib import Path
 DEFAULT_AGENTS = ["milk", "sentry", "bugfix", "milly", "kb"]
 AGENTS_ROOT = Path.home() / ".openclaw" / "agents"
 
-# anything we recognise as "synthetic standup session that should not be main"
-TAINTED_RE = re.compile(r"^(standup-|huddle-)")
+# anything we recognise as "synthetic forge session that should not be main"
+# (huddle- kept for backward compatibility with pre-rename runs)
+TAINTED_RE = re.compile(r"^(standup-|forge-|huddle-)")
 
 
 def sessions_path(agent: str) -> Path:

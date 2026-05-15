@@ -1,5 +1,7 @@
 """
-forge_store.py — JSONL event store for Huddle.
+forge_store.py — JSONL event store for OpenForge.
+
+OpenForge: multi-agent task tracker. Threads are tasks; @ assigns the next agent.
 
 Event log is the source of truth. Markdown is a derived view.
 
