@@ -3,51 +3,81 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Huddle · 多 Agent 早会</title>
+<title>Huddle · Squads</title>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
 <div id="app">
-  <!-- 左侧栏：会议（按日期） -->
-  <aside id="sidebar-meetings">
+  <aside id="squad-rail">
     <div class="brand">
-      <span class="logo">🪶</span>
-      <div>
-        <div class="brand-name">Huddle</div>
-        <div class="brand-sub">SymbolStar 早会</div>
-      </div>
+      <div class="brand-title">Huddle <span>🪶</span></div>
     </div>
-    <div class="section-label">
-      <span>会议</span>
-      <button id="btn-run" title="跑一次今天的早会">▶ 开会</button>
+    <div class="rail-section">
+      <div class="section-label">SQUADS</div>
+      <ul id="squad-list"></ul>
+      <button id="btn-new-squad" class="new-squad-btn" type="button">+ New Squad</button>
     </div>
-    <ul id="meeting-list"></ul>
     <div class="footer-help">
       <span id="status-dot" class="dot dot-ok"></span>
       <span id="status-text">就绪</span>
     </div>
   </aside>
 
-  <!-- 中间栏：当天会议的 topics -->
-  <aside id="sidebar-topics">
-    <div class="topic-header">
-      <div id="meeting-title">—</div>
-      <div id="meeting-meta" class="meta"></div>
+  <aside id="meeting-rail">
+    <header class="rail-header">
+      <div>
+        <h1 id="squad-title">—</h1>
+        <p id="squad-description"></p>
+      </div>
+    </header>
+    <div class="meeting-section-head">
+      <span>MEETINGS</span>
+      <button id="btn-run-squad" type="button" title="Run standup">+</button>
     </div>
-    <ul id="topic-list"></ul>
+    <ul id="meeting-list"></ul>
   </aside>
 
-  <!-- 右侧主区域：当前 topic 的 thread -->
   <main id="thread-pane">
     <header id="thread-header">
       <div>
-        <h2 id="thread-title">选择一个 topic</h2>
+        <h2 id="thread-title">选择一个 meeting</h2>
         <div id="thread-sub" class="meta"></div>
       </div>
-      <button id="btn-refresh" title="刷新">↻</button>
+      <div id="header-members" class="avatar-stack"></div>
+      <span id="meeting-status" class="status-chip">idle</span>
+      <button id="btn-refresh" type="button" title="刷新">↻</button>
     </header>
+    <nav id="topic-tabs"></nav>
     <div id="thread-list"></div>
+    <footer id="composer">
+      <input id="composer-input" type="text" placeholder="Message huddle" />
+      <button id="btn-send" type="button">发送</button>
+    </footer>
   </main>
+</div>
+
+<div id="squad-modal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-header">
+      <h2 id="modal-title">New Squad</h2>
+      <button id="btn-close-modal" type="button" title="Close">×</button>
+    </div>
+    <form id="squad-form">
+      <label>ID<input name="id" required maxlength="32" pattern="\w{1,32}" placeholder="frontend" /></label>
+      <label>Name<input name="name" required placeholder="Frontend Team" /></label>
+      <label>Description<textarea name="description" rows="3" placeholder="Focus, scope, or rituals"></textarea></label>
+      <label>Emoji<input name="emoji" maxlength="8" placeholder="✨" /></label>
+      <fieldset>
+        <legend>Members</legend>
+        <div id="member-checkboxes" class="checkbox-grid"></div>
+      </fieldset>
+      <label>Chair<select name="chair" id="chair-select"></select></label>
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-modal">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script src="/app.js"></script>
