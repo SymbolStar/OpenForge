@@ -5,7 +5,7 @@
   --text: #1d1c1d;
   --text-mute: #616061;
   --text-soft: #8d8d8d;
-  --border: #dddddd;
+  --border: #ddd;
   --bg: #ffffff;
   --rail-bg: #f8f8f8;
   --accent: #611f69;
@@ -25,6 +25,9 @@ body {
   font: 14px/1.45 Inter, "PingFang SC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
 }
 button, input, textarea, select { font: inherit; }
+button, input, textarea, select {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
 button { cursor: pointer; }
 
 #app {
@@ -126,7 +129,7 @@ button { cursor: pointer; }
   min-width: 0;
 }
 .rail-header {
-  min-height: 96px;
+  min-height: 98px;
   padding: 16px 18px;
   background: #fff;
   border-bottom: 1px solid var(--border);
@@ -149,6 +152,10 @@ button { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 5px;
   background: #fff;
+  color: var(--text);
+}
+.meeting-section-head button:hover, #btn-refresh:hover {
+  border-color: var(--text-soft);
   color: var(--text);
 }
 
@@ -350,6 +357,11 @@ button { cursor: pointer; }
   border-radius: 6px;
   padding: 10px 12px;
 }
+#composer input:focus, #squad-form input:focus, #squad-form textarea:focus, #squad-form select:focus {
+  border-color: #1264a3;
+  box-shadow: 0 0 0 1px #1264a3;
+  outline: none;
+}
 #composer button {
   border: 0;
   border-radius: 6px;
@@ -357,6 +369,10 @@ button { cursor: pointer; }
   color: #fff;
   padding: 0 14px;
   font-weight: 700;
+}
+#composer button:hover, .modal-actions button[type="submit"]:hover {
+  background: #148567;
+  border-color: #148567;
 }
 
 .modal-backdrop {
@@ -418,6 +434,7 @@ button { cursor: pointer; }
   background: #fff;
   padding: 8px 12px;
 }
+.modal-actions button:hover { background: var(--rail-bg); }
 .modal-actions button[type="submit"] { background: #007a5a; color: #fff; border-color: #007a5a; }
 
 .status-chip {
