@@ -1,0 +1,283 @@
+/* Slack-inspired but lighter; OpenClaw / SymbolStar palette */
+:root {
+  --bg: #f6f7f9;
+  --sidebar-bg: #2c2735;
+  --sidebar-bg2: #3a3344;
+  --sidebar-fg: #e8e6ec;
+  --sidebar-fg-mute: #b6b0c2;
+  --sidebar-active: #4a90e2;
+  --topic-bg: #ffffff;
+  --topic-border: #e6e6ec;
+  --thread-bg: #ffffff;
+  --text: #1d1c1d;
+  --text-mute: #696871;
+  --accent: #5b6cff;
+  --mention-bg: rgba(91,108,255,0.12);
+  --mention-fg: #4453d6;
+  --bubble-bg: #f5f6fa;
+  --code-bg: #f0f0f4;
+  --border: #e8e8ee;
+  --hover: rgba(0,0,0,0.04);
+  --ok: #2eb872;
+  --warn: #e9a23b;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC",
+        "Helvetica Neue", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 240px 280px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─── 左侧：会议列表 ───────────────────────────── */
+#sidebar-meetings {
+  background: var(--sidebar-bg);
+  color: var(--sidebar-fg);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(0,0,0,0.2);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.logo {
+  font-size: 22px;
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  background: var(--sidebar-bg2);
+  border-radius: 8px;
+}
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: 0.2px; }
+.brand-sub  { font-size: 11px; color: var(--sidebar-fg-mute); }
+
+.section-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 16px 6px;
+  font-size: 11px;
+  color: var(--sidebar-fg-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.section-label button {
+  background: transparent;
+  color: var(--sidebar-fg-mute);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.section-label button:hover { color: var(--sidebar-fg); border-color: rgba(255,255,255,0.4); }
+
+#meeting-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+#meeting-list li {
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#meeting-list li:hover { background: rgba(255,255,255,0.04); }
+#meeting-list li.active {
+  background: rgba(91,108,255,0.18);
+  border-left-color: var(--sidebar-active);
+}
+.mt-date  { font-size: 13px; font-weight: 500; }
+.mt-meta  { font-size: 11px; color: var(--sidebar-fg-mute); }
+
+.footer-help {
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 11px;
+  color: var(--sidebar-fg-mute);
+  display: flex; align-items: center; gap: 8px;
+}
+.dot {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+}
+.dot-ok   { background: var(--ok); }
+.dot-warn { background: var(--warn); }
+
+/* ─── 中间：topic 列表 ─────────────────────────── */
+#sidebar-topics {
+  background: var(--topic-bg);
+  border-right: 1px solid var(--topic-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.topic-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--topic-border);
+}
+#meeting-title {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.meta { font-size: 11px; color: var(--text-mute); }
+
+#topic-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+#topic-list li {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+#topic-list li:hover { background: var(--hover); }
+#topic-list li.active {
+  background: rgba(91,108,255,0.08);
+  border-left-color: var(--accent);
+}
+.topic-icon {
+  width: 22px; height: 22px;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  border-radius: 4px;
+  background: var(--bubble-bg);
+  font-size: 11px;
+  color: var(--text-mute);
+}
+.topic-title {
+  font-size: 13px;
+  font-weight: 500;
+  word-break: break-word;
+}
+.topic-count {
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-top: 2px;
+}
+
+/* ─── 右侧：thread ─────────────────────────────── */
+#thread-pane {
+  background: var(--thread-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#thread-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+}
+#thread-title { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
+#btn-refresh {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-mute);
+}
+#btn-refresh:hover { color: var(--text); border-color: var(--text-mute); }
+
+#thread-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 24px 32px;
+}
+.empty {
+  text-align: center;
+  color: var(--text-mute);
+  padding: 80px 20px;
+  font-size: 13px;
+}
+
+.post {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 10px;
+  padding: 10px 0;
+  border-radius: 6px;
+}
+.post:hover { background: var(--hover); }
+.avatar {
+  width: 36px; height: 36px;
+  border-radius: 6px;
+  display: grid; place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+}
+.post-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.post-name { font-weight: 600; font-size: 14px; }
+.post-time { font-size: 11px; color: var(--text-mute); }
+.post-body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.post-body code {
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+}
+.mention {
+  background: var(--mention-bg);
+  color: var(--mention-fg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  cursor: default;
+}
+
+/* responsive: 窄屏挤压两边栏 */
+@media (max-width: 900px) {
+  #app { grid-template-columns: 64px 200px 1fr; }
+  .brand-name, .brand-sub, .footer-help span:not(.dot),
+  .mt-meta { display: none; }
+  .brand { padding: 12px 8px; justify-content: center; }
+  #meeting-list li { padding: 8px; text-align: center; }
+  .section-label { padding: 12px 4px 6px; justify-content: center; }
+}
+@media (max-width: 600px) {
+  #app { grid-template-columns: 1fr; }
+  #sidebar-meetings, #sidebar-topics { display: none; }
+}
+
+/* avatar colors per agent */
+.av-milk    { background: #5b6cff; }
+.av-sentry  { background: #f17a7a; }
+.av-bugfix  { background: #f5a623; }
+.av-milly   { background: #9c5bff; }
+.av-kb      { background: #2eb872; }
+.av-judy    { background: #20c4d2; }
+.av-default { background: #696871; }

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Huddle · 多 Agent 早会</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="app">
+  <!-- 左侧栏：会议（按日期） -->
+  <aside id="sidebar-meetings">
+    <div class="brand">
+      <span class="logo">🪶</span>
+      <div>
+        <div class="brand-name">Huddle</div>
+        <div class="brand-sub">SymbolStar 早会</div>
+      </div>
+    </div>
+    <div class="section-label">
+      <span>会议</span>
+      <button id="btn-run" title="跑一次今天的早会">▶ 开会</button>
+    </div>
+    <ul id="meeting-list"></ul>
+    <div class="footer-help">
+      <span id="status-dot" class="dot dot-ok"></span>
+      <span id="status-text">就绪</span>
+    </div>
+  </aside>
+
+  <!-- 中间栏：当天会议的 topics -->
+  <aside id="sidebar-topics">
+    <div class="topic-header">
+      <div id="meeting-title">—</div>
+      <div id="meeting-meta" class="meta"></div>
+    </div>
+    <ul id="topic-list"></ul>
+  </aside>
+
+  <!-- 右侧主区域：当前 topic 的 thread -->
+  <main id="thread-pane">
+    <header id="thread-header">
+      <div>
+        <h2 id="thread-title">选择一个 topic</h2>
+        <div id="thread-sub" class="meta"></div>
+      </div>
+      <button id="btn-refresh" title="刷新">↻</button>
+    </header>
+    <div id="thread-list"></div>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
