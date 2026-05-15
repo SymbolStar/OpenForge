@@ -6,6 +6,11 @@ Routes:
   GET  /                         -> index.html
   GET  /style.css                -> static
   GET  /app.js                   -> static
+  GET  /api/squads               -> [squads]
+  GET  /api/squads/<id>          -> squad + meetings
+  POST /api/squads               -> create squad
+  DELETE /api/squads/<id>        -> delete squad
+  POST /api/squads/<id>/run      -> launch run_standup.py for today
   GET  /api/standups             -> [summaries]
   GET  /api/standup/<date>       -> projected meeting model
   POST /api/run                  -> launch run_standup.py for a given date
@@ -35,6 +40,9 @@ RUN_SCRIPT = ROOT / "run_standup.py"
 
 sys.path.insert(0, str(ROOT))
 import huddle_store as store
+
+SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
+SQUAD_ROUTE_RE = r"([\w-]{1,32})"
 
 
 def _is_local(host: str) -> bool:
@@ -75,6 +83,60 @@ def _serializable_meeting(m: dict) -> dict:
         "in_progress": m["ended_at"] is None,
         "sections": sections,
     }
+
+
+def _meetings_for_squad(squad_id: str) -> list[dict]:
+    # TODO: filter by squad metadata once meeting_started stores squad_id.
+    if squad_id != store.DEFAULT_SQUAD_ID:
+        return []
+    return list(store.iter_summaries())
+
+
+def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
+    squad_id = payload.get("id")
+    members = payload.get("members")
+    if not isinstance(squad_id, str) or not SQUAD_ID_RE.fullmatch(squad_id):
+        return None, "id must match \\w{1,32}"
+    if not isinstance(members, list) or not members:
+        return None, "members must contain at least one member"
+    clean_members = []
+    for member in members:
+        if not isinstance(member, str) or not member.strip():
+            return None, "members must be non-empty strings"
+        clean_members.append(member.strip())
+    chair = payload.get("chair") or clean_members[0]
+    if not isinstance(chair, str) or chair not in clean_members:
+        return None, "chair must be one of members"
+    clean = {
+        "id": squad_id,
+        "name": str(payload.get("name") or squad_id).strip(),
+        "description": str(payload.get("description") or "").strip(),
+        "emoji": str(payload.get("emoji") or "#").strip()[:8] or "#",
+        "members": clean_members,
+        "chair": chair,
+    }
+    return clean, None
+
+
+def _start_standup_for_date(date: str) -> tuple[dict, int]:
+    if not store.is_valid_date(date):
+        return {"error": "bad date"}, 400
+    if store.is_locked_exclusive(date):
+        return {
+            "started": False,
+            "error": "already running for this date",
+            "date": date,
+        }, 409
+    try:
+        subprocess.Popen(
+            [sys.executable, "-u", str(RUN_SCRIPT), "--date", date],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(ROOT),
+        )
+        return {"started": True, "date": date}, 200
+    except Exception as e:
+        return {"started": False, "error": str(e)}, 500
 
 
 # ─── HTTP handler ─────────────────────────────────────────────────────
@@ -141,6 +203,20 @@ class HuddleHandler(BaseHTTPRequestHandler):
             self._json(list(store.iter_summaries()))
             return
 
+        if path == "/api/squads":
+            self._json(store.list_squads())
+            return
+
+        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", path)
+        if m:
+            squad_id = m.group(1)
+            squad = store.get_squad(squad_id)
+            if squad is None:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json({"squad": squad, "meetings": _meetings_for_squad(squad_id)})
+            return
+
         m = re.match(r"^/api/standup/(\d{4}-\d{2}-\d{2})$", path)
         if m:
             date = m.group(1)
@@ -162,6 +238,30 @@ class HuddleHandler(BaseHTTPRequestHandler):
             self.send_error(401, "auth required for non-local host")
             return
 
+        if url.path == "/api/squads":
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = self.rfile.read(length).decode("utf-8") if length else ""
+            try:
+                raw = json.loads(payload) if payload else {}
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            data, error = _validate_squad_payload(raw)
+            if error:
+                self._json({"error": error}, 400)
+                return
+            try:
+                self._json(store.create_squad(data), 201)
+            except ValueError as e:
+                self._json({"error": str(e)}, 409)
+            return
+
+        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}/run$", url.path)
+        if m:
+            payload, status = _start_standup_for_date(datetime.now().strftime("%Y-%m-%d"))
+            self._json(payload, status)
+            return
+
         if url.path == "/api/run":
             length = int(self.headers.get("Content-Length") or 0)
             payload = self.rfile.read(length).decode("utf-8") if length else ""
@@ -175,27 +275,30 @@ class HuddleHandler(BaseHTTPRequestHandler):
             if not store.is_valid_date(date):
                 self._json({"error": "bad date"}, 400)
                 return
-
-            if store.is_locked_exclusive(date):
-                self._json({"started": False,
-                            "error": "already running for this date",
-                            "date": date}, 409)
-                return
-
-            try:
-                # fire-and-forget; the script will acquire the day lock itself
-                subprocess.Popen(
-                    [sys.executable, "-u", str(RUN_SCRIPT), "--date", date],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    cwd=str(ROOT),
-                )
-                self._json({"started": True, "date": date})
-            except Exception as e:
-                self._json({"started": False, "error": str(e)}, 500)
+            payload, status = _start_standup_for_date(date)
+            self._json(payload, status)
             return
 
         self.send_error(404)
+
+    def do_DELETE(self):
+        url = urlparse(self.path)
+        if not self._check_auth():
+            self.send_error(401, "auth required for non-local host")
+            return
+
+        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", url.path)
+        if not m:
+            self.send_error(404)
+            return
+        squad_id = m.group(1)
+        if squad_id == store.DEFAULT_SQUAD_ID:
+            self._json({"error": "cannot delete default squad"}, 400)
+            return
+        if not store.delete_squad(squad_id):
+            self._json({"error": "not found"}, 404)
+            return
+        self._json({"deleted": True, "id": squad_id})
 
 
 def main():
