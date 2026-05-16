@@ -38,8 +38,22 @@ from pathlib import Path
 from typing import Any, Iterator
 
 # ─── paths ────────────────────────────────────────────────────────────
+# v0.4 layout (thread-first, Slack-shaped):
+#   ~/.openclaw/openforge/
+#     ├── squads.json
+#     ├── threads/<thread-id>/
+#     │     ├── events.jsonl
+#     │     ├── .lock
+#     │     └── thread.md
+#     └── (legacy) ../standups/  ← still readable for old standup runs
+FORGE_DIR = Path.home() / ".openclaw" / "openforge"
+THREADS_DIR = FORGE_DIR / "threads"
+
+# Legacy standup layout (read-only; kept for projection back-compat).
 STANDUP_DIR = Path.home() / ".openclaw" / "standups"
 DATA_DIR = STANDUP_DIR / "data"
+
+THREAD_ID_RE = re.compile(r"^th_[0-9a-f]+_[0-9a-f]+$")
 
 # Permissive across CJK + ascii word + dash; aligned across server/script/web.
 AGENT_ID_RE = r"[\w\u4e00-\u9fff][-\w\u4e00-\u9fff]*"
@@ -91,14 +105,32 @@ def md_path(date: str) -> Path:
     return STANDUP_DIR / f"standup-{date}.md"
 
 
+# ─── thread paths (v0.4) ──────────────────────────────────────────────
+def thread_dir(thread_id: str) -> Path:
+    if not THREAD_ID_RE.match(thread_id):
+        raise ValueError(f"invalid thread_id: {thread_id!r}")
+    p = THREADS_DIR / thread_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def thread_events_path(thread_id: str) -> Path:
+    return thread_dir(thread_id) / "events.jsonl"
+
+
+def thread_lock_path(thread_id: str) -> Path:
+    return thread_dir(thread_id) / ".lock"
+
+
+def thread_md_path(thread_id: str) -> Path:
+    return thread_dir(thread_id) / "thread.md"
+
+
 # ─── locking ──────────────────────────────────────────────────────────
 @contextmanager
-def file_lock(date: str, exclusive: bool = True, timeout: float = 30.0):
-    """fcntl advisory lock; LOCK_EX for writers, LOCK_SH for readers."""
-    path = lock_path(date)
+def _flock(path: Path, exclusive: bool, timeout: float):
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
-    flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-    flag |= fcntl.LOCK_NB
+    flag = (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -120,6 +152,19 @@ def file_lock(date: str, exclusive: bool = True, timeout: float = 30.0):
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+@contextmanager
+def thread_lock(thread_id: str, exclusive: bool = True, timeout: float = 30.0):
+    with _flock(thread_lock_path(thread_id), exclusive, timeout):
+        yield
+
+
+@contextmanager
+def file_lock(date: str, exclusive: bool = True, timeout: float = 30.0):
+    """Legacy date-keyed lock for the standup pathway."""
+    with _flock(lock_path(date), exclusive, timeout):
+        yield
 
 
 def is_locked_exclusive(date: str) -> bool:
@@ -176,6 +221,40 @@ def read_events(date: str) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     # tolerate the very last line being half-written;
                     # ignore mid-stream corruption with a warning marker.
+                    continue
+    return out
+
+
+# ─── thread event io ──────────────────────────────────────────────────
+def append_thread_event(thread_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    event = dict(event)
+    event.setdefault("id", gen_id("evt"))
+    event.setdefault("ts", now_iso())
+    line = json.dumps(event, ensure_ascii=False)
+    if "\n" in line:
+        raise ValueError("event JSON contains literal newline")
+    with thread_lock(thread_id, exclusive=True):
+        with thread_events_path(thread_id).open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    return event
+
+
+def read_thread_events(thread_id: str) -> list[dict[str, Any]]:
+    path = thread_events_path(thread_id)
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with thread_lock(thread_id, exclusive=False):
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
                     continue
     return out
 
@@ -407,7 +486,8 @@ def iter_summaries() -> Iterator[dict]:
 
 
 # ─── squads ───────────────────────────────────────────────────────────
-SQUADS_PATH = STANDUP_DIR / "squads.json"
+SQUADS_PATH = FORGE_DIR / "squads.json"
+LEGACY_SQUADS_PATH = STANDUP_DIR / "squads.json"
 DEFAULT_SQUAD_ID = "milk-eng"
 
 DEFAULT_SQUAD = {
@@ -425,7 +505,7 @@ def _default_squads_doc() -> dict[str, Any]:
 
 
 def _write_squads_doc(doc: dict[str, Any]) -> None:
-    STANDUP_DIR.mkdir(parents=True, exist_ok=True)
+    FORGE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SQUADS_PATH.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -435,7 +515,14 @@ def _write_squads_doc(doc: dict[str, Any]) -> None:
 
 
 def ensure_default_squads() -> dict[str, Any]:
-    """Create squads.json with the default squad when it is missing."""
+    """Create squads.json with the default squad when it is missing.
+
+    Migration: if a legacy ~/.openclaw/standups/squads.json exists and the
+    new location does not, copy it over once.
+    """
+    if not SQUADS_PATH.exists() and LEGACY_SQUADS_PATH.exists():
+        FORGE_DIR.mkdir(parents=True, exist_ok=True)
+        SQUADS_PATH.write_bytes(LEGACY_SQUADS_PATH.read_bytes())
     if not SQUADS_PATH.exists():
         doc = _default_squads_doc()
         _write_squads_doc(doc)
@@ -489,3 +576,227 @@ def delete_squad(squad_id: str) -> bool:
     del doc["squads"][squad_id]
     _write_squads_doc(doc)
     return True
+
+
+# ─── threads (v0.4) ────────────────────────────────────────────────────────
+#
+# A thread is a Slack-shaped bounded topic. Stored at:
+#   ~/.openclaw/openforge/threads/<thread_id>/events.jsonl
+#
+# Event kinds:
+#   thread_started  { thread_id, squad_id, created_by }
+#   post_added      { post_id, speaker, content, mentions[], parent_post_id }
+#   post_superseded { post_id, by_post_id }
+#   thread_closed   { thread_id, closed_by }
+#
+# No title, no topics, no date. Preview = first ~80 chars of opening post.
+
+
+def new_thread_id() -> str:
+    return gen_id("th")
+
+
+def list_thread_ids() -> list[str]:
+    if not THREADS_DIR.exists():
+        return []
+    out = []
+    for p in THREADS_DIR.iterdir():
+        if p.is_dir() and THREAD_ID_RE.match(p.name) and (p / "events.jsonl").exists():
+            out.append(p.name)
+    return out
+
+
+def create_thread(squad_id: str, created_by: str, opening_content: str) -> dict:
+    """Create a new thread and append its opening post atomically."""
+    if not isinstance(opening_content, str) or not opening_content.strip():
+        raise ValueError("opening content must be a non-empty string")
+    if not get_squad(squad_id):
+        raise ValueError(f"unknown squad: {squad_id!r}")
+    speaker = (created_by or "scott").strip() or "scott"
+    tid = new_thread_id()
+    # bootstrap dir + first events
+    thread_dir(tid)
+    append_thread_event(tid, {
+        "kind": "thread_started",
+        "thread_id": tid,
+        "squad_id": squad_id,
+        "created_by": speaker,
+    })
+    add_thread_post(tid, speaker, opening_content)
+    return project_thread(tid)
+
+
+def add_thread_post(thread_id: str, speaker: str, content: str,
+                    parent_post_id: str | None = None) -> dict:
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("post content must be a non-empty string")
+    pid = gen_id("p")
+    append_thread_event(thread_id, {
+        "kind": "post_added",
+        "post_id": pid,
+        "speaker": (speaker or "scott").strip() or "scott",
+        "content": content,
+        "mentions": extract_mentions(content),
+        "parent_post_id": parent_post_id,
+    })
+    return {"post_id": pid}
+
+
+def supersede_thread_post(thread_id: str, post_id: str,
+                          by_post_id: str | None = None) -> dict:
+    return append_thread_event(thread_id, {
+        "kind": "post_superseded",
+        "post_id": post_id,
+        "by_post_id": by_post_id,
+    })
+
+
+def close_thread(thread_id: str, closed_by: str = "scott") -> dict:
+    return append_thread_event(thread_id, {
+        "kind": "thread_closed",
+        "thread_id": thread_id,
+        "closed_by": closed_by or "scott",
+    })
+
+
+def _preview_from(text: str, n: int = 80) -> str:
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    return line if len(line) <= n else line[: n - 1] + "…"
+
+
+def project_thread(thread_id: str) -> dict[str, Any] | None:
+    events = read_thread_events(thread_id)
+    if not events:
+        return None
+    model: dict[str, Any] = {
+        "thread_id": thread_id,
+        "squad_id": None,
+        "created_by": "scott",
+        "started_at": None,
+        "closed_at": None,
+        "closed_by": None,
+        "participants": [],
+        "posts": [],
+        "posts_by_id": {},
+        "superseded": set(),
+        "raw_events": len(events),
+    }
+    seen_participants: list[str] = []
+
+    for ev in events:
+        kind = ev.get("kind")
+        if kind == "thread_started":
+            model["squad_id"] = ev.get("squad_id")
+            model["created_by"] = ev.get("created_by") or model["created_by"]
+            model["started_at"] = ev.get("ts")
+        elif kind == "post_added":
+            post = {
+                "id": ev.get("post_id") or ev["id"],
+                "ts": ev.get("ts"),
+                "time": _clock_from_ts(ev.get("ts")),
+                "speaker": ev.get("speaker", "?"),
+                "content": ev.get("content", ""),
+                "mentions": ev.get("mentions") or extract_mentions(ev.get("content", "")),
+                "parent_post_id": ev.get("parent_post_id"),
+                "superseded": False,
+            }
+            model["posts_by_id"][post["id"]] = post
+            model["posts"].append(post)
+            spk = post["speaker"]
+            if spk and spk not in seen_participants:
+                seen_participants.append(spk)
+        elif kind == "post_superseded":
+            pid = ev.get("post_id")
+            p = model["posts_by_id"].get(pid)
+            if p:
+                p["superseded"] = True
+                p["superseded_by"] = ev.get("by_post_id")
+                model["superseded"].add(pid)
+        elif kind == "thread_closed":
+            model["closed_at"] = ev.get("ts")
+            model["closed_by"] = ev.get("closed_by")
+
+    model["superseded"] = sorted(model["superseded"])
+    model["participants"] = seen_participants
+    live_posts = [p for p in model["posts"] if not p["superseded"]]
+    first_post = live_posts[0] if live_posts else None
+    last_post = live_posts[-1] if live_posts else None
+    model["preview"] = _preview_from(first_post["content"]) if first_post else ""
+    model["post_count"] = len(live_posts)
+    model["last_post_at"] = last_post["ts"] if last_post else model["started_at"]
+    model["in_progress"] = model["closed_at"] is None
+    return model
+
+
+def summarize_thread(thread_id: str) -> dict | None:
+    m = project_thread(thread_id)
+    if m is None:
+        return None
+    return {
+        "thread_id": m["thread_id"],
+        "squad_id": m["squad_id"],
+        "created_by": m["created_by"],
+        "started_at": m["started_at"],
+        "last_post_at": m["last_post_at"],
+        "closed_at": m["closed_at"],
+        "in_progress": m["in_progress"],
+        "preview": m["preview"],
+        "post_count": m["post_count"],
+        "participants": m["participants"],
+    }
+
+
+def list_threads_for_squad(squad_id: str) -> list[dict]:
+    out: list[dict] = []
+    for tid in list_thread_ids():
+        s = summarize_thread(tid)
+        if s and s["squad_id"] == squad_id:
+            out.append(s)
+    # newest activity first
+    out.sort(key=lambda x: (x["last_post_at"] or x["started_at"] or ""), reverse=True)
+    return out
+
+
+def render_thread_markdown(thread_id: str) -> str:
+    m = project_thread(thread_id)
+    if m is None:
+        return ""
+    squad_id = m["squad_id"] or "?"
+    head = [
+        f"# Thread {thread_id}",
+        "",
+        f"**Squad**: {squad_id} · **Started by**: {m['created_by']} · "
+        f"**Started**: {m['started_at']}",
+        "",
+        "<!-- generated from events.jsonl; edits here will be overwritten -->",
+        "",
+        "---",
+    ]
+    body = []
+    for p in m["posts"]:
+        if p["superseded"]:
+            continue
+        body += [
+            "",
+            f"#### {p['speaker']} · {p['time']}",
+            "",
+            p["content"].rstrip(),
+            "",
+        ]
+    if m["closed_at"]:
+        body += ["", f"_closed by {m['closed_by']} at {m['closed_at']}_", ""]
+    return "\n".join(head + body).rstrip() + "\n"
+
+
+def write_thread_markdown(thread_id: str) -> Path:
+    target = thread_md_path(thread_id)
+    text = render_thread_markdown(thread_id)
+    if not text:
+        if target.exists():
+            target.unlink()
+        return target
+    tmp = target.with_suffix(".md.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+    return target
+
