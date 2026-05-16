@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """
-OpenForge server v0.3 — JSONL-backed multi-agent task tracker.
+OpenForge server v0.4 — JSONL-backed multi-agent topic tracker.
 
-Product: every thread is a task; @mention assigns the next agent to act.
+Product (v0.4): every thread is a Slack-style topic; @mention assigns the next
+agent (routing not yet wired; posts land as-is and are visible in the UI).
 
 Routes:
-  GET  /                         -> index.html
-  GET  /style.css                -> static
-  GET  /app.js                   -> static
-  GET  /api/squads               -> [squads]
-  GET  /api/squads/<id>          -> squad + meetings
-  POST /api/squads               -> create squad
-  DELETE /api/squads/<id>        -> delete squad
-  POST /api/squads/<id>/run      -> launch run_standup.py for today
-  GET  /api/standups             -> [summaries]
-  GET  /api/standup/<date>       -> projected meeting model
-  POST /api/run                  -> launch run_standup.py for a given date
-                                    (validated; refuses if already running)
+  GET    /                                -> index.html
+  GET    /style.css                       -> static
+  GET    /app.js                          -> static
 
-Reads:  ~/.openclaw/standups/data/<date>/events.jsonl
-Writes: nothing (the run_standup.py subprocess writes events + md)
+  GET    /api/squads                      -> [squads]
+  POST   /api/squads                      -> create squad
+  GET    /api/squads/<id>                 -> { squad, threads }
+  DELETE /api/squads/<id>                 -> delete squad
+  POST   /api/squads/<id>/threads         -> create thread + opening post
+                                              body: { content, created_by? }
+
+  GET    /api/threads/<id>                -> thread detail (posts)
+  POST   /api/threads/<id>/posts          -> append post
+                                              body: { content, speaker? }
+  POST   /api/threads/<id>/close          -> mark closed
+
+  (legacy, read-only — still serves old standup archives)
+  GET    /api/standups                    -> [old standup summaries]
+  GET    /api/standup/<date>              -> projected meeting model
+
+Reads:  ~/.openclaw/openforge/squads.json,
+        ~/.openclaw/openforge/threads/<thread-id>/events.jsonl,
+        ~/.openclaw/standups/data/<date>/events.jsonl (legacy)
+Writes: thread events (squads.json moves to openforge/).
 """
 
 from __future__ import annotations
@@ -38,13 +48,14 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
-RUN_SCRIPT = ROOT / "run_standup.py"
+RUN_SCRIPT = ROOT / "run_standup.py"  # legacy, kept for CLI use only
 
 sys.path.insert(0, str(ROOT))
 import forge_store as store
 
 SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
+THREAD_ROUTE_RE = r"(th_[0-9a-f]+_[0-9a-f]+)"
 
 
 def _is_local(host: str) -> bool:
@@ -88,10 +99,40 @@ def _serializable_meeting(m: dict) -> dict:
 
 
 def _meetings_for_squad(squad_id: str) -> list[dict]:
-    # TODO: filter by squad metadata once meeting_started stores squad_id.
+    # legacy: only the default squad ever had standups under the date layout
     if squad_id != store.DEFAULT_SQUAD_ID:
         return []
     return list(store.iter_summaries())
+
+
+def _serializable_thread(m: dict) -> dict:
+    return {
+        "thread_id": m["thread_id"],
+        "squad_id": m["squad_id"],
+        "created_by": m["created_by"],
+        "started_at": m["started_at"],
+        "last_post_at": m["last_post_at"],
+        "closed_at": m["closed_at"],
+        "closed_by": m["closed_by"],
+        "in_progress": m["in_progress"],
+        "preview": m["preview"],
+        "post_count": m["post_count"],
+        "participants": m["participants"],
+        "posts": [
+            {
+                "id": p["id"],
+                "ts": p["ts"],
+                "time": p["time"],
+                "speaker": p["speaker"],
+                "content": p["content"],
+                "mentions": p["mentions"],
+                "parent_post_id": p.get("parent_post_id"),
+                "superseded": p["superseded"],
+                "superseded_by": p.get("superseded_by"),
+            }
+            for p in m["posts"]
+        ],
+    }
 
 
 def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
@@ -143,7 +184,7 @@ def _start_standup_for_date(date: str) -> tuple[dict, int]:
 
 # ─── HTTP handler ─────────────────────────────────────────────────────
 class OpenForgeHandler(BaseHTTPRequestHandler):
-    server_version = "OpenForge/0.3"
+    server_version = "OpenForge/0.4"
     auth_token: str | None = None  # populated by main()
     bind_host: str = "127.0.0.1"
 
@@ -181,6 +222,21 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     # ─── routes ───────────────────────────────────────────────────
+    def _read_json(self, default=None):
+        """Parse JSON body; on parse error, write a 400 response and return None.
+
+        Pass `default={}` to return that value for empty bodies instead of failing.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else ""
+        if not raw:
+            return default if default is not None else {}
+        try:
+            return json.loads(raw)
+        except Exception:
+            self._json({"error": "bad json"}, 400)
+            return None
+
     def do_GET(self):
         url = urlparse(self.path)
         path = url.path
@@ -216,7 +272,21 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             if squad is None:
                 self._json({"error": "not found"}, 404)
                 return
-            self._json({"squad": squad, "meetings": _meetings_for_squad(squad_id)})
+            self._json({
+                "squad": squad,
+                "threads": store.list_threads_for_squad(squad_id),
+                "meetings": _meetings_for_squad(squad_id),  # legacy
+            })
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}$", path)
+        if m:
+            tid = m.group(1)
+            data = store.project_thread(tid)
+            if data is None:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(_serializable_thread(data))
             return
 
         m = re.match(r"^/api/standup/(\d{4}-\d{2}-\d{2})$", path)
@@ -256,6 +326,61 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json(store.create_squad(data), 201)
             except ValueError as e:
                 self._json({"error": str(e)}, 409)
+            return
+
+        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}/threads$", url.path)
+        if m:
+            squad_id = m.group(1)
+            if not store.get_squad(squad_id):
+                self._json({"error": "unknown squad"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            content = (opts.get("content") or "").strip()
+            if not content:
+                self._json({"error": "content required"}, 400)
+                return
+            created_by = (opts.get("created_by") or "scott").strip() or "scott"
+            try:
+                thread = store.create_thread(squad_id, created_by, content)
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_thread(thread), 201)
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts$", url.path)
+        if m:
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            content = (opts.get("content") or "").strip()
+            if not content:
+                self._json({"error": "content required"}, 400)
+                return
+            speaker = (opts.get("speaker") or "scott").strip() or "scott"
+            try:
+                store.add_thread_post(tid, speaker, content)
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_thread(store.project_thread(tid)), 201)
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/close$", url.path)
+        if m:
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            opts = self._read_json(default={}) or {}
+            store.close_thread(tid, (opts.get("closed_by") or "scott").strip() or "scott")
+            self._json(_serializable_thread(store.project_thread(tid)))
             return
 
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}/run$", url.path)
@@ -322,8 +447,8 @@ def main():
         OpenForgeHandler.auth_token = args.token
 
     print(f"🔨 OpenForge")
-    print(f"📍 events root: {store.DATA_DIR}")
-    print(f"📄 markdown root: {store.STANDUP_DIR}")
+    print(f"📁 forge root:   {store.FORGE_DIR}")
+    print(f"📝 legacy root:  {store.STANDUP_DIR}")
     print(f"🌐 server:        http://{args.host}:{args.port}")
     server = ThreadingHTTPServer((args.host, args.port), OpenForgeHandler)
     try:
