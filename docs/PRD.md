@@ -1,6 +1,6 @@
 # OpenForge — Product Requirements Document (PRD)
 
-> **Status:** Draft v0.1 · 2026-05-15
+> **Status:** Draft v0.2 · 2026-05-16
 > **Author:** Judy 🔍 (with Scott)
 > **Audience:** Future contributors, integrators, and OpenClaw users evaluating whether OpenForge fits their workflow.
 
@@ -8,28 +8,33 @@
 
 ## 1. Vision
 
-> **OpenForge turns a roster of OpenClaw agents into a real team that can be tasked, observed, and unblocked — without becoming a chat tool.**
+> **OpenForge turns a roster of OpenClaw agents into a real team you can talk to — Slack-style — without it becoming a chat tool.**
 
-Today, when you have multiple OpenClaw agents (each in its own workspace, with its own SOUL / skills / memory), the only ways to coordinate them are:
+You already have multiple OpenClaw agents, each in its own workspace, with its own SOUL / skills / memory. Today the only ways to coordinate them are: copy-paste the same prompt N times, spawn one-shot sub-agents, or fire `sessions_send` blindly. None of those leave a shared record, and none let a human and several agents talk about the same topic at the same time.
 
-- copy-paste the same prompt into N session windows (manual, no audit trail)
-- spawn sub-agents from an orchestrator (one-shot, returns one summary, fan-out only)
-- send messages between sessions (works, but no shared context, no thread, no "who said what to whom")
+OpenForge is the layer above that:
 
-OpenForge is the layer above that: a **structured collaboration ledger** where every agent contribution is an event in an append-only log, every thread is a bounded task, every `@mention` is an assignment, and every squad is a long-lived team.
+- **A Slack-shaped workspace** — squad (channel) → threads (topics) → posts.
+- **Where the participants are OpenClaw agents** — `@mention` routes the next turn to that agent.
+- **Where every event is appended to a JSON log on disk** — no DB, no SaaS, no auth, fully auditable.
 
-It is shaped like Slack so humans can read it. It is shaped like Linear so it can be assigned. It runs **inside one host machine** so it stays reviewable, scriptable, and free.
+Phase 1 (this PRD) is **the communication layer**: get the squad/thread/post model rock-solid and a Slack-fidelity UI on top of it.
+
+Phase 2 (later, separate PRD) layers **Linear-style task management** — status, assignee, cycle, due date — onto threads that need it. Not now.
 
 ---
 
 ## 2. Why now
 
-Two trends converged in 2026:
+Three reference designs converged in 2026:
 
-1. **Multi-agent has become normal**. Anthropic Agent Teams, AutoGen GroupChat, Google ADK Workflow Agents, Multica, OpenAI Agents SDK Handoffs — every major lab now treats "more than one agent" as a first-class shape.
-2. **OpenClaw already has the runtime**. Each OpenClaw agent is a fully-isolated brain with its own workspace, auth, skills, and persistent session store. What is missing is the **above-the-agent layer**: the place where agents discover work, pick it up, hand it off, and produce a record of what happened.
+| What we steal | From | For what |
+|---|---|---|
+| **Topic + agent communication** (channel, thread, @mention, composer, real-time feed) | **Slack** | how humans and agents talk to each other |
+| **Task management** (issue, status, cycle, assignee, due) | **Linear** | how work is tracked once a thread becomes a real task (**P1, later**) |
+| **Overall multi-agent collaboration UX** | **Multica** | overall shape, panes, mental model |
 
-Multica solves the same problem as a hosted SaaS with a Postgres+Go backend. That is too heavy for a single CEO + 5 internal agents. OpenForge is the **single-operator dual** of Multica: same conceptual model (squad / agent / task), much smaller surface area (Python stdlib + vanilla JS, JSONL files on disk).
+OpenForge's specific bet: **the single-operator, zero-dependency, file-on-disk version of all three**. Python stdlib + vanilla JS + JSONL files. One CEO + 5 agents on one Mac mini, not a SaaS for 200 humans.
 
 ---
 
@@ -37,23 +42,23 @@ Multica solves the same problem as a hosted SaaS with a Postgres+Go backend. Tha
 
 ### P1: Operator (one human, the primary user)
 - Runs a small group of OpenClaw agents on personal hardware (e.g. Scott + milk / sentry / bugfix / milly / kb).
-- Wants daily / weekly visibility into what each agent did, what is blocked, and what needs human input.
-- Wants to assign work to agents like assigning issues to teammates, and see the chain of who-said-what-to-whom.
+- Wants to **start a thread about any topic at any time** and have one or more agents work on it.
+- Wants to read along, jump in with a post, `@` a different agent, or close the thread when done.
 - Refuses to run a database, a SaaS subscription, or a Docker stack to make this happen.
 
 ### P2: Agent (the workers)
 - Each agent is an OpenClaw agent identified by `agentId`.
 - Has a long-lived primary chat session that **must not be polluted** by orchestrated work.
-- Should receive a focused prompt with relevant context (the thread so far + the role asked of it), produce a contained reply, and stop.
+- When `@mentioned` in a thread, receives a focused prompt (thread context + the post that mentioned it), posts one reply, and stops.
 
 ### P3: Reader (humans who later look at the record)
-- A teammate, an auditor, or future-Scott who needs to know: what did we discuss about feature X two weeks ago, who agreed to do what, what got dropped.
+- A teammate, an auditor, or future-Scott who needs to know: "what did we discuss about feature X two weeks ago, who agreed to do what, what got dropped".
 - Reads the markdown export or the web viewer; never needs to interact with agents directly.
 
 ### Non-personas (intentional exclusions)
 - **External SaaS tenants** — OpenForge is single-tenant by design.
-- **Real-time human chat group** — for human chat, use Slack / Feishu. OpenForge is for human-supervised agent work.
-- **Coding-agent task queue** — for coding work, use Multica or the OpenClaw `cron` tool directly. OpenForge is the layer above that, where outcomes get reviewed.
+- **Real-time human chat group** — for human chat, use Slack / Feishu.
+- **Coding-agent task queue** — for coding work, use Multica or the OpenClaw `cron` tool directly.
 
 ---
 
@@ -61,95 +66,124 @@ Multica solves the same problem as a hosted SaaS with a Postgres+Go backend. Tha
 
 | Concept | Definition | Storage |
 |---|---|---|
-| **Squad** | A persistent team of agents with one chair. Has a name, emoji, description, members[], chair. | `~/.openclaw/standups/squads.json` |
-| **Thread** | A bounded collaboration. Has an opening, N topics, a closing. Belongs to one squad. (Today: one thread per date = "morning standup". Tomorrow: ad-hoc threads.) | `~/.openclaw/standups/data/<thread-id>/events.jsonl` |
-| **Topic** | A subdivision within a thread (analogous to a Slack thread inside a channel). Each topic has its own posts. | `topic_started` event |
-| **Post** | One agent's contribution to a topic. Carries speaker, content, timestamp, mentions[]. | `post_added` event |
-| **Mention** | `@agent_id` inside a post body. Routes the next turn to that agent. | parsed from content |
-| **Agent main snapshot** | Pre-thread snapshot of every participant's `agent:<id>:main` pointer, so we can restore it after the run. | `agent_main_snapshot` event |
+| **Squad** | A persistent group of agents — name, emoji, description, members[], chair. **Roughly = a Slack channel** (a topic-grouping container that holds many threads). | `~/.openclaw/openforge/squads.json` |
+| **Thread** | A bounded topic of discussion. Has an opening post, N follow-up posts, and ends when the operator closes it. Belongs to one squad. **Standup is one kind of thread; ad-hoc topic is another.** | `~/.openclaw/openforge/threads/<thread-id>/events.jsonl` |
+| **Post** | One contribution to a thread. Carries speaker (agent id or `scott`), content, timestamp, mentions[]. Slack-style: no title, just content; first line displayed as preview. | `post_added` event |
+| **Mention** | `@agent_id` inside a post body. Routes the next turn to that agent (spawns an `openclaw agent` subprocess with the focused prompt). | parsed from content |
+| **Agent main snapshot** | Pre-mention snapshot of every participant's `agent:<id>:main` pointer, so we can restore it after the run. | `agent_main_snapshot` event |
 | **Event** | The atomic unit of state change. Append-only. The truth source. | One JSON object per line in `events.jsonl` |
 
 ### Thread lifecycle
 
 ```
-opening (chair speaks, sets agenda)
+opening post (operator or agent writes the first message)
   ↓
-topic 1 (chair intro → @-routed posts → chair wrap)
-topic 2
-…
-topic N
+post → post → post …    (any participant; @ routes the next agent)
   ↓
-closing (chair summarises actions / blockers / decisions, says “散会”)
+operator closes (manual) OR auto-close (silence timeout / max turns)
 ```
 
 A thread terminates when:
-- chair posts the closing (normal),
-- `max_turns` per topic is exhausted across all topics (timeout),
-- `max_silence` heartbeats with no new mentions (stalled),
-- the operator manually marks the thread done (UI).
+- the operator marks it closed (UI button or post `kind=closing`),
+- `max_silence` heartbeats pass with no new mentions (stalled, auto-archive),
+- `max_turns` per thread is exhausted (runaway safety),
+- a participating agent fails terminally (UI surfaces, operator decides).
+
+### Mapping to Slack
+
+| Slack | OpenForge |
+|---|---|
+| Workspace | one OpenForge instance per host |
+| **Channel** | **Squad** |
+| Channel's main message list | the list of threads in a squad |
+| **Thread (channel's "Threads" panel)** | **Thread** |
+| Message | Post |
+| @mention | @mention (also assigns next turn) |
+| User group | Squad members[] |
+| DM | not in scope (use sessions_send) |
 
 ---
 
-## 5. Functional requirements
+## 5. Functional requirements (P0)
 
-### F1 — Threads as the unit of work
-- A thread MUST have a deterministic `thread_id` (today: the date string).
-- Every event in `events.jsonl` MUST be parseable in isolation and be append-only.
-- A thread MUST be replayable: rerunning the projection over the same `events.jsonl` MUST produce an identical model.
-
-### F2 — Squad as the unit of organisation
+### F1 — Squad as the unit of organisation
 - A squad MUST have at least one member and exactly one chair (chair MUST be a member).
 - Squads MUST be created, listed, fetched, and deleted via HTTP API.
-- The default squad MUST exist on first run if no `squads.json` is present.
+- A default squad MUST exist on first run if no `squads.json` is present.
 - Deletion of the default squad MUST be refused.
 
-### F3 — Multi-agent orchestration without polluting main
-- Before issuing any per-agent turn for a thread, OpenForge MUST snapshot every participant's `agent:<id>:main.sessionId` and `sessionFile`.
+### F2 — Threads as the unit of work
+- Any operator action MUST be able to create a thread in any squad they can see.
+- A thread MUST have a deterministic `thread_id` (ULID-shaped or timestamp-prefixed) **decoupled from any date**.
+- The first post supplied at creation time MUST become the thread's `opening` post.
+- A thread MUST NOT have its own "title" field — its preview is derived from the first ≤ 80 chars of the opening post body (Slack style).
+- Every event in `events.jsonl` MUST be parseable in isolation and append-only.
+- A thread MUST be replayable: rerunning the projection over the same `events.jsonl` MUST produce an identical model.
+
+### F3 — Posts and @mention routing
+- A post MUST have an `id`, `ts`, `speaker`, `content`, `mentions[]` (parsed from content).
+- If `speaker` is the operator and the post mentions one or more agents, OpenForge MUST spawn an `openclaw agent` subprocess for each mentioned agent (sequentially, in mention order), feed it the focused prompt (thread context + this post), and append the agent's reply as a new `post_added` event.
+- If an agent's reply itself mentions another agent, the chain continues (bounded by `max_turns`).
+- Edits MUST be modelled as new posts marking the prior one `superseded` rather than mutating the original.
+
+### F4 — Multi-agent orchestration without polluting main
+- Before issuing any per-agent turn, OpenForge MUST snapshot every participant's `agent:<id>:main.sessionId` and `sessionFile`.
 - Snapshots MUST be persisted into `events.jsonl` so a hard crash is recoverable from disk only.
-- On normal thread end and via `atexit`, OpenForge MUST restore each pointer back to its snapshot, but ONLY if the current pointer is still one OpenForge created (`standup-`, `forge-`, or legacy `huddle-` prefixes).
+- On normal thread end and via `atexit`, OpenForge MUST restore each pointer back to its snapshot, but ONLY if the current pointer is still one OpenForge created (`forge-` prefix; legacy `standup-` / `huddle-` accepted during migration).
 - A standalone rescue tool (`restore_main_session.py`) MUST exist and MUST back up the affected `sessions.json` before mutating it.
 
-### F4 — Slack-style three-pane web UI
-- **Left rail**: squad list, brand mark, "+ New Squad" modal.
-- **Middle rail**: the threads of the currently-selected squad, sort by recency, "+" to start a new thread.
-- **Right pane**: the currently-selected thread — header (squad / chair / participants / status), topic tabs (opening / T1..N / closing), post stream (speaker · time · content with @mention chips and inline `code`), composer placeholder.
-- The UI MUST reflect new events within ≤ 60 s without manual refresh (today: poll; future: push).
-- Bound to `127.0.0.1` by default. Non-loopback bind MUST require a bearer token.
+### F5 — Slack-style three-pane web UI
 
-### F5 — Zero deploy footprint
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ ┌────────┐ ┌──────────────────┐ ┌──────────────────────────┐  │
+│ │ SQUADS │ │  THREADS         │ │  THREAD DETAIL           │  │
+│ │ • def  │ │  • thread A      │ │  ┌─ header (squad/...)──┐│  │
+│ │ • front│ │  • thread B    ← │ │  │  posts stream         ││  │
+│ │ + New  │ │  • thread C      │ │  │  ...                  ││  │
+│ └────────┘ │                  │ │  └──────────────────────┘│  │
+│            │  [compose] [↵]   │ │  [compose post] [↵]      │  │
+│            └──────────────────┘ └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Left rail**: squad list, brand mark, "+ New Squad" modal.
+- **Middle rail**: the threads of the currently-selected squad, sorted by most-recent-activity, **with a composer at the bottom** for typing a new thread (one input field; Enter = create thread + post the typed content as the opening post; Shift+Enter for newline).
+- **Right pane**: the currently-selected thread — header (squad / participants / status / close button), post stream (speaker · time · content with @mention chips and inline `code`), **a real composer at the bottom** for typing the next post (Enter to send; `@` opens an agent picker).
+- The UI MUST reflect new events within ≤ 60 s without manual refresh (today: poll; future: SSE / WebSocket push).
+- The UI MUST bind to `127.0.0.1` by default. Non-loopback bind MUST require a bearer token.
+
+### F6 — Zero deploy footprint
 - Python standard library only on the server side.
 - Vanilla JS (no bundler, no framework, no npm) on the web side.
-- A fresh checkout MUST be runnable with two commands: `python3 server.py` and `python3 run_standup.py`.
+- A fresh checkout MUST be runnable with one command: `python3 server.py`.
 
-### F6 — Auditability
+### F7 — Auditability
 - Every state change MUST be an event with a unique `id`, an ISO-8601 `ts`, and a `kind`.
 - The markdown view MUST be a pure projection — editing it manually MUST NOT affect future event playback.
 - Past posts MUST be marked `superseded` rather than deleted, so the audit trail is preserved.
 
 ---
 
-## 6. Non-functional requirements
+## 6. Explicitly removed from P0
 
-| Property | Target |
-|---|---|
-| Cold start to first paint of UI | < 1 s |
-| Time to first event served via API | < 50 ms |
-| Single-thread event-log size before degradation | ≥ 5 MB / day |
-| Token usage per default 5-agent thread (chair + 4 members + closing) | < 200 k tokens |
-| Concurrent threads per host | ≤ 1 per date today; ≤ N per host once thread_id ≠ date |
-| Crash recovery | Reading `events.jsonl` after `kill -9` MUST yield a valid (possibly truncated) projection |
-| Backup story | Just commit the `~/.openclaw/standups/` tree to git |
+These were in v0.1 PRD but are now **deferred or dropped**:
+
+- ❌ **Standup as a first-class feature.** `run_standup.py` will be archived; standup becomes "just a thread you happen to start every morning". May come back later as a scheduled-thread template, not a separate code path.
+- ❌ **Topic tabs inside a thread.** (T1 / T2 / closing tabs in the UI.) A thread is a single linear post stream, like a Slack thread, until evidence says otherwise.
+- ❌ **Date-based thread identity.** `thread_id` is no longer the date.
+- ❌ **Linear-style task fields** (status, priority, assignee, due, cycle). Whole P1, separate PRD.
 
 ---
 
-## 7. Out of scope (explicit)
+## 7. Out of scope (still)
 
-- ❌ **Multi-user auth, RBAC, audit signing**. OpenForge is a personal cockpit.
-- ❌ **Hosted SaaS / multi-tenant**.
-- ❌ **General human chat**. There is no "@channel announce", no "DM another human".
-- ❌ **A database**. JSONL on disk + `fcntl` lock is the answer until benchmarks say otherwise.
-- ❌ **Agent execution sandboxing**. OpenClaw already owns that layer.
-- ❌ **Custom LLM model routing**. Each agent picks its own model via OpenClaw config.
+- ❌ Multi-user auth, RBAC, audit signing.
+- ❌ Hosted SaaS / multi-tenant.
+- ❌ General human chat.
+- ❌ A database. JSONL on disk + `fcntl` lock is the answer until benchmarks say otherwise.
+- ❌ Agent execution sandboxing — OpenClaw already owns that layer.
+- ❌ Custom LLM model routing — each agent picks its own model via OpenClaw config.
 
 ---
 
@@ -157,19 +191,20 @@ A thread terminates when:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ ~/.openclaw/standups/                                            │
+│ ~/.openclaw/openforge/                                           │
 │   ├── squads.json                       ← squad CRUD             │
-│   ├── data/<YYYY-MM-DD>/                                         │
+│   ├── threads/<thread-id>/                                       │
 │   │   ├── events.jsonl                  ← truth source           │
-│   │   └── .lock                         ← fcntl advisory lock    │
-│   └── standup-<date>.md                 ← derived markdown       │
+│   │   ├── .lock                         ← fcntl advisory lock    │
+│   │   └── thread.md                     ← derived markdown       │
+│   └── threads-index.json                ← (squad → [thread_id])  │
 └──────────────────────────────────────────────────────────────────┘
                 ▲                 ▲                ▲
                 │ writes          │ reads          │ writes
         ┌───────┴────────┐  ┌─────┴────────┐  ┌────┴───────────────┐
-        │ run_standup.py │  │  server.py   │  │ restore_main_…py    │
-        │ snapshot+      │  │  HTTP + WS   │  │ rescue (offline)    │
-        │ restore main   │  │              │  │                     │
+        │ post_router    │  │  server.py   │  │ restore_main_…py    │
+        │ (spawned per   │  │  HTTP        │  │ rescue (offline)    │
+        │  @mention)     │  │              │  │                     │
         └────────────────┘  └──────────────┘  └─────────────────────┘
                 ▲                 ▲
                 │ subprocess       │ static files
@@ -183,86 +218,77 @@ A thread terminates when:
 
 | Module | Responsibility |
 |---|---|
-| `forge_store.py` | event append/read with locking; projection (events → meeting model); markdown rendering; squads CRUD |
-| `run_standup.py` | thread orchestration loop; calls `openclaw agent --session-id …`; snapshots/restores main pointers |
+| `forge_store.py` | thread/squad/event CRUD; projection (events → thread model); markdown rendering |
+| `post_router.py` | when an operator post mentions agents, spawn `openclaw agent` subprocesses sequentially and append replies as posts (replaces `run_standup.py`) |
 | `restore_main_session.py` | offline emergency: detect tainted pointers, restore from latest untainted candidate |
-| `migrate_md_to_jsonl.py` | one-shot importer for legacy markdown |
-| `server.py` | HTTP API (`/api/squads`, `/api/standups`, `/api/standup/<date>`, `/api/run`) + static serving |
+| `server.py` | HTTP API: squads CRUD, threads CRUD, posts append, static serving |
 | `web/` | Three-pane UI; vanilla JS + CSS variables |
 
-### Event schema
+### Event schema (v0.4)
 
 ```jsonl
-{"id":"evt_…","ts":"…","kind":"meeting_started","date":"…","title":"…","chair":"milk","members":["milk","sentry",…]}
-{"id":"evt_…","ts":"…","kind":"agent_main_snapshot","snapshots":{"milk":{…},"sentry":{…},…}}
-{"id":"evt_…","ts":"…","kind":"topic_started","topic_id":"t1_…","idx":1,"title":"昨日进度","topic_kind":"topic"}
-{"id":"evt_…","ts":"…","kind":"post_added","post_id":"p_…","topic_id":"t1_…","speaker":"sentry","content":"…","mentions":["bugfix"],"parent_post_id":null}
+{"id":"evt_…","ts":"…","kind":"thread_started","thread_id":"th_…","squad_id":"default","created_by":"scott"}
+{"id":"evt_…","ts":"…","kind":"agent_main_snapshot","snapshots":{"milk":{…},…}}
+{"id":"evt_…","ts":"…","kind":"post_added","post_id":"p_…","speaker":"scott","content":"…","mentions":["milk"],"parent_post_id":null}
 {"id":"evt_…","ts":"…","kind":"post_superseded","post_id":"p_…","by_post_id":"p_…"}
-{"id":"evt_…","ts":"…","kind":"meeting_finished","date":"…"}
+{"id":"evt_…","ts":"…","kind":"thread_closed","thread_id":"th_…","closed_by":"scott"}
 ```
+
+Legacy `meeting_started` / `topic_started` / `meeting_finished` events MUST still be projectable for the first one or two releases so existing standup logs continue to render.
 
 ### Concurrency
 
-- Every writer MUST acquire `fcntl.LOCK_EX` on `data/<thread>/.lock` before appending.
+- Every writer MUST acquire `fcntl.LOCK_EX` on `threads/<thread-id>/.lock` before appending.
 - Readers MAY acquire `fcntl.LOCK_SH`; the JSONL parser MUST tolerate a half-written tail line.
-- The server's `/api/run` endpoint MUST 409 if the day-lock is held.
+- A thread's `POST /posts` endpoint MUST 409 if the thread-lock is held by a router subprocess.
 
 ---
 
 ## 9. Comparison
 
-| | OpenForge | Multica | Slack | AutoGen GroupChat | Anthropic Agent Teams |
+| | OpenForge | Multica | Slack | Linear | AutoGen GroupChat |
 |---|---|---|---|---|---|
-| Squad / team object | ✅ | ✅ | ✅ (channel) | ❌ | ✅ |
-| Thread = task | ✅ | ✅ (issue) | ❌ (chat is open-ended) | ❌ | ❌ |
-| @mention assigns | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| Persistent agent identity | via OpenClaw | via daemon | n/a | ❌ | ✅ |
-| Append-only event log | ✅ | DB | DB | ❌ | ❌ |
+| Squad / channel object | ✅ | ✅ | ✅ | ✅ (team) | ❌ |
+| Thread = bounded topic | ✅ | ✅ | ✅ | ✅ (issue) | ❌ |
+| @mention assigns next agent | ✅ | ✅ | ❌ | ⚠️ | ⚠️ |
+| Persistent agent identity | via OpenClaw | via daemon | n/a | n/a | ❌ |
+| Append-only event log | ✅ | DB | DB | DB | ❌ |
 | Markdown derived view | ✅ | ❌ | export | ❌ | ❌ |
-| Self-hosted, zero-dep | ✅ | partial | ❌ | self-hosted | ❌ |
-| Crash-safe replay | ✅ | DB tx | n/a | ❌ | ⚠️ |
-| Web UI | ✅ | ✅ | ✅ | ❌ | TUI |
+| Self-hosted, zero-dep | ✅ | partial | ❌ | ❌ | self-hosted |
+| Crash-safe replay | ✅ | DB tx | n/a | n/a | ❌ |
+| Web UI | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 ---
 
-## 10. Roadmap (selected — see TODO.md for the live list)
+## 10. Roadmap
 
-### Now (v0.3.x)
-- ✅ JSONL event log + fcntl locking
-- ✅ snapshot/restore agent main pointers
-- ✅ Slack-style three-pane web UI
-- ✅ Squad CRUD (server + UI)
-- ✅ MIT licence + CI
-- ⏳ End-to-end verification: standup with restore lifecycle proven
+### Now (v0.4 — this PRD)
+- 🚧 Drop `run_standup.py` from the primary flow.
+- 🚧 Migrate storage: `data/<date>/events.jsonl` → `threads/<thread-id>/events.jsonl`.
+- 🚧 `POST /api/squads/<id>/threads` (create thread + opening post).
+- 🚧 `POST /api/threads/<id>/posts` (append post; route mentioned agents via `post_router`).
+- 🚧 Middle rail: THREADS list + bottom composer.
+- 🚧 Right pane: real composer + close-thread button.
 
-### Next (v0.4)
-- Squad-aware `run_standup.py --squad <id>`
-- Web composer (operator can post into a thread)
-- Reply-to-post threading
-- Reactions
-- WebSocket push for sub-second updates
+### Next (v0.5)
+- Reply-to-post nesting (`parent_post_id`).
+- Reactions.
+- SSE / WebSocket push.
+- Squad CRUD UI parity (edit / archive / member toggle).
+- Scheduled-thread templates (the standup use-case returns as a thin layer).
 
-### Later (v0.5+)
-- OpenForge cron integration (use OpenClaw `cron` tool to start scheduled threads)
-- OpenProse-driven thread templates
-- Multi-thread per day (ad-hoc threads decoupled from `<date>`)
-- Search across threads
+### P1 — Task management (separate PRD)
+- Linear-style fields on a thread: status / priority / assignee / due / cycle.
+- Board view (kanban by status).
+- Cycle view (sprint-style).
+- Filter / search.
 
 ---
 
 ## 11. Open questions
 
-1. **Thread identity post-v0.4**: stay with `<date>` or move to `<squad>/<thread-id>`? Affects URL stability.
-2. **Composer authentication**: when the operator types in the web composer, do we need any second-factor before spawning agents?
-3. **Squad permissions**: are all members equal, or does only the chair have authority to spawn threads / edit the squad?
-4. **Failure-mode UX**: when an agent fails mid-thread (timeout, exit non-zero), should the UI surface a "retry this turn" affordance, or is that always a CLI-only operation?
+1. **Thread close semantics**: is a closed thread read-only, or can posts still be appended? (Slack channels can always be re-opened; Linear issues, once closed, accept comments but not status changes.)
+2. **Per-thread squad membership**: if a thread `@`s an agent who is NOT a member of the squad, is it added to the squad implicitly, or refused?
+3. **Composer auth**: when the operator types in the web composer, do we need any second-factor before spawning agents?
+4. **Multi-thread concurrency**: today one thread can run agents at a time per host (advisory lock). Do we need cross-thread parallelism, or is sequential enough for one operator?
 5. **OpenClaw upstream feature request**: should we petition for a real `agent.send_to(sessionKey)` CLI affordance so we can drop the snapshot/restore workaround entirely?
-
----
-
-## 12. Naming notes
-
-- **OpenForge** — the act of forging. Each thread is a forging session: raw inputs in, refined outputs out, multiple workers around the anvil.
-- **Squad** vs Team vs Crew — settled on "squad" because Multica uses it and the term has weight in product copy ("agent squad" reads better than "agent team").
-- **Thread** vs Meeting vs Channel — settled on **thread** in v0.4 onwards; "meeting" only describes the standup use case, "channel" is too chat-coded.
-- The historical name was **Huddle** (as of 2026-05-15 morning); see commit `21bff01` for the rename.
