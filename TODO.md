@@ -5,26 +5,25 @@
 
 ## 🔥 P0 — must-do before next dogfood round
 
-- [ ] **Run a full standup on v0.3.1** to verify `agent_main_snapshot` + restore actually keeps `agent:<id>:main` clean across the entire run lifecycle (success / failure / Ctrl-C).
-- [ ] Add a regression test that (a) snapshots a fake agent main, (b) clobbers it via the same path `run_standup` uses, (c) confirms the atexit / explicit restore puts the original sessionId back.
-- [ ] Decide canonical event filename: keep `standups/data/<date>/events.jsonl` or migrate to `forge/<squad>/<thread-id>/events.jsonl` (the second matches the new product framing of "thread = task" but breaks the legacy importer).
+- [ ] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. Reuses the snapshot/restore logic from `run_standup.py`.
+- [ ] **Migrate-or-archive `run_standup.py`**: it is no longer in the primary flow; either turn it into a thin wrapper that creates a thread + opening post, or archive it under `legacy/`.
+- [ ] Regression test: (a) snapshot a fake agent main, (b) clobber via the same path the post router uses, (c) confirm atexit restores the original sessionId.
+- [ ] **Standup-as-thread template**: schema for a `forge-template` that pre-fills a thread opening post (re-implement the standup use-case as a thin layer once routing is in).
 
 ## 🎯 P1 — product features (next 1–2 weeks)
 
-- [ ] **Squad-aware `run_standup.py`**: `--squad <id>` reads members/chair from `squads.json`; current behaviour stays as the default.
-- [ ] **Web composer**: real "post as Scott" path. Writes a `post_added` event with `speaker: scott`, `actor_kind: human` and feeds the next agent automatically.
-- [ ] **@assign in web**: clicking an `@mention` chip prompts to enqueue that agent; respects squad membership.
-- [ ] **Reply-to-post threading**: nested replies under a parent post (`parent_post_id` already in the schema).
-- [ ] **Reactions**: `reaction_added` / `reaction_removed` events; UI toolbar already has a placeholder.
-- [ ] **WebSocket push**: replace 60 s poll with a per-connection event tail of `events.jsonl`.
+- [ ] **@agent picker in composer**: typing `@` in either composer opens an inline picker of the squad's members.
+- [ ] **Reply-to-post threading**: nested replies under a parent post (`parent_post_id` already in the schema; UI not yet).
+- [ ] **Reactions**: `reaction_added` / `reaction_removed` events; UI toolbar (already removed in v0.4 redesign; reinstate as Slack-style hover bar).
+- [ ] **SSE / WebSocket push**: replace the 8 s poll with a per-connection event tail of `events.jsonl`.
 - [ ] **Squad CRUD UI parity**: edit / archive / member toggle from the web (POST done; PATCH/DELETE flows need UI).
-- [ ] **Cron integration**: docs + an example `cron` job to start a standup on a schedule (uses existing OpenClaw `cron` tool, not GitHub Actions).
+- [ ] **Reopen / archive thread** semantics in the API + UI.
+- [ ] **Cron integration**: docs + an example `cron` job that POSTs to `/api/squads/<id>/threads` on a schedule (uses the OpenClaw `cron` tool).
 
 ## 🛡 P1 — hardening & ops
 
-- [ ] **Concurrent-thread guard**: today the day-lock is per-date; once threads exist independent of a date, lock per `thread_id`.
 - [ ] **Session pollution self-test on startup**: `server.py` prints a warning if any default agent's main is currently tainted.
-- [ ] **Disk usage watcher**: warn if `events.jsonl` for a single date exceeds 5 MB (tail rendering will get slow).
+- [ ] **Disk usage watcher**: warn if `events.jsonl` for a single thread exceeds 5 MB (tail rendering will get slow).
 - [ ] **Failure replay**: a CLI to re-run only the failed `post_added` calls of a given thread (subprocess timeouts, agent errors).
 - [ ] **Bearer token persistence**: when `--host 0.0.0.0`, store/load token from `~/.openclaw/openforge/server-token` so restarts don't break the bookmarked URL.
 
@@ -62,6 +61,8 @@
 
 ## ✅ Recently shipped
 
+- 2026-05-16 — `feat: Slack-shaped threads (v0.4) — squad/thread/post API + middle & right composers, drop standup from UI`
+- 2026-05-16 — `docs: PRD v0.2 (Slack-for-topics is P0; Linear-style tasks deferred to P1)`
 - 2026-05-15 — `ci: add GitHub Actions workflow` (`a865cd9`)
 - 2026-05-15 — `chore: add MIT LICENSE` (`e91e57a`)
 - 2026-05-15 — `feat(brand): rename Huddle → OpenForge` (`21bff01`)

@@ -1,47 +1,56 @@
-// OpenForge web app — squads + threads UI, vanilla JS.
+// OpenForge web app — squad / thread / posts, vanilla JS, Slack-shaped.
 
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
+const POLL_MS = 8000;
 
 const els = {
+  // squad rail
   squadList: document.getElementById('squad-list'),
-  squadTitle: document.getElementById('squad-title'),
-  squadDescription: document.getElementById('squad-description'),
-  meetingList: document.getElementById('meeting-list'),
   btnNewSquad: document.getElementById('btn-new-squad'),
-  btnRunSquad: document.getElementById('btn-run-squad'),
-  btnRefresh: document.getElementById('btn-refresh'),
   statusDot: document.getElementById('status-dot'),
   statusText: document.getElementById('status-text'),
+
+  // thread rail
+  squadTitle: document.getElementById('squad-title'),
+  squadDescription: document.getElementById('squad-description'),
+  threadList: document.getElementById('thread-list'),
+  btnRefreshThreads: document.getElementById('btn-refresh-threads'),
+  threadComposerInput: document.getElementById('thread-composer-input'),
+  threadComposerCount: document.getElementById('thread-composer-count'),
+
+  // detail pane
+  detailTitle: document.getElementById('detail-title'),
+  detailSub: document.getElementById('detail-sub'),
+  detailStatus: document.getElementById('detail-status'),
+  detailParticipants: document.getElementById('detail-participants'),
+  btnCloseThread: document.getElementById('btn-close-thread'),
+  btnRefreshDetail: document.getElementById('btn-refresh-detail'),
+  postList: document.getElementById('post-list'),
+  postComposerInput: document.getElementById('post-composer-input'),
+  btnSendPost: document.getElementById('btn-send-post'),
+
+  // modal
   modal: document.getElementById('squad-modal'),
   form: document.getElementById('squad-form'),
   btnCloseModal: document.getElementById('btn-close-modal'),
   btnCancelModal: document.getElementById('btn-cancel-modal'),
   memberCheckboxes: document.getElementById('member-checkboxes'),
   chairSelect: document.getElementById('chair-select'),
-  threadTitle: document.getElementById('thread-title'),
-  threadSub: document.getElementById('thread-sub'),
-  meetingStatus: document.getElementById('meeting-status'),
-  headerMembers: document.getElementById('header-members'),
-  topicTabs: document.getElementById('topic-tabs'),
-  threadList: document.getElementById('thread-list'),
-  composer: document.getElementById('composer'),
-  composerInput: document.getElementById('composer-input'),
-  btnSend: document.getElementById('btn-send'),
 };
 
 const state = {
   squads: [],
-  squadDetails: new Map(),
+  squadDetails: new Map(),  // squad_id -> { squad, threads }
   currentSquadId: null,
-  currentDate: null,
-  currentMeeting: null,
-  currentSectionIdx: 0,
-  running: false,
+  currentThreadId: null,
+  currentThread: null,
+  pollTimer: null,
 };
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
-const AGENT_COLOR_CLASS = new Map(AGENTS.map(agent => [agent, `av-${agent}`]));
+const AGENT_COLOR_CLASS = new Map(AGENTS.map(a => [a, `av-${a}`]));
 
+// ─── utils ────────────────────────────────────────────────────────────
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -62,15 +71,32 @@ function avatarClass(name) {
 
 function renderBody(text) {
   let html = escapeHtml(text);
-  html = html.replace(MENTION_RE, (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
-  html = html.replace(/`([^`\n]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
+  html = html.replace(MENTION_RE,
+    (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
+  html = html.replace(/`([^`\n]+)`/g,
+    (_, code) => `<code>${escapeHtml(code)}</code>`);
   return html;
 }
 
-function tabLabel(section) {
-  if (section.kind === 'opening') return 'opening';
-  if (section.kind === 'closing') return 'closing';
-  return `T${section.idx - 1}`;
+function formatRelative(ts) {
+  if (!ts) return '';
+  const t = new Date(ts).getTime();
+  if (!Number.isFinite(t)) return ts;
+  const diff = Math.max(0, Date.now() - t);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function autosize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
 }
 
 async function apiJson(url, options) {
@@ -80,6 +106,7 @@ async function apiJson(url, options) {
   return data;
 }
 
+// ─── squads ───────────────────────────────────────────────────────────
 async function loadSquads() {
   setStatus('加载 squads...');
   try {
@@ -91,19 +118,19 @@ async function loadSquads() {
     if (!state.currentSquadId && state.squads.length) {
       state.currentSquadId = state.squads[0].id;
     }
-    renderSquads();
-    await renderCurrentSquadShell();
+    renderSquadRail();
+    renderThreadRail();
     setStatus(`已加载 ${state.squads.length} 个 squad`);
   } catch (err) {
     setStatus(`加载失败: ${err.message}`, false);
   }
 }
 
-function renderSquads() {
+function renderSquadRail() {
   els.squadList.innerHTML = '';
   state.squads.forEach(squad => {
     const detail = state.squadDetails.get(squad.id);
-    const count = detail?.meetings?.length || 0;
+    const count = detail?.threads?.length || 0;
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -119,141 +146,157 @@ function renderSquads() {
   });
 }
 
-async function loadMeeting(date) {
-  return apiJson(`/api/standup/${encodeURIComponent(date)}`);
+async function selectSquad(squadId) {
+  state.currentSquadId = squadId;
+  state.currentThreadId = null;
+  state.currentThread = null;
+  renderSquadRail();
+  renderThreadRail();
+  renderDetail();
+  await refreshThreadsForCurrentSquad();
 }
 
-async function renderCurrentSquadShell() {
+async function refreshThreadsForCurrentSquad() {
+  if (!state.currentSquadId) return;
+  try {
+    const detail = await apiJson(`/api/squads/${encodeURIComponent(state.currentSquadId)}`);
+    state.squadDetails.set(state.currentSquadId, detail);
+    renderSquadRail();
+    renderThreadRail();
+  } catch (err) {
+    setStatus(`thread 列表加载失败: ${err.message}`, false);
+  }
+}
+
+// ─── thread rail (middle) ─────────────────────────────────────────────
+function renderThreadRail() {
   const detail = state.squadDetails.get(state.currentSquadId);
   const squad = detail?.squad || state.squads.find(s => s.id === state.currentSquadId);
   if (!squad) {
     els.squadTitle.textContent = 'No squads';
     els.squadDescription.textContent = '';
-    els.meetingList.innerHTML = '';
-    renderMeetingShell(null);
+    els.threadList.innerHTML = '';
     return;
   }
   els.squadTitle.textContent = `${squad.emoji || '#'} ${squad.name || squad.id}`;
-  els.squadDescription.textContent = squad.description || `${squad.chair} 主持 · ${squad.members.length} members`;
-  renderMeetingList(detail?.meetings || []);
-  const meetings = detail?.meetings || [];
-  if (!meetings.some(meeting => meeting.date === state.currentDate)) {
-    state.currentDate = meetings[0]?.date || null;
-  }
-  if (state.currentDate) {
-    await selectMeeting(state.currentDate);
-  } else {
-    renderMeetingShell(null);
-  }
+  els.squadDescription.textContent = squad.description
+    || `${squad.chair} chairs · ${squad.members.length} members`;
+  renderThreadList(detail?.threads || []);
 }
 
-async function selectSquad(id) {
-  state.currentSquadId = id;
-  state.currentDate = null;
-  renderSquads();
-  await renderCurrentSquadShell();
-}
-
-function renderMeetingList(meetings) {
-  const sorted = [...meetings].sort((a, b) => b.date.localeCompare(a.date));
-  els.meetingList.innerHTML = '';
-  if (!sorted.length) {
-    els.meetingList.innerHTML = '<li class="empty-row">No meetings yet.</li>';
+function renderThreadList(threads) {
+  els.threadList.innerHTML = '';
+  if (!threads.length) {
+    els.threadList.innerHTML =
+      '<li class="empty-row">还没有 thread，在下面输入一条开始。</li>';
     return;
   }
-  sorted.forEach(meeting => {
+  threads.forEach(t => {
     const li = document.createElement('li');
-    li.className = 'meeting-item' + (meeting.date === state.currentDate ? ' active' : '');
+    li.className = 'thread-item' + (t.thread_id === state.currentThreadId ? ' active' : '');
+    const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
     li.innerHTML = `
       <button type="button">
-        <span class="meeting-live ${meeting.in_progress ? 'is-live' : ''}"></span>
-        <span class="meeting-main">
-          <span class="meeting-date">${escapeHtml(meeting.date)}</span>
-          <span class="meeting-meta">${meeting.topic_count || 0} topics · ${meeting.post_count || 0} posts</span>
-        </span>
+        <div class="thread-line-1">
+          ${liveDot}
+          <span class="thread-preview">${escapeHtml(t.preview || '(empty)')}</span>
+        </div>
+        <div class="thread-line-2">
+          <span class="thread-by">${escapeHtml(t.created_by)}</span>
+          <span class="dot-sep">·</span>
+          <span>${t.post_count} ${t.post_count === 1 ? 'post' : 'posts'}</span>
+          <span class="dot-sep">·</span>
+          <span class="thread-time">${escapeHtml(formatRelative(t.last_post_at))}</span>
+        </div>
       </button>
     `;
-    li.querySelector('button').onclick = () => selectMeeting(meeting.date);
-    els.meetingList.appendChild(li);
+    li.querySelector('button').onclick = () => selectThread(t.thread_id);
+    els.threadList.appendChild(li);
   });
 }
 
-function renderMeetingShell(meeting) {
-  if (!meeting) {
-    els.threadTitle.textContent = 'No meeting selected';
-    els.threadSub.textContent = '';
-    els.meetingStatus.textContent = 'idle';
-    els.headerMembers.innerHTML = '';
-    els.topicTabs.innerHTML = '';
-    els.threadList.innerHTML = '<div class="empty">Select a meeting to read the thread.</div>';
-    return;
-  }
-  els.threadTitle.textContent = meeting.title || meeting.date;
-  els.threadSub.textContent = `${meeting.chair} · ${meeting.members.length} members`;
-  els.meetingStatus.textContent = meeting.in_progress ? 'in progress' : 'done';
-  renderHeaderMembers(meeting.members);
-  renderTopicTabs(meeting.sections);
-  renderThread();
-}
-
-async function selectMeeting(date) {
-  state.currentDate = date;
-  const detail = state.squadDetails.get(state.currentSquadId);
-  renderMeetingList(detail?.meetings || []);
+// ─── detail (right pane) ──────────────────────────────────────────────
+async function selectThread(threadId) {
+  state.currentThreadId = threadId;
+  renderThreadRail();
   try {
-    state.currentMeeting = await loadMeeting(date);
-    state.currentSectionIdx = 0;
-    renderMeetingShell(state.currentMeeting);
-    setStatus(`已加载 ${date}`);
+    state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}`);
+    renderDetail();
+    setStatus(`已加载 ${threadId}`);
   } catch (err) {
-    state.currentMeeting = null;
-    renderMeetingShell(null);
-    setStatus(`会议加载失败: ${err.message}`, false);
+    state.currentThread = null;
+    renderDetail();
+    setStatus(`thread 加载失败: ${err.message}`, false);
   }
 }
 
-function renderHeaderMembers(members) {
-  els.headerMembers.innerHTML = '';
-  members.slice(0, 5).forEach(member => {
+async function refreshCurrentThread() {
+  if (!state.currentThreadId) return;
+  try {
+    state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}`);
+    renderDetail({ keepScroll: true });
+  } catch (err) {
+    /* ignore transient */
+  }
+}
+
+function renderDetail({ keepScroll = false } = {}) {
+  const t = state.currentThread;
+  if (!t) {
+    els.detailTitle.textContent = state.currentSquadId
+      ? '选择一个 thread'
+      : '选择一个 squad';
+    els.detailSub.textContent = '';
+    els.detailStatus.textContent = 'idle';
+    els.detailStatus.className = 'status-chip';
+    els.detailParticipants.innerHTML = '';
+    els.btnCloseThread.disabled = true;
+    els.postComposerInput.disabled = true;
+    els.btnSendPost.disabled = true;
+    els.postList.innerHTML = '<div class="empty">从中栏选择一个 thread，或在中栏底部输入开始一个新 thread。</div>';
+    return;
+  }
+  els.detailTitle.textContent = t.preview || '(empty)';
+  const startedRel = formatRelative(t.started_at);
+  els.detailSub.textContent =
+    `${t.created_by} started · ${startedRel} · ${t.post_count} posts`;
+  els.detailStatus.textContent = t.in_progress ? 'open' : 'closed';
+  els.detailStatus.className = 'status-chip ' + (t.in_progress ? 'chip-open' : 'chip-closed');
+  renderParticipants(t.participants);
+  els.btnCloseThread.disabled = !t.in_progress;
+  els.btnCloseThread.textContent = t.in_progress ? 'Close' : 'Closed';
+  els.postComposerInput.disabled = !t.in_progress;
+  els.btnSendPost.disabled = !t.in_progress;
+
+  const prevScroll = els.postList.scrollTop;
+  const wasNearBottom = els.postList.scrollHeight - prevScroll - els.postList.clientHeight < 80;
+  renderPosts(t.posts);
+  if (keepScroll && !wasNearBottom) {
+    els.postList.scrollTop = prevScroll;
+  } else {
+    els.postList.scrollTop = els.postList.scrollHeight;
+  }
+}
+
+function renderParticipants(members) {
+  els.detailParticipants.innerHTML = '';
+  (members || []).slice(0, 6).forEach(name => {
     const av = document.createElement('div');
-    av.className = `mini-avatar ${avatarClass(member)}`;
-    av.title = member;
-    av.textContent = avatarLabel(member);
-    els.headerMembers.appendChild(av);
+    av.className = `mini-avatar ${avatarClass(name)}`;
+    av.title = name;
+    av.textContent = avatarLabel(name);
+    els.detailParticipants.appendChild(av);
   });
 }
 
-function renderTopicTabs(sections) {
-  els.topicTabs.innerHTML = '';
-  sections.forEach((section, idx) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'topic-tab' + (idx === state.currentSectionIdx ? ' active' : '');
-    btn.textContent = tabLabel(section);
-    btn.title = section.title;
-    btn.onclick = () => {
-      state.currentSectionIdx = idx;
-      renderTopicTabs(sections);
-      renderThread();
-    };
-    els.topicTabs.appendChild(btn);
-  });
-}
-
-function renderThread() {
-  const meeting = state.currentMeeting;
-  const section = meeting?.sections?.[state.currentSectionIdx];
-  if (!section) {
-    els.threadList.innerHTML = '<div class="empty">This meeting has no posts yet.</div>';
+function renderPosts(posts) {
+  els.postList.innerHTML = '';
+  const live = (posts || []).filter(p => !p.superseded);
+  if (!live.length) {
+    els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
     return;
   }
-  const posts = section.posts.filter(post => !post.superseded);
-  if (!posts.length) {
-    els.threadList.innerHTML = '<div class="empty">This topic has no posts yet.</div>';
-    return;
-  }
-  els.threadList.innerHTML = '';
-  posts.forEach(post => {
+  live.forEach(post => {
     const row = document.createElement('article');
     row.className = 'post';
     row.innerHTML = `
@@ -261,23 +304,97 @@ function renderThread() {
       <div class="post-content">
         <div class="post-head">
           <span class="post-name">${escapeHtml(post.speaker)}</span>
-          <span class="post-time">${escapeHtml(post.time || '')}</span>
-          <div class="post-tools">
-            <button type="button">💬 reply</button>
-            <button type="button">👍</button>
-            <button type="button">...</button>
-          </div>
+          <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
         </div>
         <div class="post-body">${renderBody(post.content)}</div>
       </div>
     `;
-    row.querySelectorAll('.post-tools button').forEach(btn => {
-      btn.onclick = () => alert('coming soon');
-    });
-    els.threadList.appendChild(row);
+    els.postList.appendChild(row);
   });
 }
 
+// ─── composer: new thread ─────────────────────────────────────────────
+async function submitNewThread() {
+  const content = els.threadComposerInput.value.trim();
+  if (!content) return;
+  if (!state.currentSquadId) {
+    setStatus('请先选择一个 squad', false);
+    return;
+  }
+  els.threadComposerInput.disabled = true;
+  try {
+    const thread = await apiJson(
+      `/api/squads/${encodeURIComponent(state.currentSquadId)}/threads`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, created_by: 'scott' }),
+      }
+    );
+    els.threadComposerInput.value = '';
+    updateComposerCount(els.threadComposerInput, els.threadComposerCount);
+    autosize(els.threadComposerInput);
+    await refreshThreadsForCurrentSquad();
+    await selectThread(thread.thread_id);
+  } catch (err) {
+    setStatus(`新建 thread 失败: ${err.message}`, false);
+  } finally {
+    els.threadComposerInput.disabled = false;
+    els.threadComposerInput.focus();
+  }
+}
+
+// ─── composer: new post ───────────────────────────────────────────────
+async function submitPost() {
+  const content = els.postComposerInput.value.trim();
+  if (!content || !state.currentThreadId) return;
+  els.postComposerInput.disabled = true;
+  els.btnSendPost.disabled = true;
+  try {
+    const updated = await apiJson(
+      `/api/threads/${encodeURIComponent(state.currentThreadId)}/posts`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, speaker: 'scott' }),
+      }
+    );
+    els.postComposerInput.value = '';
+    autosize(els.postComposerInput);
+    state.currentThread = updated;
+    renderDetail();
+    refreshThreadsForCurrentSquad();  // update preview/last_post_at
+  } catch (err) {
+    setStatus(`发送失败: ${err.message}`, false);
+  } finally {
+    if (state.currentThread?.in_progress) {
+      els.postComposerInput.disabled = false;
+      els.btnSendPost.disabled = false;
+      els.postComposerInput.focus();
+    }
+  }
+}
+
+async function closeCurrentThread() {
+  if (!state.currentThreadId) return;
+  if (!confirm('Close this thread? 关闭后无法继续发 post（除非将来支持 reopen）。')) return;
+  try {
+    state.currentThread = await apiJson(
+      `/api/threads/${encodeURIComponent(state.currentThreadId)}/close`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ closed_by: 'scott' }),
+      }
+    );
+    renderDetail();
+    refreshThreadsForCurrentSquad();
+  } catch (err) {
+    setStatus(`关闭失败: ${err.message}`, false);
+  }
+}
+
+// ─── squad modal ──────────────────────────────────────────────────────
 function openModal() {
   els.form.reset();
   [...els.memberCheckboxes.querySelectorAll('input')].forEach((input, idx) => {
@@ -295,7 +412,7 @@ function closeModal() {
 }
 
 function syncChairOptions() {
-  const selected = [...els.memberCheckboxes.querySelectorAll('input:checked')].map(input => input.value);
+  const selected = [...els.memberCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
   els.chairSelect.innerHTML = '';
   selected.forEach(agent => {
     const opt = document.createElement('option');
@@ -316,6 +433,25 @@ function buildMemberControls() {
   syncChairOptions();
 }
 
+// ─── composer helpers ─────────────────────────────────────────────────
+function updateComposerCount(input, counter) {
+  if (counter) counter.textContent = input.value.length;
+}
+
+function wireComposer(input, submit, counter) {
+  input.addEventListener('input', () => {
+    autosize(input);
+    updateComposerCount(input, counter);
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      submit();
+    }
+  });
+}
+
+// ─── wire-up ──────────────────────────────────────────────────────────
 els.btnNewSquad.onclick = openModal;
 els.btnCloseModal.onclick = closeModal;
 els.btnCancelModal.onclick = closeModal;
@@ -325,7 +461,7 @@ els.modal.onclick = event => {
 
 els.form.onsubmit = async event => {
   event.preventDefault();
-  const members = [...els.memberCheckboxes.querySelectorAll('input:checked')].map(input => input.value);
+  const members = [...els.memberCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
   if (!members.length) {
     setStatus('至少选择一个 member', false);
     return;
@@ -352,32 +488,21 @@ els.form.onsubmit = async event => {
   }
 };
 
-function setRunning(running) {
-  state.running = running;
-  els.btnRunSquad.disabled = running;
-  els.btnRunSquad.textContent = running ? '...' : '+';
+wireComposer(els.threadComposerInput, submitNewThread, els.threadComposerCount);
+wireComposer(els.postComposerInput, submitPost, null);
+els.btnSendPost.onclick = submitPost;
+els.btnCloseThread.onclick = closeCurrentThread;
+els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
+els.btnRefreshDetail.onclick = refreshCurrentThread;
+
+// poll for updates while a thread is open
+function startPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(() => {
+    if (state.currentThreadId) refreshCurrentThread();
+    if (state.currentSquadId) refreshThreadsForCurrentSquad();
+  }, POLL_MS);
 }
 
-els.btnRefresh.onclick = loadSquads;
-els.btnSend.onclick = () => alert('Composer 暂未开放，请用 cron 或脚本');
-els.composerInput.onkeydown = event => {
-  if (event.key === 'Enter') alert('Composer 暂未开放，请用 cron 或脚本');
-};
-els.btnRunSquad.onclick = async () => {
-  if (!state.currentSquadId || state.running) return;
-  setRunning(true);
-  setStatus('启动 meeting...');
-  try {
-    const res = await apiJson(`/api/squads/${encodeURIComponent(state.currentSquadId)}/run`, { method: 'POST' });
-    state.currentDate = res.date;
-    await loadSquads();
-    setStatus(`已启动 ${res.date}`);
-  } catch (err) {
-    setStatus(`启动失败: ${err.message}`, false);
-  } finally {
-    setRunning(false);
-  }
-};
-
 buildMemberControls();
-loadSquads();
+loadSquads().then(startPolling);

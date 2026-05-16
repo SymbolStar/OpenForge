@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>OpenForge · Multi-Agent Task Tracker</title>
+<title>OpenForge · Multi-Agent Topic Tracker</title>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -23,35 +23,47 @@
     </div>
   </aside>
 
-  <aside id="meeting-rail">
+  <aside id="thread-rail">
     <header class="rail-header">
       <div>
         <h1 id="squad-title">—</h1>
         <p id="squad-description"></p>
       </div>
     </header>
-    <div class="meeting-section-head">
-      <span>MEETINGS</span>
-      <button id="btn-run-squad" type="button" title="Run standup">+</button>
+    <div class="rail-list-head">
+      <span>THREADS</span>
+      <button id="btn-refresh-threads" type="button" title="刷新">↻</button>
     </div>
-    <ul id="meeting-list"></ul>
+    <ul id="thread-list"></ul>
+    <footer id="thread-composer">
+      <textarea id="thread-composer-input"
+                rows="1"
+                placeholder="开始一个新 thread… (Enter 发送 · Shift+Enter 换行)"></textarea>
+      <div class="composer-hint">
+        <span>每条 thread 是一个话题</span>
+        <span id="thread-composer-count" class="composer-count">0</span>
+      </div>
+    </footer>
   </aside>
 
   <main id="thread-pane">
     <header id="thread-header">
-      <div>
-        <h2 id="thread-title">选择一个 meeting</h2>
-        <div id="thread-sub" class="meta"></div>
+      <div class="thread-header-main">
+        <h2 id="detail-title">选择一个 thread</h2>
+        <div id="detail-sub" class="meta"></div>
       </div>
-      <div id="header-members" class="avatar-stack"></div>
-      <span id="meeting-status" class="status-chip">idle</span>
-      <button id="btn-refresh" type="button" title="刷新">↻</button>
+      <div id="detail-participants" class="avatar-stack"></div>
+      <span id="detail-status" class="status-chip">idle</span>
+      <button id="btn-close-thread" class="ghost-btn" type="button" title="关闭 thread" disabled>Close</button>
+      <button id="btn-refresh-detail" type="button" title="刷新" class="ghost-btn">↻</button>
     </header>
-    <nav id="topic-tabs"></nav>
-    <div id="thread-list"></div>
-    <footer id="composer">
-      <input id="composer-input" type="text" placeholder="Message thread (composer coming soon)" />
-      <button id="btn-send" type="button">发送</button>
+    <div id="post-list"></div>
+    <footer id="post-composer">
+      <textarea id="post-composer-input"
+                rows="1"
+                placeholder="发一条消息… (Enter 发送 · Shift+Enter 换行 · @ 可提到 agent)"
+                disabled></textarea>
+      <button id="btn-send-post" type="button" disabled>发送</button>
     </footer>
   </main>
 </div>
