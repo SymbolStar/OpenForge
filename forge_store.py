@@ -501,7 +501,8 @@ DEFAULT_SQUAD = {
 
 
 def _default_squads_doc() -> dict[str, Any]:
-    return {"version": 1, "squads": {DEFAULT_SQUAD_ID: dict(DEFAULT_SQUAD)}}
+    # Plan C: do NOT seed any default squad. Users decide what to create.
+    return {"version": 1, "squads": {}}
 
 
 def _write_squads_doc(doc: dict[str, Any]) -> None:
@@ -515,7 +516,7 @@ def _write_squads_doc(doc: dict[str, Any]) -> None:
 
 
 def ensure_default_squads() -> dict[str, Any]:
-    """Create squads.json with the default squad when it is missing.
+    """Ensure squads.json exists (Plan C: may be empty).
 
     Migration: if a legacy ~/.openclaw/standups/squads.json exists and the
     new location does not, copy it over once.
@@ -567,6 +568,32 @@ def create_squad(data: dict[str, Any]) -> dict[str, Any]:
     doc["squads"][squad_id] = squad
     _write_squads_doc(doc)
     return dict(squad)
+
+
+def update_squad(squad_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+    doc = ensure_default_squads()
+    cur = doc["squads"].get(squad_id)
+    if not cur:
+        return None
+    # id is immutable; everything else is replaceable
+    if "name" in patch and patch["name"]:
+        cur["name"] = str(patch["name"])
+    if "description" in patch:
+        cur["description"] = str(patch["description"] or "")
+    if "emoji" in patch:
+        cur["emoji"] = str(patch["emoji"] or "#")
+    if "members" in patch and isinstance(patch["members"], list) and patch["members"]:
+        cur["members"] = [str(m) for m in patch["members"]]
+    if "chair" in patch and patch["chair"]:
+        if patch["chair"] not in cur["members"]:
+            raise ValueError("chair must be a member")
+        cur["chair"] = str(patch["chair"])
+    elif cur["chair"] not in cur["members"]:
+        # if members shrunk and chair fell out, snap chair to first member
+        cur["chair"] = cur["members"][0]
+    doc["squads"][squad_id] = cur
+    _write_squads_doc(doc)
+    return dict(cur)
 
 
 def delete_squad(squad_id: str) -> bool:

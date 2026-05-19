@@ -408,6 +408,29 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
 
         self.send_error(404)
 
+    def do_PATCH(self):
+        url = urlparse(self.path)
+        if not self._check_auth():
+            self.send_error(401, "auth required for non-local host")
+            return
+        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", url.path)
+        if not m:
+            self.send_error(404)
+            return
+        squad_id = m.group(1)
+        opts = self._read_json()
+        if opts is None:
+            return
+        try:
+            updated = store.update_squad(squad_id, opts)
+        except ValueError as e:
+            self._json({"error": str(e)}, 400)
+            return
+        if updated is None:
+            self._json({"error": "not found"}, 404)
+            return
+        self._json(updated)
+
     def do_DELETE(self):
         url = urlparse(self.path)
         if not self._check_auth():
@@ -419,9 +442,6 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         squad_id = m.group(1)
-        if squad_id == store.DEFAULT_SQUAD_ID:
-            self._json({"error": "cannot delete default squad"}, 400)
-            return
         if not store.delete_squad(squad_id):
             self._json({"error": "not found"}, 404)
             return
