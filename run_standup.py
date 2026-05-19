@@ -224,29 +224,85 @@ class AgentError(RuntimeError):
     pass
 
 
+def _resolve_openclaw_bin() -> str:
+    """Pick the right openclaw binary.
+
+    Order:
+      1. $OPENFORGE_OPENCLAW_BIN (explicit operator override)
+      2. ~/.nvm/versions/node/*/bin/openclaw  (nvm install — usually the
+         newest one because Control UI is launched from it)
+      3. plain `openclaw` from PATH
+
+    Why pin away from PATH by default: on this host PATH resolves to a
+    homebrew install (2026.4.22) that pre-dates the --local + --session-id
+    fix; calling it pollutes agent main pointers. The nvm install ships
+    ≥2026.5.7 where --local writes a real isolated session and never
+    touches sessions.json. See post-2026-05-19 root-cause doc.
+    """
+    override = os.environ.get("OPENFORGE_OPENCLAW_BIN")
+    if override and Path(override).exists():
+        return override
+    nvm_root = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_root.exists():
+        candidates = sorted(
+            (p / "bin" / "openclaw" for p in nvm_root.iterdir() if p.is_dir()),
+            key=lambda p: p.parent.parent.name, reverse=True,
+        )
+        for c in candidates:
+            if c.exists():
+                return str(c)
+    return "openclaw"
+
+
+OPENCLAW_BIN = _resolve_openclaw_bin()
+
+
 def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
-    """Invoke `openclaw agent`. Raises AgentError on non-zero exit."""
+    """Invoke `openclaw agent --local --json`. Raises AgentError on failure.
+
+    --local keeps the run fully sandboxed in a subprocess so
+    `agent:<id>:main` is NEVER mutated. --json gives us a structured result
+    on stdout (older builds wrote to stderr; ≥2026.5.5 is required).
+    """
     try:
         result = subprocess.run(
             [
-                "openclaw", "agent",
+                OPENCLAW_BIN, "agent",
+                "--local", "--json",
                 "--agent", agent_id,
                 "--session-id", session_id,
+                "--timeout", str(AGENT_TIMEOUT),
                 "--message", prompt,
             ],
-            capture_output=True, text=True, timeout=AGENT_TIMEOUT,
+            capture_output=True, text=True, timeout=AGENT_TIMEOUT + 30,
         )
     except subprocess.TimeoutExpired:
         raise AgentError(f"timeout after {AGENT_TIMEOUT}s")
     except FileNotFoundError:
-        raise AgentError("`openclaw` CLI not found on PATH")
+        raise AgentError(f"openclaw binary not found: {OPENCLAW_BIN}")
 
     if result.returncode != 0:
-        tail = (result.stderr or "").strip().splitlines()[-3:]
+        tail = (result.stderr or result.stdout or "").strip().splitlines()[-3:]
         raise AgentError(
             f"openclaw agent exited {result.returncode}: " + " | ".join(tail)
         )
-    return clean(result.stdout)
+
+    # 2026.5.5+ writes JSON to stdout. Older builds wrote it to stderr;
+    # tolerate that for forward debugging by falling back.
+    raw = (result.stdout or "").strip() or (result.stderr or "").strip()
+    if not raw:
+        raise AgentError("openclaw produced no output")
+    try:
+        blob = json.loads(raw)
+    except json.JSONDecodeError:
+        # not the structured-result format we expected. Best-effort: return
+        # cleaned raw text so the caller still sees something.
+        return clean(raw)
+    payloads = blob.get("payloads") or []
+    text = "\n\n".join(
+        (p.get("text") or "").strip() for p in payloads if isinstance(p, dict)
+    ).strip()
+    return clean(text)
 
 
 # ─── prompt templates ─────────────────────────────────────────────────
