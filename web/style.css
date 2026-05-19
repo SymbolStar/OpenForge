@@ -567,3 +567,37 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   #app { grid-template-columns: 1fr; }
   #thread-rail, #thread-pane { display: none; }
 }
+
+/* ─── @-mention picker ────────────────────────────────────────── */
+.mention-picker {
+  position: fixed;
+  z-index: 9999;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.12);
+  padding: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.mention-item {
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+}
+.mention-item:hover,
+.mention-item.active {
+  background: var(--accent-soft);
+}
+
+/* ─── router placeholder / progress posts ─────────────────────── */
+.post[data-speaker="__router__"] {
+  opacity: 0.7;
+  font-style: italic;
+}
+.post[data-speaker="__router__"] .post-speaker {
+  color: var(--text-soft);
+}

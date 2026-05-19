@@ -266,6 +266,22 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(store.list_squads())
             return
 
+        if path == "/api/agents":
+            # Discoverable agents = union(squad members, anything that has
+            # ~/.openclaw/agents/<id>/sessions). Used by the @-picker.
+            ids: set[str] = set()
+            for sq in store.list_squads():
+                for m in sq.get("members") or []:
+                    if m:
+                        ids.add(m)
+            agents_root = Path.home() / ".openclaw" / "agents"
+            if agents_root.exists():
+                for child in agents_root.iterdir():
+                    if child.is_dir() and (child / "sessions").exists():
+                        ids.add(child.name)
+            self._json(sorted(ids))
+            return
+
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", path)
         if m:
             squad_id = m.group(1)
@@ -353,9 +369,10 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             opening = (thread.get("posts") or [None])[0]
             if opening:
                 try:
+                    opening.setdefault("post_id", opening.get("id"))
                     post_router.enqueue_if_needed(thread["thread_id"], opening)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"⚠️  router enqueue failed: {e!r}", flush=True)
             self._json(_serializable_thread(thread), 201)
             return
 
@@ -380,18 +397,19 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 return
             # P0 post routing
             try:
-                # rebuild the post dict the router expects (mentions are
-                # already parsed by store.add_thread_post via the event log)
                 refreshed = store.project_thread(tid) or {}
+                added_id = added.get("post_id")
                 post = next(
                     (p for p in (refreshed.get("posts") or [])
-                     if p.get("post_id") == added.get("post_id")),
+                     if (p.get("id") or p.get("post_id")) == added_id),
                     None,
                 )
                 if post:
+                    # router expects `post_id`; project_thread uses `id`
+                    post.setdefault("post_id", post.get("id"))
                     post_router.enqueue_if_needed(tid, post)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️  router enqueue failed: {e!r}", flush=True)
             self._json(_serializable_thread(store.project_thread(tid)), 201)
             return
 
@@ -492,6 +510,24 @@ def main():
     print(f"🔨 OpenForge")
     print(f"📁 forge root:   {store.FORGE_DIR}")
     print(f"📝 legacy root:  {store.STANDUP_DIR}")
+    # heal any agent main pointers a previous run left polluted.
+    try:
+        all_members: set[str] = set()
+        for sq in store.list_squads():
+            for m in sq.get("members") or []:
+                if m:
+                    all_members.add(m)
+        # also include every agent that has an on-disk session dir
+        agents_root = Path.home() / ".openclaw" / "agents"
+        if agents_root.exists():
+            for child in agents_root.iterdir():
+                if child.is_dir() and (child / "sessions" / "sessions.json").exists():
+                    all_members.add(child.name)
+        healed = post_router.heal_polluted_mains(sorted(all_members))
+        if healed:
+            print(f"🩹 healed polluted main session for: {', '.join(healed)}")
+    except Exception as e:
+        print(f"⚠️  heal step failed: {e!r}")
     print(f"🌐 server:        http://{args.host}:{args.port}")
     server = ThreadingHTTPServer((args.host, args.port), OpenForgeHandler)
     try:

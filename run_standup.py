@@ -50,6 +50,51 @@ def _sessions_path(agent_id: str) -> Path:
     return AGENTS_ROOT / agent_id / "sessions" / "sessions.json"
 
 
+# Session-id prefixes that mean "this main was hijacked by OpenForge".
+_FORGE_SIDS = ("standup-", "forge-", "huddle-")
+
+
+def _is_forge_sid(sid: str | None) -> bool:
+    sid = sid or ""
+    return any(sid.startswith(p) for p in _FORGE_SIDS)
+
+
+def _find_clean_main(agent_id: str) -> dict | None:
+    """Best-effort: pick the agent's most recently modified non-forge session.
+
+    Used when snapshot finds main already pointing at a forge session (i.e. a
+    previous run crashed without restoring). Returns a snapshot-shaped dict.
+    """
+    sess_dir = AGENTS_ROOT / agent_id / "sessions"
+    if not sess_dir.exists():
+        return None
+    best: tuple[float, Path] | None = None
+    for f in sess_dir.glob("*.jsonl"):
+        name = f.name
+        if name.endswith(".trajectory.jsonl"):
+            continue
+        stem = name[: -len(".jsonl")]
+        if _is_forge_sid(stem):
+            continue
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, f)
+    if best is None:
+        return None
+    f = best[1]
+    stem = f.name[: -len(".jsonl")]
+    return {
+        "agent": agent_id,
+        "sessionId": stem,
+        "sessionFile": str(f),
+        "snapshotAt": int(time.time() * 1000),
+        "recoveredFromDisk": True,
+    }
+
+
 def snapshot_main(agent_id: str) -> dict | None:
     p = _sessions_path(agent_id)
     if not p.exists():
@@ -60,6 +105,17 @@ def snapshot_main(agent_id: str) -> dict | None:
         return None
     main = d.get(f"agent:{agent_id}:main")
     if not isinstance(main, dict):
+        return _find_clean_main(agent_id)
+    cur_sid = main.get("sessionId") or ""
+    if _is_forge_sid(cur_sid):
+        # main is already polluted from a previous crashed run.
+        # Do NOT snapshot the polluted state — fall back to a clean session
+        # on disk so a later restore can actually un-pollute.
+        recovered = _find_clean_main(agent_id)
+        if recovered:
+            return recovered
+        # nothing clean found; refuse to snapshot (better than freezing
+        # the polluted state forever).
         return None
     return {
         "agent": agent_id,
@@ -73,6 +129,9 @@ def restore_main(agent_id: str, snapshot: dict) -> bool:
     p = _sessions_path(agent_id)
     if not p.exists() or not snapshot or not snapshot.get("sessionId"):
         return False
+    # never restore main to another forge session — that's a bug.
+    if _is_forge_sid(snapshot["sessionId"]):
+        return False
     try:
         d = json.loads(p.read_text())
     except Exception:
@@ -82,9 +141,8 @@ def restore_main(agent_id: str, snapshot: dict) -> bool:
     if not isinstance(main, dict):
         return False
     # only restore if the current main was clobbered by us
-    # (huddle- kept for backward compatibility with pre-rename runs)
     cur_sid = main.get("sessionId") or ""
-    if not (cur_sid.startswith("standup-") or cur_sid.startswith("forge-") or cur_sid.startswith("huddle-")):
+    if not _is_forge_sid(cur_sid):
         return False
     main["sessionId"] = snapshot["sessionId"]
     main["sessionFile"] = snapshot["sessionFile"]

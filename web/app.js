@@ -342,6 +342,7 @@ function renderPosts(posts) {
   live.forEach(post => {
     const row = document.createElement('article');
     row.className = 'post';
+    row.dataset.speaker = post.speaker;
     row.innerHTML = `
       <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
       <div class="post-content">
@@ -485,13 +486,136 @@ function wireComposer(input, submit, counter) {
   input.addEventListener('input', () => {
     autosize(input);
     updateComposerCount(input, counter);
+    updateMentionPicker(input);
   });
   input.addEventListener('keydown', event => {
+    if (mentionPickerKeydown(input, event)) return;  // picker consumed it
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       submit();
     }
   });
+  input.addEventListener('blur', () => setTimeout(() => closeMentionPicker(), 120));
+}
+
+// ─── @-mention picker ─────────────────────────────────────────────────────
+let _agentList = [];
+async function refreshAgentList() {
+  try {
+    const res = await fetch('/api/agents');
+    if (res.ok) _agentList = await res.json();
+  } catch (e) { /* keep stale */ }
+}
+
+const picker = (() => {
+  let el = null;
+  let activeInput = null;
+  let token = null;          // { start, end, query }
+  let items = [];
+  let highlight = 0;
+  function ensureEl() {
+    if (el) return el;
+    el = document.createElement('div');
+    el.className = 'mention-picker';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+    return el;
+  }
+  function position(input) {
+    const r = input.getBoundingClientRect();
+    ensureEl();
+    el.style.left = (r.left + 8) + 'px';
+    el.style.top = (r.top - 6) + 'px';
+    el.style.transform = 'translateY(-100%)';
+    el.style.minWidth = Math.min(220, r.width - 16) + 'px';
+  }
+  function render() {
+    ensureEl();
+    el.innerHTML = '';
+    items.forEach((name, idx) => {
+      const row = document.createElement('div');
+      row.className = 'mention-item' + (idx === highlight ? ' active' : '');
+      row.textContent = '@' + name;
+      row.addEventListener('mousedown', e => {
+        e.preventDefault();
+        choose(idx);
+      });
+      el.appendChild(row);
+    });
+    el.style.display = items.length ? 'block' : 'none';
+  }
+  function open(input, tok, candidates) {
+    activeInput = input;
+    token = tok;
+    items = candidates;
+    highlight = 0;
+    position(input);
+    render();
+  }
+  function close() {
+    activeInput = null;
+    token = null;
+    items = [];
+    if (el) el.style.display = 'none';
+  }
+  function isOpen() { return items.length > 0 && el && el.style.display !== 'none'; }
+  function choose(idx) {
+    if (!activeInput || !token || !items[idx]) return close();
+    const v = activeInput.value;
+    const before = v.slice(0, token.start);
+    const after = v.slice(token.end);
+    const insert = '@' + items[idx] + ' ';
+    activeInput.value = before + insert + after;
+    const caret = (before + insert).length;
+    activeInput.setSelectionRange(caret, caret);
+    activeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    close();
+    activeInput.focus();
+  }
+  function move(delta) {
+    if (!items.length) return;
+    highlight = (highlight + delta + items.length) % items.length;
+    render();
+  }
+  function selectActive() { choose(highlight); }
+  return { open, close, isOpen, move, selectActive };
+})();
+
+function _detectMentionToken(input) {
+  const caret = input.selectionStart;
+  if (caret == null) return null;
+  const v = input.value.slice(0, caret);
+  // match the trailing `@word` (word may be empty); only when @ is at start
+  // or after whitespace, to avoid emails.
+  const m = v.match(/(^|\s)@([\w-]*)$/);
+  if (!m) return null;
+  const query = m[2];
+  const start = caret - query.length - 1;  // includes the @
+  return { start, end: caret, query };
+}
+
+function updateMentionPicker(input) {
+  const tok = _detectMentionToken(input);
+  if (!tok) return picker.close();
+  const q = tok.query.toLowerCase();
+  const candidates = _agentList
+    .filter(a => !q || a.toLowerCase().includes(q))
+    .slice(0, 8);
+  if (!candidates.length) return picker.close();
+  picker.open(input, tok, candidates);
+}
+
+function closeMentionPicker() { picker.close(); }
+
+function mentionPickerKeydown(input, event) {
+  if (!picker.isOpen()) return false;
+  if (event.key === 'ArrowDown') { event.preventDefault(); picker.move(1); return true; }
+  if (event.key === 'ArrowUp')   { event.preventDefault(); picker.move(-1); return true; }
+  if (event.key === 'Enter' || event.key === 'Tab') {
+    event.preventDefault(); picker.selectActive(); return true;
+  }
+  if (event.key === 'Escape')    { event.preventDefault(); picker.close(); return true; }
+  return false;
 }
 
 // ─── wire-up ──────────────────────────────────────────────────────────
@@ -635,4 +759,4 @@ loadColWidths();
 document.querySelectorAll('.col-gutter').forEach(wireGutter);
 
 buildMemberControls();
-loadSquads().then(startPolling);
+loadSquads().then(() => { refreshAgentList(); startPolling(); });

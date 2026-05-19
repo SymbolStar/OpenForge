@@ -34,7 +34,13 @@ from run_standup import (
     is_empty,
     restore_main,
     snapshot_main,
+    _is_forge_sid,
+    _find_clean_main,
+    _sessions_path,
+    AGENTS_ROOT,
 )
+import json
+import os
 
 # ─── config ───────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
@@ -148,29 +154,54 @@ def _route_one(thread_id: str, trigger_post_id: str) -> None:
 def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
     """Snapshot agent main → run one agent turn → restore → append reply."""
     session_id = f"forge-{thread_id}-{agent_id}"
+    # Step 1: announce we are working so the UI shows progress immediately.
+    # We'll supersede this placeholder with the real reply when it arrives.
+    placeholder_id: str | None = None
+    try:
+        ph = store.add_thread_post(
+            thread_id, ROUTER_SPEAKER_FALLBACK,
+            f"⏳ @{agent_id} 正在思考中…",
+        )
+        placeholder_id = ph.get("post_id")
+        store.write_thread_markdown(thread_id)
+    except Exception:
+        pass
+
     snap = snapshot_main(agent_id)
+    final_post_id: str | None = None
     try:
         prompt = _build_prompt(thread_id, agent_id, trigger)
         try:
             reply = call_agent(agent_id, session_id, prompt)
         except AgentError as e:
-            store.add_thread_post(
+            err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
                 f"⚠️ @{agent_id} 没回复: {e}",
             )
+            final_post_id = err.get("post_id")
             return
         reply = clean(reply)
         if is_empty(reply):
-            store.add_thread_post(
+            err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
                 f"_(@{agent_id} 返回空回复)_",
             )
+            final_post_id = err.get("post_id")
             return
-        store.add_thread_post(thread_id, agent_id, reply)
+        added = store.add_thread_post(thread_id, agent_id, reply)
+        final_post_id = added.get("post_id")
     finally:
         if snap:
             try:
                 restore_main(agent_id, snap)
+            except Exception:
+                pass
+        # supersede the placeholder so it doesn't clutter the timeline.
+        if placeholder_id:
+            try:
+                store.supersede_thread_post(
+                    thread_id, placeholder_id, by_post_id=final_post_id,
+                )
             except Exception:
                 pass
 
@@ -180,7 +211,10 @@ def _find_trigger_post(thread: dict, post_id: str) -> dict | None:
     posts = thread.get("posts") or []
     if post_id:
         for p in posts:
-            if p.get("post_id") == post_id and not p.get("superseded"):
+            pid = p.get("post_id") or p.get("id")
+            if pid == post_id and not p.get("superseded"):
+                # normalize for downstream code
+                p.setdefault("post_id", pid)
                 return p
     # fallback: most recent non-superseded scott post with mentions
     for p in reversed(posts):
@@ -212,3 +246,39 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"- 直接针对 scott 的最新 post 回应，不要复述之前的内容\n"
         f"- 如果 scott 的问题已经被回答过或不需要你回答，回复 `completed`\n"
     )
+
+
+# ─── startup self-heal ──────────────────────────────────────────────
+def heal_polluted_mains(agent_ids: list[str]) -> list[str]:
+    """On server boot, fix any agent main pointer left stuck on a forge-* sid.
+
+    Returns the list of agent_ids we actually healed.
+    """
+    healed: list[str] = []
+    for ag in agent_ids:
+        p = _sessions_path(ag)
+        if not p.exists():
+            continue
+        try:
+            d = json.loads(p.read_text())
+        except Exception:
+            continue
+        key = f"agent:{ag}:main"
+        main = d.get(key)
+        if not isinstance(main, dict):
+            continue
+        if not _is_forge_sid(main.get("sessionId") or ""):
+            continue
+        recovered = _find_clean_main(ag)
+        if not recovered:
+            continue
+        main["sessionId"] = recovered["sessionId"]
+        main["sessionFile"] = recovered["sessionFile"]
+        main["updatedAt"] = int(time.time() * 1000)
+        main["healedByOpenForge"] = True
+        d[key] = main
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+        os.replace(tmp, p)
+        healed.append(ag)
+    return healed
