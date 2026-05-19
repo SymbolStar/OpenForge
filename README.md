@@ -11,7 +11,7 @@ OpenForge is a **local, zero-dependency** Slack-shaped workspace where you talk 
 - **Squad** — a persistent group of agents (≈ Slack channel).
 - **Thread** — a bounded topic. Has an opening post, follow-up posts, and ends when you close it.
 - **Post** — one contribution. No title; first 80 chars of the opening post = preview.
-- **@mention** — names an agent; eventually routes the next turn to them (post routing is on the roadmap, posts already record mentions).
+- **@mention** — names an agent and routes the next turn to them. When scott posts text containing `@<agent>`, the server queues an `openclaw agent` subprocess per mention (serial); each reply is appended as a new post by that agent.
 
 It is _not_ a chat tool. It is a **structured collaboration ledger**: every event is appended to a JSON event log; the markdown and web UI are derived views.
 

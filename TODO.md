@@ -5,7 +5,7 @@
 
 ## 🔥 P0 — must-do before next dogfood round
 
-- [ ] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. Reuses the snapshot/restore logic from `run_standup.py`.
+- [x] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. Reuses the snapshot/restore logic from `run_standup.py`. → `post_router.py` (single-worker serial queue, per-thread/agent stable session-id `forge-<tid>-<agent>`, errors recorded as `__router__` posts).
 - [ ] **Migrate-or-archive `run_standup.py`**: it is no longer in the primary flow; either turn it into a thin wrapper that creates a thread + opening post, or archive it under `legacy/`.
 - [ ] Regression test: (a) snapshot a fake agent main, (b) clobber via the same path the post router uses, (c) confirm atexit restores the original sessionId.
 - [ ] **Standup-as-thread template**: schema for a `forge-template` that pre-fills a thread opening post (re-implement the standup use-case as a thin layer once routing is in).

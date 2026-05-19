@@ -52,6 +52,7 @@ RUN_SCRIPT = ROOT / "run_standup.py"  # legacy, kept for CLI use only
 
 sys.path.insert(0, str(ROOT))
 import forge_store as store
+import post_router
 
 SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
@@ -347,6 +348,14 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._json({"error": str(e)}, 400)
                 return
+            # P0 post routing: if the opening post mentions agents and
+            # speaker is scott, queue async fan-out.
+            opening = (thread.get("posts") or [None])[0]
+            if opening:
+                try:
+                    post_router.enqueue_if_needed(thread["thread_id"], opening)
+                except Exception:
+                    pass
             self._json(_serializable_thread(thread), 201)
             return
 
@@ -365,10 +374,24 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 return
             speaker = (opts.get("speaker") or "scott").strip() or "scott"
             try:
-                store.add_thread_post(tid, speaker, content)
+                added = store.add_thread_post(tid, speaker, content)
             except ValueError as e:
                 self._json({"error": str(e)}, 400)
                 return
+            # P0 post routing
+            try:
+                # rebuild the post dict the router expects (mentions are
+                # already parsed by store.add_thread_post via the event log)
+                refreshed = store.project_thread(tid) or {}
+                post = next(
+                    (p for p in (refreshed.get("posts") or [])
+                     if p.get("post_id") == added.get("post_id")),
+                    None,
+                )
+                if post:
+                    post_router.enqueue_if_needed(tid, post)
+            except Exception:
+                pass
             self._json(_serializable_thread(store.project_thread(tid)), 201)
             return
 
