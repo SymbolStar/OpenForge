@@ -1,17 +1,17 @@
 :root {
-  --slack-purple: #3F0E40;
-  --slack-purple-hover: #350d36;
-  --slack-active: #4a154b;
+  --slack-purple: #0a0a0a;
+  --slack-purple-hover: #1a1a1a;
+  --slack-active: #262626;
   --text: #1d1c1d;
   --text-mute: #616061;
   --text-soft: #8d8d8d;
   --border: #ddd;
   --bg: #ffffff;
   --rail-bg: #f8f8f8;
-  --accent: #611f69;
-  --accent-soft: #f6eff7;
-  --mention-bg: #e8f5fb;
-  --mention-fg: #1264a3;
+  --accent: #0a0a0a;
+  --accent-soft: #f1f1f1;
+  --mention-bg: #ececec;
+  --mention-fg: #1d1c1d;
   --code-bg: #f2f2f2;
   --ok: #2bac76;
   --warn: #de9e32;
@@ -33,10 +33,29 @@ button { cursor: pointer; }
 
 #app {
   display: grid;
-  grid-template-columns: 260px 320px minmax(0, 1fr);
+  grid-template-columns: var(--w-squad, 260px) 5px var(--w-thread, 320px) 5px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
+
+.col-gutter {
+  background: var(--border);
+  cursor: col-resize;
+  user-select: none;
+  transition: background 0.15s ease;
+  position: relative;
+}
+.col-gutter:hover,
+.col-gutter.dragging {
+  background: var(--accent, #0a0a0a);
+}
+.col-gutter::before {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;            /* 扩大可点击区域 11px */
+}
+body.col-resizing,
+body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
 
 /* ─── squad rail (left) ─────────────────────────────────────── */
 #squad-rail {
@@ -76,6 +95,34 @@ button { cursor: pointer; }
   color: var(--text-soft);
   font-size: 13px;
   list-style: none;
+}
+
+#squad-list > li {
+  position: relative;
+  list-style: none;
+}
+#squad-list > li .squad-delete {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 0;
+  background: rgba(255,255,255,0.0);
+  color: rgba(255,255,255,0.55);
+  font-size: 16px;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+#squad-list > li:hover .squad-delete { display: inline-flex; }
+#squad-list > li .squad-delete:hover {
+  background: #c0392b;
+  color: #fff;
 }
 
 .squad-item {
@@ -135,9 +182,33 @@ button { cursor: pointer; }
   padding: 14px 18px;
   background: #fff;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
+.rail-header .rail-header-text { flex: 1; min-width: 0; }
 .rail-header h1 { margin: 0 0 4px; font-size: 17px; line-height: 1.25; }
 .rail-header p { margin: 0; color: var(--text-mute); font-size: 13px; }
+.icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+.btn-danger {
+  background: #fff;
+  color: #c0392b;
+  border: 1px solid #e8b4ad;
+  padding: 7px 12px;
+  border-radius: 6px;
+}
+.btn-danger:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
+.flex-spacer { flex: 1; }
 
 .rail-list-head {
   height: 34px;

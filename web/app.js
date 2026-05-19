@@ -34,6 +34,10 @@ const els = {
   form: document.getElementById('squad-form'),
   btnCloseModal: document.getElementById('btn-close-modal'),
   btnCancelModal: document.getElementById('btn-cancel-modal'),
+  btnDeleteSquad: document.getElementById('btn-delete-squad'),
+  btnSubmitSquad: document.getElementById('btn-submit-squad'),
+  btnEditSquad: document.getElementById('btn-edit-squad'),
+  modalTitle: document.getElementById('modal-title'),
   memberCheckboxes: document.getElementById('member-checkboxes'),
   chairSelect: document.getElementById('chair-select'),
 };
@@ -126,8 +130,17 @@ async function loadSquads() {
   }
 }
 
+const DEFAULT_SQUAD_ID = null;  // Plan C: every squad is deletable
+
 function renderSquadRail() {
   els.squadList.innerHTML = '';
+  if (!state.squads.length) {
+    const li = document.createElement('li');
+    li.className = 'empty-row';
+    li.innerHTML = '还没有 squad。<br>点击下方 <b>+ New Squad</b> 创建。';
+    els.squadList.appendChild(li);
+    return;
+  }
   state.squads.forEach(squad => {
     const detail = state.squadDetails.get(squad.id);
     const count = detail?.threads?.length || 0;
@@ -144,6 +157,34 @@ function renderSquadRail() {
     li.appendChild(btn);
     els.squadList.appendChild(li);
   });
+}
+
+async function deleteSquad(squad, threadCount) {
+  const label = squad.name || squad.id;
+  let msg = `确定删除 squad “${label}” 吗？`;
+  if (threadCount > 0) {
+    msg += `\n\n⚠️ 该 squad 下还有 ${threadCount} 个 thread，删除后 thread 将不再出现在侧边栏（events.jsonl 本身仍保留在磁盘）。`;
+  }
+  if (!confirm(msg)) return;
+  try {
+    const res = await fetch(`/api/squads/${encodeURIComponent(squad.id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${res.status} ${text || res.statusText}`);
+    }
+    state.squadDetails.delete(squad.id);
+    if (state.currentSquadId === squad.id) {
+      state.currentSquadId = null;
+      state.currentThreadId = null;
+      state.currentThread = null;
+    }
+    setStatus(`已删除 squad “${label}”`);
+    closeModal();
+    await loadSquads();
+  } catch (err) {
+    setStatus(`删除失败: ${err.message}`, false);
+    alert(`删除 squad 失败：${err.message}`);
+  }
 }
 
 async function selectSquad(squadId) {
@@ -176,11 +217,13 @@ function renderThreadRail() {
     els.squadTitle.textContent = 'No squads';
     els.squadDescription.textContent = '';
     els.threadList.innerHTML = '';
+    els.btnEditSquad.hidden = true;
     return;
   }
   els.squadTitle.textContent = `${squad.emoji || '#'} ${squad.name || squad.id}`;
   els.squadDescription.textContent = squad.description
     || `${squad.chair} chairs · ${squad.members.length} members`;
+  els.btnEditSquad.hidden = false;
   renderThreadList(detail?.threads || []);
 }
 
@@ -467,7 +510,6 @@ els.form.onsubmit = async event => {
     return;
   }
   const payload = {
-    id: els.form.elements.id.value.trim(),
     name: els.form.elements.name.value.trim(),
     description: els.form.elements.description.value.trim(),
     emoji: els.form.elements.emoji.value.trim(),
@@ -475,17 +517,44 @@ els.form.onsubmit = async event => {
     chair: els.chairSelect.value,
   };
   try {
-    const squad = await apiJson('/api/squads', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    state.currentSquadId = squad.id;
-    closeModal();
-    await loadSquads();
+    if (modalMode === 'edit' && editingSquadId) {
+      await apiJson(`/api/squads/${encodeURIComponent(editingSquadId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setStatus(`已更新 ${editingSquadId}`);
+      const keepId = editingSquadId;
+      closeModal();
+      state.currentSquadId = keepId;
+      await loadSquads();
+    } else {
+      payload.id = els.form.elements.id.value.trim();
+      const squad = await apiJson('/api/squads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      state.currentSquadId = squad.id;
+      closeModal();
+      await loadSquads();
+    }
   } catch (err) {
-    setStatus(`创建失败: ${err.message}`, false);
+    setStatus(`保存失败: ${err.message}`, false);
   }
+};
+
+els.btnEditSquad.onclick = () => {
+  const detail = state.squadDetails.get(state.currentSquadId);
+  const squad = detail?.squad || state.squads.find(s => s.id === state.currentSquadId);
+  if (squad) openEditModal(squad);
+};
+els.btnDeleteSquad.onclick = () => {
+  if (!editingSquadId) return;
+  const squad = state.squads.find(s => s.id === editingSquadId);
+  if (!squad) return;
+  const detail = state.squadDetails.get(squad.id);
+  deleteSquad(squad, detail?.threads?.length || 0);
 };
 
 wireComposer(els.threadComposerInput, submitNewThread, els.threadComposerCount);
@@ -503,6 +572,67 @@ function startPolling() {
     if (state.currentSquadId) refreshThreadsForCurrentSquad();
   }, POLL_MS);
 }
+
+// ─── column resizing ───────────────────────────────────────
+const GUTTER_KEYS = { squad: '--w-squad', thread: '--w-thread' };
+const GUTTER_MIN  = { squad: 180,        thread: 220        };
+const GUTTER_MAX  = { squad: 480,        thread: 600        };
+const LS_KEY = 'openforge.colwidths.v1';
+
+function loadColWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    for (const [k, v] of Object.entries(saved)) {
+      if (typeof v === 'number' && GUTTER_KEYS[k]) {
+        document.documentElement.style.setProperty(GUTTER_KEYS[k], v + 'px');
+      }
+    }
+  } catch { /* ignore */ }
+}
+function saveColWidth(name, px) {
+  let cur = {};
+  try { cur = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch {}
+  cur[name] = px;
+  localStorage.setItem(LS_KEY, JSON.stringify(cur));
+}
+function wireGutter(el) {
+  const name = el.dataset.gutter;
+  const cssVar = GUTTER_KEYS[name];
+  if (!cssVar) return;
+  el.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(cssVar)) ||
+                   (name === 'squad' ? 260 : 320);
+    el.classList.add('dragging');
+    document.body.classList.add('col-resizing');
+    const onMove = (ev) => {
+      let next = startW + (ev.clientX - startX);
+      next = Math.max(GUTTER_MIN[name], Math.min(GUTTER_MAX[name], next));
+      document.documentElement.style.setProperty(cssVar, next + 'px');
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      el.classList.remove('dragging');
+      document.body.classList.remove('col-resizing');
+      const finalW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(cssVar));
+      if (Number.isFinite(finalW)) saveColWidth(name, Math.round(finalW));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+  // double-click resets to default
+  el.addEventListener('dblclick', () => {
+    document.documentElement.style.removeProperty(cssVar);
+    let cur = {};
+    try { cur = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch {}
+    delete cur[name];
+    localStorage.setItem(LS_KEY, JSON.stringify(cur));
+  });
+}
+loadColWidths();
+document.querySelectorAll('.col-gutter').forEach(wireGutter);
 
 buildMemberControls();
 loadSquads().then(startPolling);

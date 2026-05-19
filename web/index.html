@@ -23,12 +23,15 @@
     </div>
   </aside>
 
+  <div class="col-gutter" data-gutter="squad" title="拖动调整宽度"></div>
+
   <aside id="thread-rail">
     <header class="rail-header">
-      <div>
+      <div class="rail-header-text">
         <h1 id="squad-title">—</h1>
         <p id="squad-description"></p>
       </div>
+      <button id="btn-edit-squad" class="icon-btn" type="button" title="编辑 squad" hidden>✎</button>
     </header>
     <div class="rail-list-head">
       <span>THREADS</span>
@@ -45,6 +48,8 @@
       </div>
     </footer>
   </aside>
+
+  <div class="col-gutter" data-gutter="thread" title="拖动调整宽度"></div>
 
   <main id="thread-pane">
     <header id="thread-header">
@@ -85,8 +90,10 @@
       </fieldset>
       <label>Chair<select name="chair" id="chair-select"></select></label>
       <div class="modal-actions">
+        <button type="button" id="btn-delete-squad" class="btn-danger" hidden>删除 squad</button>
+        <span class="flex-spacer"></span>
         <button type="button" id="btn-cancel-modal">Cancel</button>
-        <button type="submit">Create</button>
+        <button type="submit" id="btn-submit-squad">Create</button>
       </div>
     </form>
   </div>
