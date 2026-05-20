@@ -456,8 +456,14 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json({"error": "content required"}, 400)
                 return
             speaker = (opts.get("speaker") or "scott").strip() or "scott"
+            parent_post_id = opts.get("parent_post_id") or None
+            if parent_post_id is not None and not isinstance(parent_post_id, str):
+                self._json({"error": "parent_post_id must be string"}, 400)
+                return
             try:
-                added = store.add_thread_post(tid, speaker, content)
+                added = store.add_thread_post(
+                    tid, speaker, content, parent_post_id=parent_post_id,
+                )
             except ValueError as e:
                 self._json({"error": str(e)}, 400)
                 return

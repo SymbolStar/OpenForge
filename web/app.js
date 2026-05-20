@@ -40,7 +40,28 @@ const els = {
   modalTitle: document.getElementById('modal-title'),
   memberCheckboxes: document.getElementById('member-checkboxes'),
   chairSelect: document.getElementById('chair-select'),
+  // settings + reply nesting
+  btnSettings: document.getElementById('btn-settings'),
+  settingsModal: document.getElementById('settings-modal'),
+  settingsForm: document.getElementById('settings-form'),
+  btnCloseSettings: document.getElementById('btn-close-settings'),
+  btnCloseSettings2: document.getElementById('btn-close-settings-2'),
+  composerReplyBanner: document.getElementById('composer-reply-banner'),
+  btnCancelReply: document.getElementById('btn-cancel-reply'),
 };
+
+// ─── settings (localStorage) ─────────────────────────────────
+const SETTINGS_KEY = 'openforge.settings.v1';
+const SETTINGS_DEFAULTS = { replyNesting: false };
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return { ...SETTINGS_DEFAULTS, ...saved };
+  } catch { return { ...SETTINGS_DEFAULTS }; }
+}
+function saveSettings(s) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+}
 
 const state = {
   squads: [],
@@ -51,6 +72,8 @@ const state = {
   pollTimer: null,
   threadEventSource: null,  // EventSource for the currently-open thread
   threadEventThreadId: null,
+  settings: loadSettings(),
+  replyTo: null,  // { post_id, speaker, content } when composing a reply
 };
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
@@ -263,6 +286,7 @@ function renderThreadList(threads) {
 // ─── detail (right pane) ──────────────────────────────────────────────
 async function selectThread(threadId) {
   state.currentThreadId = threadId;
+  cancelReply();
   renderThreadRail();
   try {
     state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}`);
@@ -374,22 +398,84 @@ function renderPosts(posts) {
     els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
     return;
   }
-  live.forEach(post => {
-    const row = document.createElement('article');
-    row.className = 'post';
-    row.dataset.speaker = post.speaker;
-    row.innerHTML = `
-      <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
-      <div class="post-content">
-        <div class="post-head">
-          <span class="post-name">${escapeHtml(post.speaker)}</span>
-          <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
-        </div>
-        <div class="post-body">${renderBody(post.content)}</div>
+  if (state.settings.replyNesting) {
+    renderPostsNested(live);
+  } else {
+    live.forEach(p => els.postList.appendChild(renderPostNode(p, false)));
+  }
+}
+
+function renderPostNode(post, includeChildren) {
+  const row = document.createElement('article');
+  row.className = 'post';
+  row.dataset.speaker = post.speaker;
+  row.dataset.postId = post.id || post.post_id || '';
+  const showReplyBtn = state.settings.replyNesting && post.speaker !== '__router__';
+  row.innerHTML = `
+    <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
+    <div class="post-content">
+      <div class="post-head">
+        <span class="post-name">${escapeHtml(post.speaker)}</span>
+        <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
       </div>
-    `;
-    els.postList.appendChild(row);
+      <div class="post-body">${renderBody(post.content)}</div>
+    </div>
+    ${showReplyBtn ? '<div class="post-actions"><button class="btn-reply" type="button" title="回复这条">↩ Reply</button></div>' : ''}
+  `;
+  if (showReplyBtn) {
+    row.querySelector('.btn-reply').onclick = (e) => {
+      e.stopPropagation();
+      startReplyTo(post);
+    };
+  }
+  return row;
+}
+
+function renderPostsNested(posts) {
+  // build id -> post + children adjacency
+  const byId = new Map();
+  posts.forEach(p => byId.set(p.id || p.post_id, { post: p, children: [] }));
+  const roots = [];
+  posts.forEach(p => {
+    const node = byId.get(p.id || p.post_id);
+    const parentId = p.parent_post_id;
+    if (parentId && byId.has(parentId)) {
+      byId.get(parentId).children.push(node);
+    } else {
+      roots.push(node);
+    }
   });
+  const renderNode = (node, depth) => {
+    const wrap = document.createElement('div');
+    const article = renderPostNode(node.post, false);
+    wrap.appendChild(article);
+    if (node.children.length) {
+      const kids = document.createElement('div');
+      kids.className = 'post-children';
+      node.children.forEach(c => kids.appendChild(renderNode(c, depth + 1)));
+      wrap.appendChild(kids);
+    }
+    return wrap;
+  };
+  roots.forEach(r => els.postList.appendChild(renderNode(r, 0)));
+}
+
+function startReplyTo(post) {
+  state.replyTo = {
+    post_id: post.id || post.post_id,
+    speaker: post.speaker,
+    content: post.content,
+  };
+  const preview = (post.content || '').replace(/\s+/g, ' ').slice(0, 80);
+  els.composerReplyBanner.classList.add('active');
+  els.composerReplyBanner.querySelector('.reply-target').innerHTML =
+    `↩ Replying to <strong>${escapeHtml(post.speaker)}</strong>: ${escapeHtml(preview)}`;
+  els.postComposerInput.focus();
+}
+
+function cancelReply() {
+  state.replyTo = null;
+  els.composerReplyBanner.classList.remove('active');
 }
 
 // ─── composer: new thread ─────────────────────────────────────────────
@@ -435,11 +521,16 @@ async function submitPost() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, speaker: 'scott' }),
+        body: JSON.stringify({
+          content,
+          speaker: 'scott',
+          parent_post_id: state.replyTo?.post_id || null,
+        }),
       }
     );
     els.postComposerInput.value = '';
     autosize(els.postComposerInput);
+    cancelReply();
     state.currentThread = updated;
     renderDetail();
     refreshThreadsForCurrentSquad();  // update preview/last_post_at
@@ -722,6 +813,37 @@ els.btnSendPost.onclick = submitPost;
 els.btnCloseThread.onclick = closeCurrentThread;
 els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
 els.btnRefreshDetail.onclick = refreshCurrentThread;
+
+// ─── settings modal ────────────────────────────────────
+function openSettingsModal() {
+  for (const [key, val] of Object.entries(state.settings)) {
+    const el = els.settingsForm.elements[key];
+    if (el && el.type === 'checkbox') el.checked = !!val;
+  }
+  els.settingsModal.classList.add('open');
+  els.settingsModal.setAttribute('aria-hidden', 'false');
+}
+function closeSettingsModal() {
+  els.settingsModal.classList.remove('open');
+  els.settingsModal.setAttribute('aria-hidden', 'true');
+}
+els.btnSettings && (els.btnSettings.onclick = openSettingsModal);
+els.btnCloseSettings && (els.btnCloseSettings.onclick = closeSettingsModal);
+els.btnCloseSettings2 && (els.btnCloseSettings2.onclick = closeSettingsModal);
+els.settingsModal && els.settingsModal.addEventListener('click', (e) => {
+  if (e.target === els.settingsModal) closeSettingsModal();
+});
+els.settingsForm && els.settingsForm.addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t || !t.name) return;
+  if (t.type === 'checkbox') state.settings[t.name] = t.checked;
+  saveSettings(state.settings);
+  // re-render current thread so the change takes effect immediately
+  if (state.currentThread) renderDetail({ keepScroll: true });
+  if (!state.settings.replyNesting) cancelReply();
+});
+
+els.btnCancelReply && (els.btnCancelReply.onclick = cancelReply);
 
 // poll for updates while a thread is open
 function startPolling() {

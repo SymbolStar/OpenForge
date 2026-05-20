@@ -69,10 +69,30 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   height: 49px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0 18px;
   border-bottom: 1px solid rgba(255,255,255,0.12);
 }
 .brand-title { font-size: 18px; font-weight: 800; }
+.brand-settings-btn {
+  background: transparent;
+  border: 0;
+  color: rgba(255,255,255,0.78);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.brand-settings-btn:hover {
+  color: #fff;
+  transform: rotate(20deg);
+}
 
 .rail-section { padding: 14px 0; flex: 1; min-height: 0; }
 .section-label {
@@ -194,12 +214,18 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   background: transparent;
   color: var(--text-mute);
   width: 28px; height: 28px;
-  border-radius: 6px;
+  border-radius: 50%;
   font-size: 14px;
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.2s ease;
 }
-.icon-btn:hover { background: var(--accent-soft); color: var(--text); }
+.icon-btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+  transform: rotate(-12deg) scale(1.08);
+}
 .btn-danger {
   background: #fff;
   color: #c0392b;
@@ -328,9 +354,11 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 /* ─── detail pane (right) ───────────────────────────────────── */
 #thread-pane {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #fff;
+  overflow: hidden;
 }
 #thread-header {
   min-height: 56px;
@@ -391,7 +419,8 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .status-chip.chip-closed { color: var(--closed); }
 
 #post-list {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 14px 18px 20px;
 }
@@ -455,6 +484,7 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
+  flex: 0 0 auto;
 }
 #post-composer textarea {
   width: 100%;
@@ -600,4 +630,108 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 }
 .post[data-speaker="__router__"] .post-speaker {
   color: var(--text-soft);
+}
+
+/* ─── reply nesting (P1) ──────────────────────────────────────── */
+.post { position: relative; }
+.post-actions {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  display: flex;
+  gap: 4px;
+}
+.post:hover .post-actions { opacity: 1; }
+.btn-reply {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.btn-reply:hover { color: var(--text); border-color: var(--text-soft); }
+
+.post-children {
+  margin-left: 44px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+.post-children .post-children {
+  margin-left: 24px; /* shallower indent at deeper levels */
+}
+
+.reply-quote {
+  font-size: 12px;
+  color: var(--text-soft);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+.reply-quote .quote-author { font-weight: 600; margin-right: 6px; }
+
+#composer-reply-banner {
+  display: none;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  color: var(--text);
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+#composer-reply-banner.active { display: flex; }
+#composer-reply-banner .reply-target { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#composer-reply-banner button {
+  background: none; border: none; cursor: pointer; color: var(--text-soft);
+  font-size: 16px; line-height: 1;
+}
+
+
+/* ─── settings modal ─────────────────────────────────────── */
+#settings-modal .modal { max-width: 520px; }
+#settings-form { padding: 20px 24px 24px; display: grid; gap: 16px; }
+#settings-modal fieldset { border: 0; padding: 0; margin: 0; }
+#settings-modal legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  padding: 0 0 10px 0;
+  margin: 0;
+}
+#settings-modal .modal-actions {
+  padding: 12px 24px 20px;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.setting-row:hover { background: var(--accent-soft); }
+.setting-row input[type="checkbox"] { margin-top: 3px; flex: none; }
+.setting-row strong { display: block; font-weight: 600; }
+.setting-row small {
+  display: block;
+  color: var(--text-soft);
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.4;
 }
