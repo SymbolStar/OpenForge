@@ -49,6 +49,8 @@ const state = {
   currentThreadId: null,
   currentThread: null,
   pollTimer: null,
+  threadEventSource: null,  // EventSource for the currently-open thread
+  threadEventThreadId: null,
 };
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
@@ -271,6 +273,39 @@ async function selectThread(threadId) {
     renderDetail();
     setStatus(`thread 加载失败: ${err.message}`, false);
   }
+  openThreadEventStream(threadId);
+}
+
+// ─── SSE: live push of thread events ─────────────────────────────────
+function openThreadEventStream(threadId) {
+  closeThreadEventStream();
+  if (!threadId || typeof EventSource === 'undefined') return;
+  try {
+    const url = `/api/threads/${encodeURIComponent(threadId)}/events`;
+    const es = new EventSource(url);
+    state.threadEventSource = es;
+    state.threadEventThreadId = threadId;
+    es.onmessage = () => {
+      // any new event → refetch projection (cheap; reads jsonl).
+      if (state.currentThreadId === threadId) refreshCurrentThread();
+      if (state.currentSquadId) refreshThreadsForCurrentSquad();
+    };
+    es.addEventListener('hello', () => { /* connected */ });
+    es.onerror = () => {
+      // EventSource auto-reconnects; if it permanently closes the
+      // 8s poll fallback will keep things working.
+    };
+  } catch {
+    /* ignore — poll fallback still runs */
+  }
+}
+
+function closeThreadEventStream() {
+  if (state.threadEventSource) {
+    try { state.threadEventSource.close(); } catch {}
+  }
+  state.threadEventSource = null;
+  state.threadEventThreadId = null;
 }
 
 async function refreshCurrentThread() {

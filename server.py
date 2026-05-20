@@ -41,10 +41,12 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from queue import Empty
+from urllib.parse import urlparse, parse_qs
 
 ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
@@ -199,7 +201,62 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return True
         token = self.headers.get("Authorization", "")
         token = token.removeprefix("Bearer ").strip()
-        return bool(self.auth_token) and token == self.auth_token
+        if self.auth_token and token == self.auth_token:
+            return True
+        # EventSource cannot send custom headers; allow ?token= for SSE.
+        try:
+            qs = parse_qs(urlparse(self.path).query or "")
+            qtok = (qs.get("token") or [""])[0]
+            return bool(self.auth_token) and qtok == self.auth_token
+        except Exception:
+            return False
+
+    # ─── SSE ───────────────────────────────────────────
+    def _sse_stream(self, thread_id: str) -> None:
+        """Long-lived text/event-stream of thread events."""
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        q = store.subscribe_thread(thread_id)
+        try:
+            self._sse_send_raw(
+                f"event: hello\ndata: {{\"thread_id\":\"{thread_id}\"}}\n\n"
+            )
+            last_keepalive = time.time()
+            while True:
+                try:
+                    ev = q.get(timeout=5.0)
+                except Empty:
+                    ev = None
+                if ev is not None:
+                    payload = json.dumps(ev, ensure_ascii=False)
+                    if not self._sse_send_raw(f"data: {payload}\n\n"):
+                        return
+                    last_keepalive = time.time()
+                    continue
+                if time.time() - last_keepalive >= 15.0:
+                    if not self._sse_send_raw(":keepalive\n\n"):
+                        return
+                    last_keepalive = time.time()
+        finally:
+            try:
+                store.unsubscribe_thread(thread_id, q)
+            except Exception:
+                pass
+
+    def _sse_send_raw(self, frame: str) -> bool:
+        try:
+            self.wfile.write(frame.encode("utf-8"))
+            self.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
+            return False
 
     def _json(self, obj, status: int = 200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -294,6 +351,15 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 "threads": store.list_threads_for_squad(squad_id),
                 "meetings": _meetings_for_squad(squad_id),  # legacy
             })
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/events$", path)
+        if m:
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "not found"}, 404)
+                return
+            self._sse_stream(tid)
             return
 
         m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}$", path)

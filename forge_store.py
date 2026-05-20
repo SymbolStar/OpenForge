@@ -238,7 +238,55 @@ def append_thread_event(thread_id: str, event: dict[str, Any]) -> dict[str, Any]
             f.write(line + "\n")
             f.flush()
             os.fsync(f.fileno())
+    # SSE: notify any live subscribers AFTER the file lock is released so
+    # downstream HTTP handlers can refetch the projected thread without
+    # contending with the writer.
+    try:
+        _publish_thread_event(thread_id, event)
+    except Exception:
+        pass
     return event
+
+
+# ─── in-memory pub-sub for SSE (P1) ──────────────────────────────────
+# A tiny per-process broker: subscribers register a queue keyed by
+# thread_id; every successful `append_thread_event` publishes the freshly
+# written event to all live subscribers of that thread. Bounded queue so
+# a stuck client cannot blow up server memory.
+import threading as _threading_sse  # local alias to avoid touching top imports
+from queue import Queue as _SseQueue
+
+_sse_subs_lock = _threading_sse.Lock()
+_sse_subscribers: dict[str, set["_SseQueue"]] = {}
+
+
+def subscribe_thread(thread_id: str, maxsize: int = 256) -> "_SseQueue":
+    q: _SseQueue = _SseQueue(maxsize=maxsize)
+    with _sse_subs_lock:
+        _sse_subscribers.setdefault(thread_id, set()).add(q)
+    return q
+
+
+def unsubscribe_thread(thread_id: str, q: "_SseQueue") -> None:
+    with _sse_subs_lock:
+        bucket = _sse_subscribers.get(thread_id)
+        if not bucket:
+            return
+        bucket.discard(q)
+        if not bucket:
+            _sse_subscribers.pop(thread_id, None)
+
+
+def _publish_thread_event(thread_id: str, event: dict[str, Any]) -> None:
+    with _sse_subs_lock:
+        subs = list(_sse_subscribers.get(thread_id) or ())
+    for q in subs:
+        try:
+            q.put_nowait(event)
+        except Exception:
+            # Subscriber's queue is full or broken — drop on the floor;
+            # the client will fall back to the periodic poll.
+            pass
 
 
 def read_thread_events(thread_id: str) -> list[dict[str, Any]]:
