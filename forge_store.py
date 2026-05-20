@@ -589,9 +589,12 @@ def _read_squads_doc() -> dict[str, Any]:
     return doc
 
 
-def list_squads() -> list[dict[str, Any]]:
+def list_squads(include_archived: bool = False) -> list[dict[str, Any]]:
     doc = ensure_default_squads()
-    return [dict(squad) for squad in doc["squads"].values()]
+    out = [dict(squad) for squad in doc["squads"].values()]
+    if not include_archived:
+        out = [s for s in out if not s.get("archived")]
+    return out
 
 
 def get_squad(squad_id: str) -> dict[str, Any] | None:
@@ -632,6 +635,8 @@ def update_squad(squad_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
         cur["emoji"] = str(patch["emoji"] or "#")
     if "members" in patch and isinstance(patch["members"], list) and patch["members"]:
         cur["members"] = [str(m) for m in patch["members"]]
+    if "archived" in patch:
+        cur["archived"] = bool(patch["archived"])
     if "chair" in patch and patch["chair"]:
         if patch["chair"] not in cur["members"]:
             raise ValueError("chair must be a member")

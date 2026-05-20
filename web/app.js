@@ -2,6 +2,7 @@
 
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
 const POLL_MS = 8000;
+let showArchivedSquads = false;
 
 const els = {
   // squad rail
@@ -139,7 +140,8 @@ async function apiJson(url, options) {
 async function loadSquads() {
   setStatus('加载 squads...');
   try {
-    state.squads = await apiJson('/api/squads');
+    const url = showArchivedSquads ? '/api/squads?include_archived=1' : '/api/squads';
+    state.squads = await apiJson(url);
     await Promise.all(state.squads.map(async squad => {
       const detail = await apiJson(`/api/squads/${encodeURIComponent(squad.id)}`);
       state.squadDetails.set(squad.id, detail);
@@ -172,10 +174,12 @@ function renderSquadRail() {
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'squad-item' + (squad.id === state.currentSquadId ? ' active' : '');
+    btn.className = 'squad-item'
+      + (squad.id === state.currentSquadId ? ' active' : '')
+      + (squad.archived ? ' archived' : '');
     btn.innerHTML = `
       <span class="squad-emoji">${escapeHtml(squad.emoji || '#')}</span>
-      <span class="squad-name">${escapeHtml(squad.name || squad.id)}</span>
+      <span class="squad-name">${escapeHtml(squad.name || squad.id)}${squad.archived ? ' <span class="archived-tag">archived</span>' : ''}</span>
       <span class="squad-count">${count}</span>
     `;
     btn.onclick = () => selectSquad(squad.id);
@@ -565,8 +569,19 @@ async function closeCurrentThread() {
 }
 
 // ─── squad modal ──────────────────────────────────────────────────────
+let modalMode = 'create';
+let editingSquadId = null;
+
 function openModal() {
+  modalMode = 'create';
+  editingSquadId = null;
   els.form.reset();
+  if (els.modalTitle) els.modalTitle.textContent = 'New Squad';
+  if (els.btnSubmitSquad) els.btnSubmitSquad.textContent = 'Create';
+  if (els.form.elements.id) els.form.elements.id.disabled = false;
+  els.btnDeleteSquad.hidden = true;
+  const archiveRow = document.getElementById('squad-archive-row');
+  if (archiveRow) archiveRow.hidden = true;
   [...els.memberCheckboxes.querySelectorAll('input')].forEach((input, idx) => {
     input.checked = idx === 0;
   });
@@ -574,6 +589,35 @@ function openModal() {
   els.modal.classList.add('open');
   els.modal.setAttribute('aria-hidden', 'false');
   els.form.elements.id.focus();
+}
+
+function openEditModal(squad) {
+  modalMode = 'edit';
+  editingSquadId = squad.id;
+  els.form.reset();
+  if (els.modalTitle) els.modalTitle.textContent = `编辑 squad · ${squad.id}`;
+  if (els.btnSubmitSquad) els.btnSubmitSquad.textContent = '保存';
+  if (els.form.elements.id) {
+    els.form.elements.id.value = squad.id;
+    els.form.elements.id.disabled = true;
+  }
+  if (els.form.elements.name) els.form.elements.name.value = squad.name || '';
+  if (els.form.elements.description) els.form.elements.description.value = squad.description || '';
+  if (els.form.elements.emoji) els.form.elements.emoji.value = squad.emoji || '';
+  const members = new Set(squad.members || []);
+  [...els.memberCheckboxes.querySelectorAll('input')].forEach(input => {
+    input.checked = members.has(input.value);
+  });
+  syncChairOptions();
+  if (squad.chair) els.chairSelect.value = squad.chair;
+  const archiveRow = document.getElementById('squad-archive-row');
+  if (archiveRow) {
+    archiveRow.hidden = false;
+    document.getElementById('squad-archived-cb').checked = !!squad.archived;
+  }
+  els.btnDeleteSquad.hidden = false;
+  els.modal.classList.add('open');
+  els.modal.setAttribute('aria-hidden', 'false');
 }
 
 function closeModal() {
@@ -766,6 +810,10 @@ els.form.onsubmit = async event => {
     members,
     chair: els.chairSelect.value,
   };
+  const archivedCb = document.getElementById('squad-archived-cb');
+  if (modalMode === 'edit' && archivedCb) {
+    payload.archived = !!archivedCb.checked;
+  }
   try {
     if (modalMode === 'edit' && editingSquadId) {
       await apiJson(`/api/squads/${encodeURIComponent(editingSquadId)}`, {
@@ -813,6 +861,16 @@ els.btnSendPost.onclick = submitPost;
 els.btnCloseThread.onclick = closeCurrentThread;
 els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
 els.btnRefreshDetail.onclick = refreshCurrentThread;
+
+const toggleArchivedBtn = document.getElementById('toggle-archived');
+if (toggleArchivedBtn) {
+  toggleArchivedBtn.onclick = async () => {
+    showArchivedSquads = !showArchivedSquads;
+    toggleArchivedBtn.textContent = (showArchivedSquads ? '☑' : '☐') + ' 归档';
+    toggleArchivedBtn.classList.toggle('on', showArchivedSquads);
+    await loadSquads();
+  };
+}
 
 // ─── settings modal ────────────────────────────────────
 function openSettingsModal() {

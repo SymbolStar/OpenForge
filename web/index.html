@@ -14,7 +14,10 @@
       <button id="btn-settings" class="brand-settings-btn" type="button" title="设置" aria-label="设置">⚙</button>
     </div>
     <div class="rail-section">
-      <div class="section-label">SQUADS</div>
+      <div class="section-label">
+        SQUADS
+        <button id="toggle-archived" type="button" class="section-label-toggle" title="显示已归档">☐ 归档</button>
+      </div>
       <ul id="squad-list"></ul>
       <button id="btn-new-squad" class="new-squad-btn" type="button">+ New Squad</button>
     </div>
@@ -94,6 +97,10 @@
         <div id="member-checkboxes" class="checkbox-grid"></div>
       </fieldset>
       <label>Chair<select name="chair" id="chair-select"></select></label>
+      <label class="squad-archive-row" id="squad-archive-row" hidden>
+        <input type="checkbox" name="archived" id="squad-archived-cb" />
+        <span><strong>归档这个 squad</strong><small>从侧栏隐藏，不删除数据；在右上“显示已归档”中仍可恢复</small></span>
+      </label>
       <div class="modal-actions">
         <button type="button" id="btn-delete-squad" class="btn-danger" hidden>删除 squad</button>
         <span class="flex-spacer"></span>

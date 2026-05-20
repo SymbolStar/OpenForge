@@ -320,7 +320,9 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/squads":
-            self._json(store.list_squads())
+            qs = parse_qs(url.query or "")
+            include_archived = (qs.get("include_archived") or ["0"])[0] in ("1", "true", "yes")
+            self._json(store.list_squads(include_archived=include_archived))
             return
 
         if path == "/api/agents":
