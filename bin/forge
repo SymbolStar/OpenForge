@@ -146,7 +146,13 @@ cmd_version() { echo "forge ${VERSION}"; }
 
 cmd_status() {
   echo "Repo:    $REPO_DIR"
-  echo "Plist:   $PLIST_PATH $([ -f "$PLIST_PATH" ] && echo "(present)" || c_warn "(missing — run: forge install)")"
+  local plist_note
+  if [ -f "$PLIST_PATH" ]; then
+    plist_note="(present)"
+  else
+    plist_note="$(c_warn '(missing — run: forge install)')"
+  fi
+  echo "Plist:   $PLIST_PATH $plist_note"
   if is_loaded; then
     echo "Agent:   $(c_ok loaded)"
     launchctl print "$(domain)/${LABEL}" 2>/dev/null | awk '/state =|pid =|last exit code =/{$1=$1; print "         " $0}' | head -5
