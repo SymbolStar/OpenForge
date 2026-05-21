@@ -997,8 +997,30 @@ function openSettingsModal() {
     if (el.type === 'checkbox') el.checked = !!val;
     else el.value = val ?? '';
   }
+  refreshAvatarPreview();
   els.settingsModal.classList.add('open');
   els.settingsModal.setAttribute('aria-hidden', 'false');
+}
+
+function refreshAvatarPreview() {
+  const prev = document.getElementById('avatar-preview');
+  if (!prev) return;
+  prev.textContent = avatarLabel('scott');
+  const color = (state.settings.myAvatarColor || '').trim();
+  prev.style.background = color || getDefaultScottBg();
+  // sync color swatch dot
+  const dot = document.querySelector('.color-swatch-dot');
+  if (dot) dot.style.setProperty('--swatch', color || getDefaultScottBg());
+  // sync emoji quick-pick active state
+  const current = (state.settings.myAvatar || '').trim();
+  document.querySelectorAll('.emoji-quick button').forEach(b => {
+    b.classList.toggle('active', (b.dataset.emoji || '') === current || (!current && b.dataset.emoji === 'S'));
+  });
+}
+
+function getDefaultScottBg() {
+  // matches .av-default in style.css
+  return '#616061';
 }
 function closeSettingsModal() {
   els.settingsModal.classList.remove('open');
@@ -1016,16 +1038,41 @@ els.settingsForm && els.settingsForm.addEventListener('change', (e) => {
   if (t.type === 'checkbox') state.settings[t.name] = t.checked;
   else state.settings[t.name] = t.value;
   saveSettings(state.settings);
-  // re-render current thread so the change takes effect immediately
+  refreshAvatarPreview();
   if (state.currentThread) renderDetail({ keepScroll: true });
   if (!state.settings.replyNesting) cancelReply();
 });
 els.settingsForm && els.settingsForm.addEventListener('input', (e) => {
-  // live preview for text/color inputs without waiting for blur
   const t = e.target;
   if (!t || !t.name || t.type === 'checkbox') return;
   state.settings[t.name] = t.value;
   saveSettings(state.settings);
+  refreshAvatarPreview();
+  if (state.currentThread) renderDetail({ keepScroll: true });
+});
+// emoji quick picks: set myAvatar text + sync
+document.querySelectorAll('.emoji-quick button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const e = btn.dataset.emoji || '';
+    const v = (e === 'S') ? '' : e;  // 'S' button == default (clear field)
+    state.settings.myAvatar = v;
+    const input = els.settingsForm.elements['myAvatar'];
+    if (input) input.value = v;
+    saveSettings(state.settings);
+    refreshAvatarPreview();
+    if (state.currentThread) renderDetail({ keepScroll: true });
+  });
+});
+const btnResetAvatar = document.getElementById('btn-reset-avatar');
+btnResetAvatar && btnResetAvatar.addEventListener('click', () => {
+  state.settings.myAvatar = '';
+  state.settings.myAvatarColor = '';
+  const ta = els.settingsForm.elements['myAvatar'];
+  const tc = els.settingsForm.elements['myAvatarColor'];
+  if (ta) ta.value = '';
+  if (tc) tc.value = '#616061';
+  saveSettings(state.settings);
+  refreshAvatarPreview();
   if (state.currentThread) renderDetail({ keepScroll: true });
 });
 

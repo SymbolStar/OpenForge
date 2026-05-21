@@ -130,20 +130,30 @@
       </fieldset>
       <fieldset>
         <legend>我的头像</legend>
-        <label class="setting-row">
-          <input type="text" name="myAvatar" maxlength="4" placeholder="S 或 🤖" style="width:80px;text-align:center;font-size:18px;" />
-          <span>
-            <strong>显示字符</strong>
-            <small>1–2 个字符或 emoji；留空 = 默认大写首字母 S</small>
-          </span>
-        </label>
-        <label class="setting-row">
-          <input type="color" name="myAvatarColor" style="width:56px;height:32px;padding:0;border:1px solid var(--border);" />
-          <span>
-            <strong>背景色</strong>
-            <small>只对本浏览器生效（localStorage）</small>
-          </span>
-        </label>
+        <div class="avatar-editor">
+          <div id="avatar-preview" class="avatar avatar-lg">S</div>
+          <div class="avatar-editor-fields">
+            <div class="avatar-row">
+              <input type="text" name="myAvatar" maxlength="4" placeholder="S" />
+              <label class="color-swatch" title="点击改颜色">
+                <input type="color" name="myAvatarColor" />
+                <span class="color-swatch-dot"></span>
+              </label>
+              <button type="button" class="btn-reset-avatar" id="btn-reset-avatar" title="恢复默认">重置</button>
+            </div>
+            <div class="emoji-quick">
+              <button type="button" data-emoji="S">S</button>
+              <button type="button" data-emoji="🦖">🦖</button>
+              <button type="button" data-emoji="🐱">🐱</button>
+              <button type="button" data-emoji="🤖">🤖</button>
+              <button type="button" data-emoji="👨">👨</button>
+              <button type="button" data-emoji="✨">✨</button>
+              <button type="button" data-emoji="💎">💎</button>
+              <button type="button" data-emoji="🚀">🚀</button>
+            </div>
+            <small class="avatar-hint">只在本浏览器生效（localStorage）</small>
+          </div>
+        </div>
       </fieldset>
       <div class="modal-actions">
         <span class="flex-spacer"></span>
