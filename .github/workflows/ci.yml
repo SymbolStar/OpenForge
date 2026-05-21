@@ -28,10 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          shellcheck -x bin/forge
-          shellcheck -x tests/fixtures/fake_openclaw.sh
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          additional_files: "bin/forge tests/fixtures/fake_openclaw.sh"
+          scandir: "./bin"
 
   test:
     name: pytest · py${{ matrix.python }}
@@ -72,9 +72,9 @@ jobs:
             -d '{"id":"smoke","name":"smoke","members":["milk"],"chair":"milk"}' \
             http://127.0.0.1:17878/api/squads | tee /tmp/squad.json
 
-          # create thread
+          # create thread (no @ so router stays out of the smoke path; CI has no openclaw)
           TID=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d '{"content":"hi @milk","created_by":"scott"}' \
+            -d '{"content":"kick off without ats","created_by":"scott"}' \
             http://127.0.0.1:17878/api/squads/smoke/threads | python -c 'import json,sys;print(json.load(sys.stdin)["thread_id"])')
           echo "tid=$TID"
 
