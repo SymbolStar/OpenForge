@@ -154,6 +154,7 @@ def _route_one(thread_id: str, trigger_post_id: str) -> None:
 def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
     """Snapshot agent main → run one agent turn → restore → append reply."""
     session_id = f"forge-{thread_id}-{agent_id}"
+    trigger_pid = trigger.get("post_id") or trigger.get("id")
     # Step 1: announce we are working so the UI shows progress immediately.
     # We'll supersede this placeholder with the real reply when it arrives.
     placeholder_id: str | None = None
@@ -161,6 +162,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
         ph = store.add_thread_post(
             thread_id, ROUTER_SPEAKER_FALLBACK,
             f"⏳ @{agent_id} 正在思考中…",
+            parent_post_id=trigger_pid,
         )
         placeholder_id = ph.get("post_id")
         store.write_thread_markdown(thread_id)
@@ -177,6 +179,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
             err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
                 f"⚠️ @{agent_id} 没回复: {e}",
+                parent_post_id=trigger_pid,
             )
             final_post_id = err.get("post_id")
             return
@@ -185,10 +188,13 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
             err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
                 f"_(@{agent_id} 返回空回复)_",
+                parent_post_id=trigger_pid,
             )
             final_post_id = err.get("post_id")
             return
-        added = store.add_thread_post(thread_id, agent_id, reply)
+        added = store.add_thread_post(
+            thread_id, agent_id, reply, parent_post_id=trigger_pid,
+        )
         final_post_id = added.get("post_id")
     finally:
         if snap:
