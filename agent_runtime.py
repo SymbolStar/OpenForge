@@ -156,7 +156,7 @@ class AgentError(RuntimeError):
     pass
 
 
-AGENT_TIMEOUT = 180
+AGENT_TIMEOUT = int(os.environ.get("OPENFORGE_AGENT_TIMEOUT", "1800"))  # 30 min
 
 
 def _resolve_openclaw_bin() -> str:

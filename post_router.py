@@ -1,19 +1,24 @@
 """
-post_router.py — P0 post routing for OpenForge.
+post_router.py — post routing for OpenForge.
 
 When scott posts a message that @mentions one or more agents, this module
-spawns `openclaw agent` subprocesses (one per mention, sequentially) and
-appends each agent reply as a new `post_added` event on the same thread.
+spawns `openclaw agent` subprocesses (one per mention) and appends each
+agent reply as a new `post_added` event on the same thread.
 
-Design constraints (see TODO.md):
-- Reuses the snapshot/restore main-session logic from run_standup.py so the
-  agent's primary chat session isn't hijacked by our `--session-id` calls.
-- One worker thread per process is enough: agents share a main pointer, so
-  routing must be serialized globally (a parallel call would clobber the
-  snapshot of the other in-flight call).
-- HTTP handler stays non-blocking: it enqueues and returns immediately.
-- Failures are recorded as a synthetic `agent_router_failed` post by
-  `__router__`, so the thread UI shows what went wrong without crashing.
+Design:
+- `openclaw agent --local --json` is fully sandboxed in a subprocess: it does
+  NOT mutate `agent:<id>:main` on the host, so we can fan out N concurrent
+  invocations without racing on a shared snapshot. We keep snapshot/restore
+  available as a defensive belt-and-suspenders, but it's a no-op on --local
+  paths.
+- One daemon thread per (thread_id, agent_id) mention, bounded by a global
+  semaphore (`MAX_PARALLEL_ROUTES`, env `OPENFORGE_MAX_PARALLEL_ROUTES`).
+- Same (thread, agent) pair is deduped while in flight so scott double-tapping
+  `@milk` does not spawn two milk processes sharing the same forge-<tid>-<agent>
+  session-id (they would race on the jsonl file).
+- HTTP handler stays non-blocking: enqueue dispatches workers and returns.
+- Failures are recorded as a synthetic post by `__router__` so the thread UI
+  shows what went wrong instead of silently hanging.
 
 Session-id convention: `forge-<thread_id>-<agent_id>` (stable per thread/agent
 pair, so the agent keeps continuity across multiple turns in the same thread).
@@ -21,79 +26,52 @@ pair, so the agent keeps continuity across multiple turns in the same thread).
 
 from __future__ import annotations
 
-import queue
+import json
+import os
 import threading
-import time
 from typing import Any
 
 import forge_store as store
 from agent_runtime import (
+    AGENTS_ROOT,
     AgentError,
+    _find_clean_main,
+    _is_forge_sid,
+    _sessions_path,
     call_agent,
     clean,
     is_empty,
     restore_main,
     snapshot_main,
-    _is_forge_sid,
-    _find_clean_main,
-    _sessions_path,
-    AGENTS_ROOT,
 )
-import json
-import os
+import time
 
-# ─── config ───────────────────────────────────────────────────────────
+# ─── config ──────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
-# How many prior posts of context to feed the agent. Most threads are short;
-# 50 is plenty and bounds the prompt size.
+
+# Concurrency cap across all in-flight agent subprocesses. --local agent
+# runs are fully sandboxed in their own subprocess + ephemeral session, so
+# we no longer need single-flight serialization to protect agent main
+# pointers. The cap is just so a flood of @mentions doesn't fork-bomb.
+MAX_PARALLEL_ROUTES = int(os.environ.get("OPENFORGE_MAX_PARALLEL_ROUTES", "6"))
+
+# Soft dedupe set of (thread_id, agent_id) currently being routed. Same
+# pair is dropped silently if re-enqueued while still running.
+_inflight: set[tuple[str, str]] = set()
+_inflight_lock = threading.Lock()
+_slots = threading.BoundedSemaphore(MAX_PARALLEL_ROUTES)
+
+# How many prior posts to feed the agent. Bounds the prompt size.
 MAX_CONTEXT_POSTS = 50
-
-
-# ─── work queue ──────────────────────────────────────────────────────
-# Single worker thread → strict serialization across all threads. The
-# agent main-session pointer is shared global state; parallel routing of
-# two posts (even on different threads) would race on snapshot/restore.
-_q: "queue.Queue[tuple[str, str]]" = queue.Queue()
-_worker_started = False
-_worker_lock = threading.Lock()
-
-
-def _ensure_worker() -> None:
-    global _worker_started
-    with _worker_lock:
-        if _worker_started:
-            return
-        t = threading.Thread(target=_worker_loop, name="openforge-router",
-                             daemon=True)
-        t.start()
-        _worker_started = True
-
-
-def _worker_loop() -> None:
-    while True:
-        try:
-            thread_id, trigger_post_id = _q.get()
-        except Exception:
-            time.sleep(0.5)
-            continue
-        try:
-            _route_one(thread_id, trigger_post_id)
-        except Exception as e:  # last-ditch; never let the worker die
-            try:
-                store.add_thread_post(
-                    thread_id, ROUTER_SPEAKER_FALLBACK,
-                    f"⚠️ post router crashed: {e!r}",
-                )
-                store.write_thread_markdown(thread_id)
-            except Exception:
-                pass
 
 
 # ─── public api ──────────────────────────────────────────────────────
 def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
-    """Inspect a freshly-added post and queue routing work if applicable.
+    """Inspect a freshly-added post and dispatch routing workers if applicable.
 
-    Returns True if work was enqueued. Safe to call from the HTTP handler.
+    Returns True if at least one agent route was dispatched. Safe to call
+    from the HTTP handler: each (thread, agent) pair runs on its own daemon
+    thread, bounded by MAX_PARALLEL_ROUTES.
     """
     if not post:
         return False
@@ -102,61 +80,98 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     mentions = post.get("mentions") or []
     if not mentions:
         return False
-    _ensure_worker()
-    _q.put((thread_id, post.get("post_id") or ""))
+
+    # dedupe mentions while preserving order
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for m in mentions:
+        key = (m or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    if not ordered:
+        return False
+
+    trigger_pid = post.get("post_id") or post.get("id") or ""
+    dispatched = False
+    for agent_id in ordered:
+        if _dispatch(thread_id, agent_id, trigger_pid):
+            dispatched = True
+    return dispatched
+
+
+def _dispatch(thread_id: str, agent_id: str, trigger_pid: str) -> bool:
+    """Spawn a worker thread for one (thread, agent) pair unless already running."""
+    key = (thread_id, agent_id)
+    with _inflight_lock:
+        if key in _inflight:
+            return False  # drop the duplicate silently
+        _inflight.add(key)
+    t = threading.Thread(
+        target=_run_one,
+        args=(thread_id, agent_id, trigger_pid),
+        name=f"openforge-route-{agent_id}-{thread_id[-6:]}",
+        daemon=True,
+    )
+    t.start()
     return True
 
 
+def _run_one(thread_id: str, agent_id: str, trigger_pid: str) -> None:
+    """Worker entry: bounded-parallel agent invocation for a single mention."""
+    key = (thread_id, agent_id)
+    # Bound total in-flight subprocesses. (thread, agent) dedupe is enforced
+    # BEFORE we wait on the semaphore so duplicates don't pile up in the
+    # slot queue.
+    try:
+        with _slots:
+            try:
+                _route_to_agent_safely(thread_id, agent_id, trigger_pid)
+            except Exception as e:
+                _record_crash(thread_id, agent_id, e)
+    finally:
+        with _inflight_lock:
+            _inflight.discard(key)
+
+
+def _record_crash(thread_id: str, agent_id: str, e: BaseException) -> None:
+    try:
+        store.add_thread_post(
+            thread_id, ROUTER_SPEAKER_FALLBACK,
+            f"⚠️ post router crashed routing @{agent_id}: {e!r}",
+        )
+        store.write_thread_markdown(thread_id)
+    except Exception:
+        pass
+
+
 # ─── core routing ────────────────────────────────────────────────────
-def _route_one(thread_id: str, trigger_post_id: str) -> None:
+def _route_to_agent_safely(thread_id: str, agent_id: str, trigger_pid: str) -> None:
     thread = store.project_thread(thread_id)
     if thread is None:
         return
     if thread.get("closed_at"):
         return  # closed mid-flight; skip silently
-
-    # find the trigger post (fall back to last scott post with mentions)
-    trigger = _find_trigger_post(thread, trigger_post_id)
+    trigger = _find_trigger_post(thread, trigger_pid)
     if not trigger:
         return
-    mentions: list[str] = list(trigger.get("mentions") or [])
-    if not mentions:
-        return
-
-    # dedupe while preserving order; route to each agent at most once per
-    # trigger post.
-    seen: set[str] = set()
-    ordered = []
-    for m in mentions:
-        key = m.strip().lower()
-        if key and key not in seen:
-            seen.add(key)
-            ordered.append(key)
-
-    for agent_id in ordered:
+    mentions_lc = {(m or "").strip().lower() for m in (trigger.get("mentions") or [])}
+    if agent_id not in mentions_lc:
+        return  # trigger no longer mentions this agent
+    try:
+        _route_to_agent(thread_id, agent_id, trigger)
+    finally:
         try:
-            _route_to_agent(thread_id, agent_id, trigger)
-        except Exception as e:
-            try:
-                store.add_thread_post(
-                    thread_id, ROUTER_SPEAKER_FALLBACK,
-                    f"⚠️ routing to @{agent_id} failed: {e!r}",
-                )
-            except Exception:
-                pass
-        finally:
-            try:
-                store.write_thread_markdown(thread_id)
-            except Exception:
-                pass
+            store.write_thread_markdown(thread_id)
+        except Exception:
+            pass
 
 
 def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
-    """Snapshot agent main → run one agent turn → restore → append reply."""
+    """Run one agent turn → append reply. Concurrency-safe."""
     session_id = f"forge-{thread_id}-{agent_id}"
     trigger_pid = trigger.get("post_id") or trigger.get("id")
     # Step 1: announce we are working so the UI shows progress immediately.
-    # We'll supersede this placeholder with the real reply when it arrives.
     placeholder_id: str | None = None
     try:
         ph = store.add_thread_post(
@@ -219,7 +234,6 @@ def _find_trigger_post(thread: dict, post_id: str) -> dict | None:
         for p in posts:
             pid = p.get("post_id") or p.get("id")
             if pid == post_id and not p.get("superseded"):
-                # normalize for downstream code
                 p.setdefault("post_id", pid)
                 return p
     # fallback: most recent non-superseded scott post with mentions
