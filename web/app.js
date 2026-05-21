@@ -413,7 +413,8 @@ function renderPostNode(post, includeChildren) {
   const row = document.createElement('article');
   row.className = 'post';
   row.dataset.speaker = post.speaker;
-  row.dataset.postId = post.id || post.post_id || '';
+  const postId = post.id || post.post_id || '';
+  row.dataset.postId = postId;
   const showReplyBtn = state.settings.replyNesting && post.speaker !== '__router__';
   row.innerHTML = `
     <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
@@ -423,8 +424,12 @@ function renderPostNode(post, includeChildren) {
         <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
       </div>
       <div class="post-body">${renderBody(post.content)}</div>
+      <div class="post-reactions"></div>
     </div>
-    ${showReplyBtn ? '<div class="post-actions"><button class="btn-reply" type="button" title="回复这条">↩ Reply</button></div>' : ''}
+    <div class="post-actions">
+      <button class="btn-react" type="button" title="添加表情回应">😊</button>
+      ${showReplyBtn ? '<button class="btn-reply" type="button" title="回复这条">↩ Reply</button>' : ''}
+    </div>
   `;
   if (showReplyBtn) {
     row.querySelector('.btn-reply').onclick = (e) => {
@@ -432,7 +437,97 @@ function renderPostNode(post, includeChildren) {
       startReplyTo(post);
     };
   }
+  row.querySelector('.btn-react').onclick = (e) => {
+    e.stopPropagation();
+    openReactionPicker(e.currentTarget, postId);
+  };
+  renderReactionChips(row.querySelector('.post-reactions'), postId, post.reactions || {});
   return row;
+}
+
+const REACTION_QUICK_PICKS = ['👍', '🎉', '🚀', '❤️', '👀', '🙏'];
+const REACTION_SELF = 'scott';
+
+function renderReactionChips(container, postId, reactions) {
+  container.innerHTML = '';
+  const entries = Object.entries(reactions || {});
+  if (!entries.length) {
+    container.classList.remove('has-reactions');
+    return;
+  }
+  container.classList.add('has-reactions');
+  entries.forEach(([emoji, actors]) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'reaction-chip';
+    if ((actors || []).includes(REACTION_SELF)) chip.classList.add('reacted');
+    chip.title = (actors || []).join(', ');
+    chip.innerHTML = `<span class="r-emoji">${escapeHtml(emoji)}</span><span class="r-count">${(actors || []).length}</span>`;
+    chip.onclick = (e) => {
+      e.stopPropagation();
+      toggleReaction(postId, emoji);
+    };
+    container.appendChild(chip);
+  });
+}
+
+let _reactionPickerEl = null;
+function closeReactionPicker() {
+  if (_reactionPickerEl) {
+    _reactionPickerEl.remove();
+    _reactionPickerEl = null;
+    document.removeEventListener('click', _closeReactionPickerOnDocClick, true);
+  }
+}
+function _closeReactionPickerOnDocClick(e) {
+  if (_reactionPickerEl && !_reactionPickerEl.contains(e.target)) closeReactionPicker();
+}
+function openReactionPicker(anchorBtn, postId) {
+  closeReactionPicker();
+  const picker = document.createElement('div');
+  picker.className = 'reaction-picker';
+  REACTION_QUICK_PICKS.forEach(emoji => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'r-pick';
+    b.textContent = emoji;
+    b.onclick = (e) => {
+      e.stopPropagation();
+      closeReactionPicker();
+      toggleReaction(postId, emoji);
+    };
+    picker.appendChild(b);
+  });
+  document.body.appendChild(picker);
+  const r = anchorBtn.getBoundingClientRect();
+  const pw = picker.offsetWidth;
+  const ph = picker.offsetHeight;
+  const vw = document.documentElement.clientWidth;
+  let top = r.top - ph - 6;
+  if (top < 8) top = r.bottom + 6;
+  let left = r.left - 4;
+  if (left + pw + 8 > vw) left = vw - pw - 8;
+  if (left < 8) left = 8;
+  picker.style.top = `${top}px`;
+  picker.style.left = `${left}px`;
+  _reactionPickerEl = picker;
+  // defer attaching outside-click so the triggering click doesn't immediately close it
+  setTimeout(() => document.addEventListener('click', _closeReactionPickerOnDocClick, true), 0);
+}
+
+async function toggleReaction(postId, emoji) {
+  if (!state.currentThreadId || !postId || !emoji) return;
+  try {
+    await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}/posts/${encodeURIComponent(postId)}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emoji, actor: REACTION_SELF }),
+    });
+    // SSE will refresh; do a tiny optimistic refetch in case SSE is offline
+    refreshCurrentThread();
+  } catch (err) {
+    setStatus(`reaction failed: ${err.message}`, false);
+  }
 }
 
 function renderPostsNested(posts) {

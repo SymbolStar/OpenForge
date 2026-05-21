@@ -132,6 +132,7 @@ def _serializable_thread(m: dict) -> dict:
                 "parent_post_id": p.get("parent_post_id"),
                 "superseded": p["superseded"],
                 "superseded_by": p.get("superseded_by"),
+                "reactions": p.get("reactions") or {},
             }
             for p in m["posts"]
         ],
@@ -485,6 +486,29 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 print(f"⚠️  router enqueue failed: {e!r}", flush=True)
             self._json(_serializable_thread(store.project_thread(tid)), 201)
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/(p_[A-Za-z0-9_]+)/reactions$", url.path)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            emoji = (opts.get("emoji") or "").strip()
+            actor = (opts.get("actor") or "scott").strip() or "scott"
+            if not emoji:
+                self._json({"error": "emoji required"}, 400)
+                return
+            try:
+                reactions = store.toggle_reaction(tid, pid, emoji, actor)
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json({"post_id": pid, "reactions": reactions})
             return
 
         m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/close$", url.path)

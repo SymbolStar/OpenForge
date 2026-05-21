@@ -664,10 +664,12 @@ def delete_squad(squad_id: str) -> bool:
 #   ~/.openclaw/openforge/threads/<thread_id>/events.jsonl
 #
 # Event kinds:
-#   thread_started  { thread_id, squad_id, created_by }
-#   post_added      { post_id, speaker, content, mentions[], parent_post_id }
-#   post_superseded { post_id, by_post_id }
-#   thread_closed   { thread_id, closed_by }
+#   thread_started     { thread_id, squad_id, created_by }
+#   post_added         { post_id, speaker, content, mentions[], parent_post_id }
+#   post_superseded    { post_id, by_post_id }
+#   reaction_added     { post_id, emoji, actor }
+#   reaction_removed   { post_id, emoji, actor }
+#   thread_closed      { thread_id, closed_by }
 #
 # No title, no topics, no date. Preview = first ~80 chars of opening post.
 
@@ -739,6 +741,65 @@ def close_thread(thread_id: str, closed_by: str = "scott") -> dict:
     })
 
 
+# Reactions: stored as discrete events; projection aggregates them onto the
+# post as {emoji: [actor, ...]}. Toggle semantics live in add_reaction below.
+_REACTION_EMOJI_RE = re.compile(r"^[\S\u200d]{1,16}$")
+
+
+def _normalize_emoji(emoji: str) -> str:
+    if not isinstance(emoji, str):
+        raise ValueError("emoji must be a string")
+    e = emoji.strip()
+    if not e or not _REACTION_EMOJI_RE.match(e):
+        raise ValueError("emoji must be 1-16 non-space chars")
+    return e
+
+
+def _post_reactions_map(thread_id: str, post_id: str) -> dict[str, list[str]]:
+    """Replay only the reactions for a given post."""
+    out: dict[str, list[str]] = {}
+    for ev in read_thread_events(thread_id):
+        if ev.get("post_id") != post_id:
+            continue
+        kind = ev.get("kind")
+        if kind not in ("reaction_added", "reaction_removed"):
+            continue
+        emoji = ev.get("emoji")
+        actor = ev.get("actor") or "scott"
+        if not emoji:
+            continue
+        actors = out.setdefault(emoji, [])
+        if kind == "reaction_added" and actor not in actors:
+            actors.append(actor)
+        elif kind == "reaction_removed" and actor in actors:
+            actors.remove(actor)
+            if not actors:
+                out.pop(emoji, None)
+    return out
+
+
+def toggle_reaction(thread_id: str, post_id: str, emoji: str,
+                    actor: str = "scott") -> dict:
+    """Toggle a single (actor, emoji) reaction on a post. Returns refreshed map."""
+    emoji = _normalize_emoji(emoji)
+    actor = (actor or "scott").strip() or "scott"
+    # validate post exists
+    model = project_thread(thread_id)
+    if model is None:
+        raise ValueError(f"unknown thread: {thread_id!r}")
+    if post_id not in model.get("posts_by_id", {}):
+        raise ValueError(f"unknown post: {post_id!r}")
+    current = _post_reactions_map(thread_id, post_id)
+    already = actor in current.get(emoji, [])
+    append_thread_event(thread_id, {
+        "kind": "reaction_removed" if already else "reaction_added",
+        "post_id": post_id,
+        "emoji": emoji,
+        "actor": actor,
+    })
+    return _post_reactions_map(thread_id, post_id)
+
+
 def _preview_from(text: str, n: int = 80) -> str:
     line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
     return line if len(line) <= n else line[: n - 1] + "…"
@@ -779,6 +840,7 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                 "mentions": ev.get("mentions") or extract_mentions(ev.get("content", "")),
                 "parent_post_id": ev.get("parent_post_id"),
                 "superseded": False,
+                "reactions": {},
             }
             model["posts_by_id"][post["id"]] = post
             model["posts"].append(post)
@@ -792,6 +854,26 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                 p["superseded"] = True
                 p["superseded_by"] = ev.get("by_post_id")
                 model["superseded"].add(pid)
+        elif kind == "reaction_added":
+            pid = ev.get("post_id")
+            emoji = ev.get("emoji")
+            actor = ev.get("actor") or "scott"
+            p = model["posts_by_id"].get(pid)
+            if p and emoji:
+                actors = p["reactions"].setdefault(emoji, [])
+                if actor not in actors:
+                    actors.append(actor)
+        elif kind == "reaction_removed":
+            pid = ev.get("post_id")
+            emoji = ev.get("emoji")
+            actor = ev.get("actor") or "scott"
+            p = model["posts_by_id"].get(pid)
+            if p and emoji and emoji in p["reactions"]:
+                actors = p["reactions"][emoji]
+                if actor in actors:
+                    actors.remove(actor)
+                if not actors:
+                    p["reactions"].pop(emoji, None)
         elif kind == "thread_closed":
             model["closed_at"] = ev.get("ts")
             model["closed_by"] = ev.get("closed_by")
