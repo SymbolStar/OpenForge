@@ -17,7 +17,7 @@
 - [x] **Reactions**: `reaction_added` / `reaction_removed` events + Slack-style hover bar + toggle chips.
 - [x] **SSE / WebSocket push**: per-connection event tail of `events.jsonl` (8 s poll kept as fallback).
 - [x] **Squad CRUD UI parity**: edit / archive / delete from the web.
-- [ ] **Reopen / archive thread** semantics in the API + UI.
+- [ ] **Reopen / archive thread** semantics in the API + UI. _(P2, may not happen — Slack threads don't close; dogfood suggests we should drop the Close button instead and rely on last_post_at sort + search to surface live threads.)_
 - [ ] **Cron integration**: docs + an example `cron` job that POSTs to `/api/squads/<id>/threads` on a schedule (uses the OpenClaw `cron` tool).
 - [ ] **Per-thread main agent** so follow-ups don't always need an explicit `@`.
 
