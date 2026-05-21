@@ -262,20 +262,32 @@ Legacy `meeting_started` / `topic_started` / `meeting_finished` events MUST stil
 
 ## 10. Roadmap
 
-### Now (v0.4 — this PRD)
-- ✅ Dropped `run_standup.py` from the tree (snapshot/restore lives in `agent_runtime.py`).
-- 🚧 Migrate storage: `data/<date>/events.jsonl` → `threads/<thread-id>/events.jsonl`.
-- 🚧 `POST /api/squads/<id>/threads` (create thread + opening post).
-- 🚧 `POST /api/threads/<id>/posts` (append post; route mentioned agents via `post_router`).
-- 🚧 Middle rail: THREADS list + bottom composer.
-- 🚧 Right pane: real composer + close-thread button.
+### Shipped (v0.4 → v0.5, 2026-05-15 → 05-21)
+- ✅ Storage migrated: per-thread `~/.openclaw/openforge/threads/<tid>/events.jsonl`.
+- ✅ Squad / Thread / Post model + full CRUD UI (create / edit / delete / archive squads).
+- ✅ `POST /api/squads/<id>/threads` and `POST /api/threads/<id>/posts` with @mention parsing.
+- ✅ Slack three-pane web UI (left squads / middle threads / right thread detail).
+- ✅ Dropped `run_standup.py`; snapshot/restore lives in `agent_runtime.py`.
+- ✅ Post routing v1: scott @ agent → `openclaw agent --local --json` reply appended as post.
+- ✅ Post routing v2: concurrent fan-out (per-mention thread, `BoundedSemaphore(6)`), per-(thread, agent) in-flight dedupe, 30-min timeout. Multica-style: relies on `--local` sandboxing rather than single-flight serialization.
+- ✅ SSE live event stream (`/api/threads/<id>/events`), ~50 ms push latency. 8 s poll kept as fallback.
+- ✅ Reply-to-post nesting (`parent_post_id`, settings flag for nested render).
+- ✅ Implicit @ via reply: scott replying to an agent post (no explicit @) routes to that agent.
+- ✅ Reactions: `reaction_added` / `reaction_removed` events, hover emoji picker, chip toggle.
+- ✅ Settings modal: reply-nesting toggle + personal avatar (emoji + color, localStorage).
+- ✅ `forge` service CLI + launchd integration: `forge install/start/stop/restart/status/logs/update/open/uninstall`. Auto-start on login, auto-restart on crash, persistent log under `~/Library/Logs/openforge.log`.
 
-### Next (v0.5)
-- Reply-to-post nesting (`parent_post_id`).
-- Reactions.
-- SSE / WebSocket push.
-- Squad CRUD UI parity (edit / archive / member toggle).
-- Scheduled-thread templates (the standup use-case returns as a thin layer).
+### Next (v0.6 candidates, unranked — scott picks)
+- **Per-thread main agent.** Optional chair on a thread (default = squad chair). Posts in that thread route to the chair without an explicit @, so multi-turn back-and-forth doesn't need scott to re-type the agent name every line. Explicit @ + reply-implicit-mention still override.
+- **Cron integration + scheduled-thread templates.** A `forge-template` schema (squad + opening prompt + cron expression) so e.g. "every weekday 09:00, open a `daily-standup` thread in squad `milk-eng` with opening post `@milk @sentry @kb 今天计划是什么`" becomes one config entry. Driven by OpenClaw `cron` tool POSTing to `/api/squads/<id>/threads`. Standup returns as a thin layer, not a separate code path.
+- **Avatar palette hash.** Non-default agents are currently grey. Hash `agent_id` → stable palette slot so every agent gets a distinct color without manual config.
+- **Cross-thread search.** Regex over `events.jsonl` as MVP, SQLite FTS later. Bigger win than archive once thread count crosses ~30.
+- **Disk-usage watcher.** Warn when a single thread's `events.jsonl` exceeds 5 MB (tail render gets slow).
+- **Snapshot/restore regression test.** Fake agent main → router invocation → assert main pointer untouched. Pins the property we now rely on after dropping single-flight.
+
+### Deferred / re-evaluating
+- **Reopen / archive thread.** Originally planned for v0.5. Demoted to P2 / may-not-happen on 2026-05-21: Slack-shaped threads don't have a 'close' state; we may instead drop the Close button entirely and rely on `last_post_at` ordering + search to surface live threads. See §11 Q1 for the rationale.
+- **Per-task workspace sandbox (Multica-style).** Each thread → its own scratch workspace via wrapper `openclaw-config.json` + `OPENCLAW_CONFIG_PATH`. Deferred until a concrete need lands (audit / cross-thread leakage / contradictory standing orders).
 
 ### P1 — Task management (separate PRD)
 - Linear-style fields on a thread: status / priority / assignee / due / cycle.
@@ -287,7 +299,7 @@ Legacy `meeting_started` / `topic_started` / `meeting_finished` events MUST stil
 
 ## 11. Open questions
 
-1. **Thread close semantics**: is a closed thread read-only, or can posts still be appended? (Slack channels can always be re-opened; Linear issues, once closed, accept comments but not status changes.)
+1. **Thread close semantics.** ~~Is a closed thread read-only, or can posts still be appended?~~ **🔄 re-evaluating 2026-05-21** — scott's call: Slack-shaped threads don't have a 'close' state at all. Plausible v0.6 move is to delete the Close button and rely on `last_post_at` sort + search to surface live work. Reopen/archive APIs deferred until we decide whether close stays.
 2. **Per-thread squad membership**: if a thread `@`s an agent who is NOT a member of the squad, is it added to the squad implicitly, or refused?
 3. **Composer auth**: when the operator types in the web composer, do we need any second-factor before spawning agents?
 4. **Multi-thread concurrency**: today one thread can run agents at a time per host (advisory lock). Do we need cross-thread parallelism, or is sequential enough for one operator?
