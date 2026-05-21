@@ -212,9 +212,9 @@ def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
             capture_output=True, text=True, timeout=AGENT_TIMEOUT + 30,
         )
     except subprocess.TimeoutExpired:
-        raise AgentError(f"timeout after {AGENT_TIMEOUT}s")
+        raise AgentError(f"timeout after {AGENT_TIMEOUT}s") from None
     except FileNotFoundError:
-        raise AgentError(f"openclaw binary not found: {OPENCLAW_BIN}")
+        raise AgentError(f"openclaw binary not found: {OPENCLAW_BIN}") from None
 
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "").strip().splitlines()[-3:]

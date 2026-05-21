@@ -129,6 +129,7 @@ Usage:
   forge logs [-n N]  Tail the log (default: 80 lines, follow with --follow)
   forge open         Open the web UI in the default browser
   forge update       git pull on the repo then restart
+  forge selfupdate   like update, but silent when nothing changed (cron-friendly)
   forge version      Print version
 
 Environment:
@@ -221,6 +222,22 @@ cmd_update() {
   cmd_restart
 }
 
+cmd_selfupdate() {
+  # Cron-friendly: silent on no-op, only restarts when main moved.
+  require_repo
+  cd "$REPO_DIR"
+  git fetch --quiet origin main
+  local local_sha; local_sha=$(git rev-parse HEAD)
+  local remote_sha; remote_sha=$(git rev-parse origin/main)
+  if [ "$local_sha" = "$remote_sha" ]; then
+    log "already at $local_sha"
+    return 0
+  fi
+  log "updating $local_sha → $remote_sha"
+  git pull --ff-only --quiet origin main
+  cmd_restart
+}
+
 cmd_install() {
   require_repo
   write_plist
@@ -276,7 +293,8 @@ case "${1:-help}" in
   status)          shift; cmd_status    "$@" ;;
   logs)            shift; cmd_logs      "$@" ;;
   open)            shift; cmd_open      "$@" ;;
-  update)          shift; cmd_update    "$@" ;;
+  update)          shift; cmd_update     "$@" ;;
+  selfupdate)      shift; cmd_selfupdate "$@" ;;
   version|-v|--version) cmd_version ;;
   help|-h|--help)  cmd_help ;;
   *) die "unknown command: $1 — try: forge help" ;;

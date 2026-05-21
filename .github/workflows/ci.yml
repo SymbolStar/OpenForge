@@ -7,9 +7,34 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel in-flight runs when a new push lands on the same PR/branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  python:
-    name: python ${{ matrix.python }}
+  lint:
+    name: ruff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install ruff
+      - run: ruff check .
+
+  shellcheck:
+    name: shellcheck bin/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck -x bin/forge
+          shellcheck -x tests/fixtures/fake_openclaw.sh
+
+  test:
+    name: pytest · py${{ matrix.python }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -17,72 +42,49 @@ jobs:
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
+        with: { python-version: "${{ matrix.python }}" }
+      - run: pip install pytest
+      - run: chmod +x tests/fixtures/fake_openclaw.sh
+      - run: python -m pytest tests/ -v
 
-      - name: Compile all modules
+  smoke:
+    name: server boot smoke
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - name: Boot server in background and curl every endpoint
         run: |
-          python -m py_compile \
-            forge_store.py \
-            server.py \
-            run_standup.py \
-            restore_main_session.py \
-            migrate_md_to_jsonl.py
-
-      - name: Import smoke test
-        run: |
-          python -c "
-          import importlib
-          for m in ('forge_store', 'server', 'run_standup',
-                   'restore_main_session', 'migrate_md_to_jsonl'):
-              importlib.import_module(m)
-              print(f'  ✓ {m}')
-          "
-
-      - name: Store smoke test (event roundtrip)
-        run: |
-          python - <<'PY'
-          import os, tempfile, pathlib
-          tmp = tempfile.mkdtemp()
-          os.environ['HOME'] = tmp
-          pathlib.Path(tmp, '.openclaw', 'standups').mkdir(parents=True, exist_ok=True)
-
-          import importlib, forge_store
-          importlib.reload(forge_store)
-
-          date = '2099-12-31'
-          forge_store.start_meeting(date, 'milk', ['milk', 'sentry'], title='ci')
-          tid = forge_store.start_topic(date, 1, 'demo')
-          forge_store.add_post(date, tid, 'milk', 'hello @sentry')
-          forge_store.add_post(date, tid, 'sentry', 'hi back')
-          forge_store.finish_meeting(date)
-          forge_store.write_markdown(date)
-
-          m = forge_store.project_meeting(date)
-          assert m['chair'] == 'milk'
-          assert m['ended_at'] is not None
-          posts = sum(len(t['posts']) for t in m['topics'])
-          assert posts == 2, f'expected 2 posts, got {posts}'
-          assert any('@sentry' in p['content']
-                     for t in m['topics'] for p in t['posts'])
-          print('  ✓ event roundtrip OK')
-          PY
-
-      - name: Server smoke test (boot + serve one request)
-        run: |
-          export HOME="${RUNNER_TEMP}/forge-ci-home"
-          mkdir -p "$HOME/.openclaw/standups"
-          python -u server.py --port 17878 &
+          python -u server.py --port 17878 > /tmp/server.log 2>&1 &
           SERVER_PID=$!
-          for i in $(seq 1 20); do
-            sleep 0.5
-            if curl -fsS "http://127.0.0.1:17878/api/squads" > /tmp/squads.json; then
-              echo "  ✓ /api/squads served"
-              break
-            fi
+
+          # wait up to 5s for the port
+          for i in $(seq 1 50); do
+            curl -sf http://127.0.0.1:17878/api/squads >/dev/null && break
+            sleep 0.1
           done
+
+          # create squad
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"id":"smoke","name":"smoke","members":["milk"],"chair":"milk"}' \
+            http://127.0.0.1:17878/api/squads | tee /tmp/squad.json
+
+          # create thread
+          TID=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"content":"hi @milk","created_by":"scott"}' \
+            http://127.0.0.1:17878/api/squads/smoke/threads | python -c 'import json,sys;print(json.load(sys.stdin)["thread_id"])')
+          echo "tid=$TID"
+
+          # add post
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"content":"follow up","speaker":"scott"}' \
+            http://127.0.0.1:17878/api/threads/$TID/posts >/dev/null
+
+          # detail
+          curl -sf http://127.0.0.1:17878/api/threads/$TID | python -c 'import json,sys; d=json.load(sys.stdin); assert d["post_count"]==2, d; print("OK", d["post_count"], "posts")'
+
           kill $SERVER_PID 2>/dev/null || true
-          test -s /tmp/squads.json || (echo "server failed to respond"; exit 1)
-          python -c "import json; d=json.load(open('/tmp/squads.json')); assert isinstance(d, list); print('  ✓', len(d), 'squad(s) returned')"
+          cat /tmp/server.log

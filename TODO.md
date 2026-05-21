@@ -30,10 +30,13 @@
 
 ## 🧪 P2 — DX / tests
 
-- [ ] Unit tests for `forge_store.parse_topics_from_opening` edge cases (empty, malformed numbering, CJK).
+- [x] **Test suite**: pytest covering store / router / server smoke (2026-05-21).
+- [x] **CI gates**: ruff lint + shellcheck + pytest matrix (3.11/3.12/3.13) + server boot smoke (2026-05-21).
+- [x] **Auto-release**: green non-doc commit on main → date-based tag + GitHub Release (2026-05-21).
+- [x] **Ruff config** wired into pyproject.toml (2026-05-21).
 - [ ] Property tests for the projection (event log → meeting model is monotone).
-- [ ] Mock `openclaw agent` CLI in tests so the post router can be exercised end-to-end without burning tokens.
-- [ ] Ruff / black / mypy minimal config (the codebase is small enough that this stays cheap).
+- [ ] Widen pytest coverage (web/app.js via playwright in CI; agent_runtime snapshot/restore).
+- [ ] mypy minimal config (the codebase is small enough that this stays cheap).
 
 ## 🎨 P2 — UX polish
 
@@ -62,6 +65,14 @@
 
 ## ✅ Recently shipped
 
+- 2026-05-21 — `feat(ci): pytest + ruff + shellcheck + smoke + auto-release pipeline + CONTRIBUTING.md`
+- 2026-05-21 — `feat(cli): forge service CLI + launchd integration` (`37b25e8`)
+- 2026-05-21 — `polish(settings): redesign avatar editor` (`5614764`)
+- 2026-05-21 — `feat(settings): personal avatar override for scott` (`6ee0343`)
+- 2026-05-21 — `feat(router): implicit @ via reply to an agent post` (`77e0ae6`)
+- 2026-05-21 — `feat(router): concurrent fan-out + per-(thread,agent) dedupe + 30min timeout` (`c61bf0b`)
+- 2026-05-21 — `chore: retire run_standup CLI; extract agent_runtime.py` (`5ccb07e`)
+- 2026-05-21 — `feat(router): agent replies inherit parent_post_id from trigger post` (`2749ad7`)
 - 2026-05-21 — `feat(reactions): post hover bar + emoji chips + toggle` (`99ebd8a`)
 - 2026-05-21 — `feat(router): agent replies inherit parent_post_id from trigger post` (`2749ad7`)
 - 2026-05-21 — `chore: retire run_standup CLI; extract agent_runtime.py`

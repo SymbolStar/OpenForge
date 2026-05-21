@@ -1,0 +1,45 @@
+[project]
+name = "openforge"
+version = "0.5.0"
+description = "Multi-agent topic tracker — Slack-shaped threads + OpenClaw agents"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "SymbolStar" }]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["__pycache__", "memory", ".github", "tests/fixtures"]
+
+[tool.ruff.lint]
+# Start lean: real bugs + a few opinionated rules. Easy to dial up later.
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes (unused imports, undefined names — the real bugs)
+  "W",   # pycodestyle warnings
+  "B",   # flake8-bugbear (mutable defaults, etc.)
+  "I",   # isort
+  "UP",  # pyupgrade (modern Python idioms)
+]
+ignore = [
+  "E501",  # line length — let formatter / human judge
+  "E731",  # lambda assignment — fine in small scripts
+  "E741",  # ambiguous variable names like `l` — fine in tight comprehensions
+  "B008",  # function call in default arg — fine for Path(...) defaults
+  "B904",  # `raise from` — stylistic, not a real bug here
+  "UP007", # `Optional[X]` vs `X | None` — keep allowing both
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B018", "F401"]  # tests use bare expressions / import-only
+"forge_store.py" = ["E402"]   # SSE helpers intentionally lazy-imported
+"server.py" = ["E402"]        # sys.path mutation before local imports
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q --strict-markers"
+filterwarnings = [
+  "error::DeprecationWarning",
+  "ignore::DeprecationWarning:http\\.server",  # stdlib http.server emits some on 3.13+
+]

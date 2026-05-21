@@ -32,17 +32,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import secrets
 import sys
 import time
-from datetime import datetime
-
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
@@ -495,7 +492,7 @@ def main():
     elif args.token:
         OpenForgeHandler.auth_token = args.token
 
-    print(f"🔨 OpenForge")
+    print("🔨 OpenForge")
     print(f"📁 forge root:   {store.FORGE_DIR}")
     # heal any agent main pointers a previous run left polluted.
     try:

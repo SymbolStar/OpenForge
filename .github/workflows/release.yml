@@ -1,0 +1,70 @@
+name: release
+
+# Auto-tag the green main with a date-based version, then cut a GitHub
+# Release with auto-generated notes. Only runs after CI on main passes.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write   # need to push tag + create release
+
+jobs:
+  tag-and-release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Decide if this commit deserves a release
+        id: gate
+        run: |
+          MSG=$(git log -1 --format=%s)
+          echo "commit message: $MSG"
+          # Skip pure doc / chore / test commits — they don't move user-visible behavior.
+          if echo "$MSG" | grep -qiE '^(docs|chore|test|ci)(\(|:)'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "→ skipping release for $MSG"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next tag
+        id: tag
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          SHORT=$(git rev-parse --short HEAD)
+          STAMP=$(date -u +%Y.%m.%d)
+          # If a tag for today already exists, append the short sha to avoid clash.
+          BASE="v${STAMP}"
+          if git rev-parse "$BASE" >/dev/null 2>&1; then
+            TAG="${BASE}-${SHORT}"
+          else
+            TAG="$BASE"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "→ next tag: $TAG"
+
+      - name: Push tag
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          git config user.name  "openforge-bot"
+          git config user.email "openforge-bot@users.noreply.github.com"
+          git tag -a "${{ steps.tag.outputs.tag }}" -m "Auto-release ${{ steps.tag.outputs.tag }}"
+          git push origin "${{ steps.tag.outputs.tag }}"
+
+      - name: Create GitHub release
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --target "${{ github.event.workflow_run.head_sha }}" \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --generate-notes

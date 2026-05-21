@@ -33,9 +33,10 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 # ─── paths ────────────────────────────────────────────────────────────
 # v0.4 layout (thread-first, Slack-shaped):
@@ -257,17 +258,17 @@ import threading as _threading_sse  # local alias to avoid touching top imports
 from queue import Queue as _SseQueue
 
 _sse_subs_lock = _threading_sse.Lock()
-_sse_subscribers: dict[str, set["_SseQueue"]] = {}
+_sse_subscribers: dict[str, set[_SseQueue]] = {}
 
 
-def subscribe_thread(thread_id: str, maxsize: int = 256) -> "_SseQueue":
+def subscribe_thread(thread_id: str, maxsize: int = 256) -> _SseQueue:
     q: _SseQueue = _SseQueue(maxsize=maxsize)
     with _sse_subs_lock:
         _sse_subscribers.setdefault(thread_id, set()).add(q)
     return q
 
 
-def unsubscribe_thread(thread_id: str, q: "_SseQueue") -> None:
+def unsubscribe_thread(thread_id: str, q: _SseQueue) -> None:
     with _sse_subs_lock:
         bucket = _sse_subscribers.get(thread_id)
         if not bucket:
