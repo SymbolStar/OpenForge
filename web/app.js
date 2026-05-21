@@ -53,7 +53,7 @@ const els = {
 
 // ─── settings (localStorage) ─────────────────────────────────
 const SETTINGS_KEY = 'openforge.settings.v1';
-const SETTINGS_DEFAULTS = { replyNesting: false };
+const SETTINGS_DEFAULTS = { replyNesting: false, myAvatar: '', myAvatarColor: '' };
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -92,11 +92,30 @@ function setStatus(text, ok = true) {
 }
 
 function avatarLabel(name) {
+  if ((name || '').toLowerCase() === 'scott') {
+    const a = (state.settings.myAvatar || '').trim();
+    if (a) return [...a].slice(0, 2).join('');
+  }
   return [...(name || '?')][0].toUpperCase();
 }
 
 function avatarClass(name) {
+  if ((name || '').toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
+    return 'av-custom';
+  }
   return AGENT_COLOR_CLASS.get(name) || 'av-default';
+}
+
+function avatarStyle(name) {
+  if ((name || '').toLowerCase() === 'scott') {
+    const c = (state.settings.myAvatarColor || '').trim();
+    if (c) return ` style="background:${escapeAttr(c)};"`;
+  }
+  return '';
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/["<>&]/g, c => ({'"':'&quot;','<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 }
 
 function renderBody(text) {
@@ -389,6 +408,9 @@ function renderParticipants(members) {
   (members || []).slice(0, 6).forEach(name => {
     const av = document.createElement('div');
     av.className = `mini-avatar ${avatarClass(name)}`;
+    if (name.toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
+      av.style.background = state.settings.myAvatarColor.trim();
+    }
     av.title = name;
     av.textContent = avatarLabel(name);
     els.detailParticipants.appendChild(av);
@@ -417,7 +439,7 @@ function renderPostNode(post, includeChildren) {
   row.dataset.postId = postId;
   const showReplyBtn = state.settings.replyNesting && post.speaker !== '__router__';
   row.innerHTML = `
-    <div class="avatar ${avatarClass(post.speaker)}">${escapeHtml(avatarLabel(post.speaker))}</div>
+    <div class="avatar ${avatarClass(post.speaker)}"${avatarStyle(post.speaker)}>${escapeHtml(avatarLabel(post.speaker))}</div>
     <div class="post-content">
       <div class="post-head">
         <span class="post-name">${escapeHtml(post.speaker)}</span>
@@ -971,7 +993,9 @@ if (toggleArchivedBtn) {
 function openSettingsModal() {
   for (const [key, val] of Object.entries(state.settings)) {
     const el = els.settingsForm.elements[key];
-    if (el && el.type === 'checkbox') el.checked = !!val;
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!val;
+    else el.value = val ?? '';
   }
   els.settingsModal.classList.add('open');
   els.settingsModal.setAttribute('aria-hidden', 'false');
@@ -990,10 +1014,19 @@ els.settingsForm && els.settingsForm.addEventListener('change', (e) => {
   const t = e.target;
   if (!t || !t.name) return;
   if (t.type === 'checkbox') state.settings[t.name] = t.checked;
+  else state.settings[t.name] = t.value;
   saveSettings(state.settings);
   // re-render current thread so the change takes effect immediately
   if (state.currentThread) renderDetail({ keepScroll: true });
   if (!state.settings.replyNesting) cancelReply();
+});
+els.settingsForm && els.settingsForm.addEventListener('input', (e) => {
+  // live preview for text/color inputs without waiting for blur
+  const t = e.target;
+  if (!t || !t.name || t.type === 'checkbox') return;
+  state.settings[t.name] = t.value;
+  saveSettings(state.settings);
+  if (state.currentThread) renderDetail({ keepScroll: true });
 });
 
 els.btnCancelReply && (els.btnCancelReply.onclick = cancelReply);

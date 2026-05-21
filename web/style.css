@@ -589,6 +589,7 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .av-milly { background: #2eb67d; }
 .av-kb { background: #611f69; }
 .av-default { background: #616061; }
+.av-custom { background: #4a5568; /* fallback; overridden by inline style */ }
 
 @media (max-width: 900px) {
   #app { grid-template-columns: 220px minmax(220px, 34vw) minmax(0, 1fr); }
