@@ -77,7 +77,15 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
         return False
     if (post.get("speaker") or "").strip().lower() != "scott":
         return False
-    mentions = post.get("mentions") or []
+    mentions = list(post.get("mentions") or [])
+    # Implicit mention: if scott replies (parent_post_id set) to an agent
+    # post without an explicit @, treat it as @<that agent>. Mirrors Slack
+    # / Discord thread-reply semantics. Replies to scott's own or to
+    # __router__ placeholder/error posts are ignored.
+    if not mentions:
+        implicit = _implicit_mention_from_parent(thread_id, post.get("parent_post_id"))
+        if implicit:
+            mentions = [implicit]
     if not mentions:
         return False
 
@@ -98,6 +106,26 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
         if _dispatch(thread_id, agent_id, trigger_pid):
             dispatched = True
     return dispatched
+
+
+_RESERVED_SPEAKERS = {"scott", ROUTER_SPEAKER_FALLBACK.lower()}
+
+
+def _implicit_mention_from_parent(thread_id: str, parent_post_id: str | None) -> str | None:
+    """If parent_post_id points at an agent post, return that agent_id."""
+    if not parent_post_id:
+        return None
+    thread = store.project_thread(thread_id)
+    if not thread:
+        return None
+    parent = (thread.get("posts_by_id") or {}).get(parent_post_id)
+    if not parent:
+        return None
+    speaker = (parent.get("speaker") or "").strip()
+    if not speaker or speaker.lower() in _RESERVED_SPEAKERS:
+        return None
+    return speaker
+
 
 
 def _dispatch(thread_id: str, agent_id: str, trigger_pid: str) -> bool:
@@ -155,9 +183,10 @@ def _route_to_agent_safely(thread_id: str, agent_id: str, trigger_pid: str) -> N
     trigger = _find_trigger_post(thread, trigger_pid)
     if not trigger:
         return
-    mentions_lc = {(m or "").strip().lower() for m in (trigger.get("mentions") or [])}
-    if agent_id not in mentions_lc:
-        return  # trigger no longer mentions this agent
+    # We intentionally do NOT re-check `agent_id in trigger.mentions` here:
+    # the dispatcher (enqueue_if_needed) is the single source of truth for
+    # who to route to (it also resolves implicit-mention-via-reply), and
+    # re-deriving here would drop those.
     try:
         _route_to_agent(thread_id, agent_id, trigger)
     finally:
