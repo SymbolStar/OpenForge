@@ -21,15 +21,11 @@ Routes:
   POST   /api/threads/<id>/posts          -> append post
                                               body: { content, speaker? }
   POST   /api/threads/<id>/close          -> mark closed
-
-  (legacy, read-only — still serves old standup archives)
-  GET    /api/standups                    -> [old standup summaries]
-  GET    /api/standup/<date>              -> projected meeting model
+  POST   /api/threads/<id>/posts/<pid>/reactions  -> toggle {emoji, actor?}
 
 Reads:  ~/.openclaw/openforge/squads.json,
-        ~/.openclaw/openforge/threads/<thread-id>/events.jsonl,
-        ~/.openclaw/standups/data/<date>/events.jsonl (legacy)
-Writes: thread events (squads.json moves to openforge/).
+        ~/.openclaw/openforge/threads/<thread-id>/events.jsonl
+Writes: thread events (squads.json under openforge/).
 """
 
 from __future__ import annotations
@@ -39,10 +35,10 @@ import json
 import os
 import re
 import secrets
-import subprocess
 import sys
 import time
 from datetime import datetime
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Empty
@@ -50,7 +46,6 @@ from urllib.parse import urlparse, parse_qs
 
 ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
-RUN_SCRIPT = ROOT / "run_standup.py"  # legacy, kept for CLI use only
 
 sys.path.insert(0, str(ROOT))
 import forge_store as store
@@ -63,49 +58,6 @@ THREAD_ROUTE_RE = r"(th_[0-9a-f]+_[0-9a-f]+)"
 
 def _is_local(host: str) -> bool:
     return host in ("127.0.0.1", "::1", "localhost")
-
-
-def _serializable_meeting(m: dict) -> dict:
-    """Strip projection internals before sending to the UI."""
-    sections = []
-    for t in m["topics"]:
-        sections.append({
-            "id": t["id"],
-            "title": t["title"],
-            "kind": t["kind"],
-            "idx": t["idx"],
-            "posts": [
-                {
-                    "id": p["id"],
-                    "speaker": p["speaker"],
-                    "time": p["time"],
-                    "ts": p["ts"],
-                    "content": p["content"],
-                    "mentions": p["mentions"],
-                    "parent_post_id": p.get("parent_post_id"),
-                    "superseded": p["superseded"],
-                    "superseded_by": p.get("superseded_by"),
-                }
-                for p in t["posts"]
-            ],
-        })
-    return {
-        "date": m["date"],
-        "title": m["title"],
-        "chair": m["chair"],
-        "members": m["members"],
-        "started_at": m["started_at"],
-        "ended_at": m["ended_at"],
-        "in_progress": m["ended_at"] is None,
-        "sections": sections,
-    }
-
-
-def _meetings_for_squad(squad_id: str) -> list[dict]:
-    # legacy: only the default squad ever had standups under the date layout
-    if squad_id != store.DEFAULT_SQUAD_ID:
-        return []
-    return list(store.iter_summaries())
 
 
 def _serializable_thread(m: dict) -> dict:
@@ -163,27 +115,6 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
         "chair": chair,
     }
     return clean, None
-
-
-def _start_standup_for_date(date: str) -> tuple[dict, int]:
-    if not store.is_valid_date(date):
-        return {"error": "bad date"}, 400
-    if store.is_locked_exclusive(date):
-        return {
-            "started": False,
-            "error": "already running for this date",
-            "date": date,
-        }, 409
-    try:
-        subprocess.Popen(
-            [sys.executable, "-u", str(RUN_SCRIPT), "--date", date],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=str(ROOT),
-        )
-        return {"started": True, "date": date}, 200
-    except Exception as e:
-        return {"started": False, "error": str(e)}, 500
 
 
 # ─── HTTP handler ─────────────────────────────────────────────────────
@@ -316,10 +247,6 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self.send_error(401, "auth required for non-local host")
             return
 
-        if path == "/api/standups":
-            self._json(list(store.iter_summaries()))
-            return
-
         if path == "/api/squads":
             qs = parse_qs(url.query or "")
             include_archived = (qs.get("include_archived") or ["0"])[0] in ("1", "true", "yes")
@@ -352,7 +279,6 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({
                 "squad": squad,
                 "threads": store.list_threads_for_squad(squad_id),
-                "meetings": _meetings_for_squad(squad_id),  # legacy
             })
             return
 
@@ -373,19 +299,6 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404)
                 return
             self._json(_serializable_thread(data))
-            return
-
-        m = re.match(r"^/api/standup/(\d{4}-\d{2}-\d{2})$", path)
-        if m:
-            date = m.group(1)
-            if not store.is_valid_date(date):
-                self._json({"error": "bad date"}, 400)
-                return
-            data = store.project_meeting(date)
-            if data is None:
-                self._json({"error": "not found"}, 404)
-            else:
-                self._json(_serializable_meeting(data))
             return
 
         self.send_error(404)
@@ -522,29 +435,6 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(store.project_thread(tid)))
             return
 
-        m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}/run$", url.path)
-        if m:
-            payload, status = _start_standup_for_date(datetime.now().strftime("%Y-%m-%d"))
-            self._json(payload, status)
-            return
-
-        if url.path == "/api/run":
-            length = int(self.headers.get("Content-Length") or 0)
-            payload = self.rfile.read(length).decode("utf-8") if length else ""
-            try:
-                opts = json.loads(payload) if payload else {}
-            except Exception:
-                self._json({"error": "bad json"}, 400)
-                return
-
-            date = opts.get("date") or datetime.now().strftime("%Y-%m-%d")
-            if not store.is_valid_date(date):
-                self._json({"error": "bad date"}, 400)
-                return
-            payload, status = _start_standup_for_date(date)
-            self._json(payload, status)
-            return
-
         self.send_error(404)
 
     def do_PATCH(self):
@@ -607,7 +497,6 @@ def main():
 
     print(f"🔨 OpenForge")
     print(f"📁 forge root:   {store.FORGE_DIR}")
-    print(f"📝 legacy root:  {store.STANDUP_DIR}")
     # heal any agent main pointers a previous run left polluted.
     try:
         all_members: set[str] = set()

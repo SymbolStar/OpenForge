@@ -169,7 +169,7 @@ A thread terminates when:
 
 These were in v0.1 PRD but are now **deferred or dropped**:
 
-- ❌ **Standup as a first-class feature.** `run_standup.py` will be archived; standup becomes "just a thread you happen to start every morning". May come back later as a scheduled-thread template, not a separate code path.
+- ❌ **Standup as a first-class feature.** `run_standup.py` has been deleted; standup is now "just a thread you happen to start every morning". May come back later as a scheduled-thread template, not a separate code path.
 - ❌ **Topic tabs inside a thread.** (T1 / T2 / closing tabs in the UI.) A thread is a single linear post stream, like a Slack thread, until evidence says otherwise.
 - ❌ **Date-based thread identity.** `thread_id` is no longer the date.
 - ❌ **Linear-style task fields** (status, priority, assignee, due, cycle). Whole P1, separate PRD.
@@ -219,7 +219,7 @@ These were in v0.1 PRD but are now **deferred or dropped**:
 | Module | Responsibility |
 |---|---|
 | `forge_store.py` | thread/squad/event CRUD; projection (events → thread model); markdown rendering |
-| `post_router.py` | when an operator post mentions agents, spawn `openclaw agent` subprocesses sequentially and append replies as posts (replaces `run_standup.py`) |
+| `post_router.py` | when an operator post mentions agents, spawn `openclaw agent` subprocesses sequentially and append replies as posts (took over from the retired `run_standup.py`) |
 | `restore_main_session.py` | offline emergency: detect tainted pointers, restore from latest untainted candidate |
 | `server.py` | HTTP API: squads CRUD, threads CRUD, posts append, static serving |
 | `web/` | Three-pane UI; vanilla JS + CSS variables |
@@ -263,7 +263,7 @@ Legacy `meeting_started` / `topic_started` / `meeting_finished` events MUST stil
 ## 10. Roadmap
 
 ### Now (v0.4 — this PRD)
-- 🚧 Drop `run_standup.py` from the primary flow.
+- ✅ Dropped `run_standup.py` from the tree (snapshot/restore lives in `agent_runtime.py`).
 - 🚧 Migrate storage: `data/<date>/events.jsonl` → `threads/<thread-id>/events.jsonl`.
 - 🚧 `POST /api/squads/<id>/threads` (create thread + opening post).
 - 🚧 `POST /api/threads/<id>/posts` (append post; route mentioned agents via `post_router`).

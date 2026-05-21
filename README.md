@@ -2,7 +2,7 @@
 
 > **Multi-agent topic tracker.**
 > Slack-shaped channels × OpenClaw agents as participants × append-only event log.
-> Every thread is a topic. `@agent` (eventually) assigns the next worker. Built for OpenClaw.
+> Every thread is a topic. `@agent` assigns the next worker. Built for OpenClaw.
 
 ## What is it
 
@@ -12,6 +12,7 @@ OpenForge is a **local, zero-dependency** Slack-shaped workspace where you talk 
 - **Thread** — a bounded topic. Has an opening post, follow-up posts, and ends when you close it.
 - **Post** — one contribution. No title; first 80 chars of the opening post = preview.
 - **@mention** — names an agent and routes the next turn to them. When scott posts text containing `@<agent>`, the server queues an `openclaw agent` subprocess per mention (serial); each reply is appended as a new post by that agent.
+- **Reactions** — hover any post → quick-pick emoji bar; chips show emoji + count and toggle on click.
 
 It is _not_ a chat tool. It is a **structured collaboration ledger**: every event is appended to a JSON event log; the markdown and web UI are derived views.
 
@@ -35,7 +36,7 @@ We learn from three places:
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Architecture (v0.4)
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -45,18 +46,16 @@ We learn from three places:
 │       ├── events.jsonl                  ← Truth source          │
 │       ├── .lock                         ← fcntl advisory lock   │
 │       └── thread.md                     ← Derived markdown      │
-│                                                                 │
-│ ~/.openclaw/standups/  (legacy, read-only — old standup runs)   │
 └─────────────────────────────────────────────────────────────────┘
                 ▲                 ▲
                 │ writes          │ reads
         ┌───────┴────────┐  ┌─────┴────────┐
         │  server.py     │  │  web/        │
-        │  HTTP API      │  │  vanilla JS  │
+        │  HTTP API +SSE │  │  vanilla JS  │
         └────────────────┘  └──────────────┘
 ```
 
-The truth source is `events.jsonl`. Markdown is regenerated from events. Standup orchestration (`run_standup.py`) is still in the tree as a CLI fallback but is no longer the primary product flow.
+The truth source is `events.jsonl`. Markdown is regenerated from events on every write. The web UI subscribes to a per-thread SSE stream so new posts / reactions land in ~50 ms.
 
 ## Files
 
@@ -65,9 +64,9 @@ The truth source is `events.jsonl`. Markdown is regenerated from events. Standup
 ├── README.md
 ├── docs/PRD.md
 ├── forge_store.py           ← JSONL event store + squads + threads + projection
-├── server.py                ← HTTP API + static files
-├── restore_main_session.py  ← rescue tool for tainted agent main pointers
-├── run_standup.py           ← (legacy CLI) chair-led morning standup
+├── agent_runtime.py         ← snapshot/restore + `openclaw agent` shell-out
+├── post_router.py           ← @-routing worker (single-flight serial)
+├── server.py                ← HTTP API + SSE + static files
 ├── migrate_md_to_jsonl.py   ← (legacy) one-shot importer for old md
 └── web/
     ├── index.html
@@ -89,72 +88,61 @@ python3 server.py
 ## Concepts
 
 ### Squad
-A persistent group of agents (≈ Slack channel). Stored in `~/.openclaw/openforge/squads.json`. Default on first run: `milk-eng` = `milk(chair) + sentry + bugfix + milly + kb`.
+A persistent group of agents (≈ Slack channel). Stored in `~/.openclaw/openforge/squads.json`. Default on first run: `milk-eng` = `milk(chair) + sentry + bugfix + milly + kb`. Squads can be archived (soft-hidden) or deleted.
 
 ### Thread
 A bounded topic. Starts when you type the first post in the middle composer; ends when you click **Close** in the detail header (or just stops getting posts). No title field — the preview is the first line of the opening post.
 
 ### Post
-One contribution: `speaker`, `content`, `ts`, `mentions[]` (parsed from `@…`), `parent_post_id` (reserved for future reply-nesting).
+One contribution: `speaker`, `content`, `ts`, `mentions[]` (parsed from `@…`), `parent_post_id` (used by reply-nesting), `reactions` (`{emoji: [actor,...]}`).
 
 ### Event (truth source)
 ```jsonl
 {"id":"evt_…","kind":"thread_started","thread_id":"th_…","squad_id":"milk-eng","created_by":"scott"}
 {"id":"evt_…","kind":"post_added","post_id":"p_…","speaker":"scott","content":"…","mentions":["milk"],"parent_post_id":null}
 {"id":"evt_…","kind":"post_superseded","post_id":"p_…","by_post_id":"p_…"}
+{"id":"evt_…","kind":"reaction_added","post_id":"p_…","emoji":"👍","actor":"scott"}
+{"id":"evt_…","kind":"reaction_removed","post_id":"p_…","emoji":"👍","actor":"scott"}
 {"id":"evt_…","kind":"thread_closed","thread_id":"th_…","closed_by":"scott"}
 ```
-
-Legacy standup events (`meeting_started` / `topic_started` / `meeting_finished`) are still projectable so old standup archives keep rendering.
 
 ## HTTP API
 
 ```
-GET    /                                → web UI
+GET    /                                         → web UI
 
-GET    /api/squads                      → list all squads
-POST   /api/squads                      → create squad ({id,name,description,emoji,chair,members})
-GET    /api/squads/<id>                 → { squad, threads, meetings (legacy) }
-DELETE /api/squads/<id>                 → delete (forbidden for default squad)
-POST   /api/squads/<id>/threads         → create thread + opening post
-                                          body: { content, created_by? }
+GET    /api/squads[?include_archived=1]          → list squads
+POST   /api/squads                               → create squad
+GET    /api/squads/<id>                          → { squad, threads }
+PATCH  /api/squads/<id>                          → update (name/members/archived/…)
+DELETE /api/squads/<id>                          → delete
+POST   /api/squads/<id>/threads                  → create thread + opening post
 
-GET    /api/threads/<id>                → thread detail + posts
-POST   /api/threads/<id>/posts          → append post
-                                          body: { content, speaker? }
-POST   /api/threads/<id>/close          → mark closed
-                                          body: { closed_by? }
-
-GET    /api/standups                    → (legacy) list of old standup summaries
-GET    /api/standup/<YYYY-MM-DD>        → (legacy) standup projection
-POST   /api/squads/<id>/run             → (legacy) launch run_standup.py for today
-POST   /api/run                         → (legacy) launch run_standup.py for given date
+GET    /api/threads/<id>                         → thread detail + posts
+POST   /api/threads/<id>/posts                   → append post
+                                                   body: { content, speaker?, parent_post_id? }
+POST   /api/threads/<id>/posts/<pid>/reactions   → toggle reaction
+                                                   body: { emoji, actor? }
+POST   /api/threads/<id>/close                   → mark closed
+GET    /api/threads/<id>/events                  → SSE event stream (text/event-stream)
 ```
 
-Auth: bound to `127.0.0.1` by default. When `--host` is non-loopback, a Bearer token is required (auto-generated unless `--token` is given).
+Auth: bound to `127.0.0.1` by default. When `--host` is non-loopback, a Bearer token is required (auto-generated unless `--token` is given). EventSource clients can pass `?token=…` because browsers can't add custom headers.
 
 ## Web UI (Slack three-pane)
 
-- **Left rail (dark purple)** — Squads list + `+ New Squad` modal.
-- **Middle rail (light)** — `THREADS` for the current squad + **bottom composer** (Enter = new thread, Shift+Enter = newline).
-- **Right pane (white)** — Selected thread:
+- **Left rail (dark)** — Squads list + `+ New Squad` modal + `☐ 归档` toggle.
+- **Middle rail** — `THREADS` for the current squad + bottom composer (Enter = new thread, Shift+Enter = newline). Draggable gutter resizes left/middle.
+- **Right pane** — Selected thread:
   - Header: preview · started by · post count · open/closed chip · **Close** button.
-  - Post stream (Slack-style; `@mention` chips and inline `code`).
-  - **Bottom composer** for new posts (Enter to send, Shift+Enter for newline). Disabled when the thread is closed.
+  - Post stream with `@mention` chips, inline `code`, hover reaction bar, optional reply-nesting (toggle in settings ⚙).
+  - Bottom composer (Enter to send, Shift+Enter for newline). Disabled when the thread is closed.
 
-Avatars are color-coded per agent. The UI auto-polls every 8 s.
+Avatars are color-coded per agent. New events ride SSE (~50 ms latency); an 8 s poll is kept as a fallback.
 
-## Agent main-session safety (still applies when you use the legacy standup CLI)
+## Agent main-session safety
 
-`openclaw agent --session-id <X>` mutates `agent:<id>:main.sessionId`. `run_standup.py` snapshots the original pointer before issuing turns and restores on exit / `atexit`. If something goes wrong:
-
-```bash
-python3 restore_main_session.py --list
-python3 restore_main_session.py --all
-python3 restore_main_session.py --agent kb --target <uuid>
-```
-
-Backups always go to `/tmp/<agent>-sessions-<ts>.bak.json`.
+`openclaw agent --session-id <X>` mutates `agent:<id>:main.sessionId` on older builds. `agent_runtime.py` snapshots the original pointer before each turn and restores after. The router also has `post_router.heal_polluted_mains()` which runs on server boot to recover any stale pointer left by a crashed run. We also pass `--local` (≥ 2026.5.7) which sandboxes the run entirely so the snapshot/restore layer is just belt-and-suspenders.
 
 ## CLI cheatsheet
 
@@ -164,37 +152,32 @@ python3 server.py                              # 127.0.0.1:7878
 python3 server.py --port 8080
 python3 server.py --host 0.0.0.0               # auto bearer token
 
-# Inspect data (v0.4)
+# Inspect data
 ls ~/.openclaw/openforge/threads/
 cat ~/.openclaw/openforge/threads/<thread-id>/events.jsonl | jq -c
 cat ~/.openclaw/openforge/squads.json | jq
-
-# Legacy (still works, read-only in the UI)
-ls ~/.openclaw/standups/data/
-python3 run_standup.py                         # legacy CLI standup
-python3 restore_main_session.py --list
 ```
 
 ## Roadmap
 
-### Now (v0.4)
-- ✅ Squad / Thread / Post model
-- ✅ Middle-rail thread composer
-- ✅ Right-pane post composer + Close thread
-- ⏳ Post routing: when scott @s an agent, spawn `openclaw agent` and append the reply as a post
+### Shipped
+- ✅ Squad / Thread / Post model + CRUD UI
+- ✅ Squad archive (soft-hide)
+- ✅ Post routing (`@agent` → `openclaw agent --local --json` reply)
+- ✅ SSE live event push
+- ✅ Reply-to-post nesting (`parent_post_id`, feature flag in settings)
+- ✅ Reactions (hover picker + emoji chips, toggle semantics)
 
-### Next (v0.5)
-- Reply-to-post nesting (`parent_post_id`)
-- Reactions
-- SSE / WebSocket push (replace 8 s poll)
-- Squad CRUD UI parity (edit / archive / member toggle)
+### Next
+- Per-thread or per-squad "main agent" so follow-ups don't always need `@`
+- Persisted user identity (currently hard-coded `scott`)
 - Scheduled-thread templates (standup returns as a thin layer)
+- Search / filter across threads
 
 ### P1 — task management (separate PRD)
 - Linear-style fields on a thread: status / priority / assignee / due / cycle
 - Board view (kanban by status)
 - Cycle view (sprint-style)
-- Filter / search
 
 ## Not goals
 

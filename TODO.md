@@ -5,20 +5,21 @@
 
 ## 🔥 P0 — must-do before next dogfood round
 
-- [x] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. Reuses the snapshot/restore logic from `run_standup.py`. → `post_router.py` (single-worker serial queue, per-thread/agent stable session-id `forge-<tid>-<agent>`, errors recorded as `__router__` posts).
-- [ ] **Migrate-or-archive `run_standup.py`**: it is no longer in the primary flow; either turn it into a thin wrapper that creates a thread + opening post, or archive it under `legacy/`.
-- [ ] Regression test: (a) snapshot a fake agent main, (b) clobber via the same path the post router uses, (c) confirm atexit restores the original sessionId.
-- [ ] **Standup-as-thread template**: schema for a `forge-template` that pre-fills a thread opening post (re-implement the standup use-case as a thin layer once routing is in).
+- [x] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. → `post_router.py` (single-worker serial queue, per-thread/agent stable session-id `forge-<tid>-<agent>`, errors recorded as `__router__` posts).
+- [x] **Archive `run_standup.py`**: removed from tree; standup is no longer a first-class feature. Snapshot/restore logic lives in `agent_runtime.py` and is reused by `post_router`.
+- [ ] Regression test: (a) snapshot a fake agent main, (b) clobber via the same path the post router uses, (c) confirm restore brings back the original sessionId.
+- [ ] **Scheduled-thread templates**: a `forge-template` schema that pre-fills a thread opening post (the standup use-case returns as a thin layer).
 
 ## 🎯 P1 — product features (next 1–2 weeks)
 
-- [ ] **@agent picker in composer**: typing `@` in either composer opens an inline picker of the squad's members.
-- [ ] **Reply-to-post threading**: nested replies under a parent post (`parent_post_id` already in the schema; UI not yet).
-- [ ] **Reactions**: `reaction_added` / `reaction_removed` events; UI toolbar (already removed in v0.4 redesign; reinstate as Slack-style hover bar).
-- [ ] **SSE / WebSocket push**: replace the 8 s poll with a per-connection event tail of `events.jsonl`.
-- [ ] **Squad CRUD UI parity**: edit / archive / member toggle from the web (POST done; PATCH/DELETE flows need UI).
+- [x] **@agent picker in composer**: typing `@` opens an inline picker of the squad's members.
+- [x] **Reply-to-post threading**: nested replies under a parent post (feature flag in settings).
+- [x] **Reactions**: `reaction_added` / `reaction_removed` events + Slack-style hover bar + toggle chips.
+- [x] **SSE / WebSocket push**: per-connection event tail of `events.jsonl` (8 s poll kept as fallback).
+- [x] **Squad CRUD UI parity**: edit / archive / delete from the web.
 - [ ] **Reopen / archive thread** semantics in the API + UI.
 - [ ] **Cron integration**: docs + an example `cron` job that POSTs to `/api/squads/<id>/threads` on a schedule (uses the OpenClaw `cron` tool).
+- [ ] **Per-thread main agent** so follow-ups don't always need an explicit `@`.
 
 ## 🛡 P1 — hardening & ops
 
@@ -31,7 +32,7 @@
 
 - [ ] Unit tests for `forge_store.parse_topics_from_opening` edge cases (empty, malformed numbering, CJK).
 - [ ] Property tests for the projection (event log → meeting model is monotone).
-- [ ] Mock `openclaw agent` CLI in tests so `run_standup.py` can be exercised end-to-end without burning tokens.
+- [ ] Mock `openclaw agent` CLI in tests so the post router can be exercised end-to-end without burning tokens.
 - [ ] Ruff / black / mypy minimal config (the codebase is small enough that this stays cheap).
 
 ## 🎨 P2 — UX polish
@@ -53,7 +54,7 @@
 ## 🌌 P3 — future / speculative
 
 - [ ] Event log on SQLite with `superseded_by` index (drop-in replacement once jsonl gets too slow).
-- [ ] Multi-machine: the OpenClaw gateway already routes across nodes; lift `run_standup` to RPC instead of subprocess.
+- [ ] Multi-machine: the OpenClaw gateway already routes across nodes; lift the post router to RPC instead of subprocess.
 - [ ] OpenProse integration: a `.prose` file that drives a thread (chair becomes the prose VM).
 - [ ] Web UI for tweaking `manifest`-style thread templates (agenda, max turns, termination conditions).
 - [ ] OpenForge "feeds": each agent gets a personal feed of threads they were @-ed on (Slack mentions tab equivalent).
@@ -61,6 +62,11 @@
 
 ## ✅ Recently shipped
 
+- 2026-05-21 — `feat(reactions): post hover bar + emoji chips + toggle` (`99ebd8a`)
+- 2026-05-21 — `feat(router): agent replies inherit parent_post_id from trigger post` (`2749ad7`)
+- 2026-05-21 — `chore: retire run_standup CLI; extract agent_runtime.py`
+- 2026-05-20 — squad archive + reply nesting + settings modal + SSE (`57efe79` … `181f4ea`)
+- 2026-05-19 — P0 post routing + squad CRUD + `--local --json` (`3b657a7` … `4fc542d`)
 - 2026-05-16 — `feat: Slack-shaped threads (v0.4) — squad/thread/post API + middle & right composers, drop standup from UI`
 - 2026-05-16 — `docs: PRD v0.2 (Slack-for-topics is P0; Linear-style tasks deferred to P1)`
 - 2026-05-15 — `ci: add GitHub Actions workflow` (`a865cd9`)
