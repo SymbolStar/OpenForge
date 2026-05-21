@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# forge — OpenForge service CLI
+#
+# Wraps the OpenForge HTTP server (server.py) behind a small set of
+# verbs so you never have to remember `lsof -ti:7878 | xargs kill -9`
+# again. State is owned by launchd (per-user agent); this CLI is just
+# the friendly face.
+#
+# Install:   forge install        (one-time; writes plist + symlinks self to PATH)
+# Daily:     forge restart | forge logs | forge update | forge open
+
+set -euo pipefail
+
+VERSION="0.1.0"
+
+# ─── paths ────────────────────────────────────────────────────────────
+# Resolve the repo root from this script's location (symlink-safe).
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  TARGET="$(readlink "$SELF")"
+  case "$TARGET" in
+    /*) SELF="$TARGET" ;;
+    *)  SELF="$(cd "$(dirname "$SELF")" && cd "$(dirname "$TARGET")" && pwd)/$(basename "$TARGET")" ;;
+  esac
+done
+REPO_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+SERVER_PY="$REPO_DIR/server.py"
+
+LABEL="ai.openforge.server"
+PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LOG_DIR="$HOME/Library/Logs"
+LOG_PATH="$LOG_DIR/openforge.log"
+PORT="${OPENFORGE_PORT:-7878}"
+SERVE_URL="http://127.0.0.1:${PORT}/"
+
+# Pick a CLI install directory writable by current user, on PATH.
+PATH_CANDIDATES=(
+  "/opt/homebrew/bin"
+  "/usr/local/bin"
+  "$HOME/.local/bin"
+)
+
+# ─── tiny ui helpers ──────────────────────────────────────────────────
+c_dim()  { printf '\033[2m%s\033[0m'  "$*"; }
+c_ok()   { printf '\033[32m%s\033[0m' "$*"; }
+c_warn() { printf '\033[33m%s\033[0m' "$*"; }
+c_err()  { printf '\033[31m%s\033[0m' "$*"; }
+log()    { printf '%s %s\n' "$(c_dim "[forge]")" "$*"; }
+die()    { printf '%s %s\n' "$(c_err "[forge]")" "$*" >&2; exit 1; }
+
+# ─── helpers ──────────────────────────────────────────────────────────
+domain() { echo "gui/$(id -u)"; }
+
+is_loaded() {
+  launchctl print "$(domain)/${LABEL}" >/dev/null 2>&1
+}
+
+port_pid() {
+  lsof -ti:"$PORT" 2>/dev/null | head -1
+}
+
+python_bin() {
+  if [ -n "${OPENFORGE_PYTHON:-}" ]; then echo "$OPENFORGE_PYTHON"; return; fi
+  command -v python3 || command -v python || die "python3 not found on PATH"
+}
+
+ensure_log_dir() { mkdir -p "$LOG_DIR"; }
+
+require_repo() {
+  [ -f "$SERVER_PY" ] || die "server.py not found under $REPO_DIR — was the forge script moved away from its repo?"
+}
+
+# ─── plist generation ─────────────────────────────────────────────────
+write_plist() {
+  local py; py="$(python_bin)"
+  ensure_log_dir
+  mkdir -p "$(dirname "$PLIST_PATH")"
+  cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>             <string>${LABEL}</string>
+  <key>WorkingDirectory</key>  <string>${REPO_DIR}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${py}</string>
+    <string>-u</string>
+    <string>${SERVER_PY}</string>
+    <string>--port</string>
+    <string>${PORT}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${HOME}/.nvm/versions/node/v22.22.1/bin</string>
+    <key>HOME</key>
+    <string>${HOME}</string>
+  </dict>
+  <key>RunAtLoad</key>         <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>  <false/>
+    <key>Crashed</key>         <true/>
+  </dict>
+  <key>ThrottleInterval</key>  <integer>5</integer>
+  <key>StandardOutPath</key>   <string>${LOG_PATH}</string>
+  <key>StandardErrorPath</key> <string>${LOG_PATH}</string>
+</dict>
+</plist>
+PLIST
+  log "wrote $PLIST_PATH"
+}
+
+# ─── subcommands ──────────────────────────────────────────────────────
+cmd_help() {
+  cat <<HELP
+forge ${VERSION} — OpenForge service CLI
+
+Usage:
+  forge install      One-time setup: write plist, symlink self to PATH, start service
+  forge uninstall    Stop service + remove plist + remove PATH symlink
+
+  forge start        Load + start the LaunchAgent (idempotent)
+  forge stop         Unload the LaunchAgent (no auto-restart until \`forge start\`)
+  forge restart      Stop + start
+  forge status       Show whether the agent is loaded and listening
+
+  forge logs [-n N]  Tail the log (default: 80 lines, follow with --follow)
+  forge open         Open the web UI in the default browser
+  forge update       git pull on the repo then restart
+  forge version      Print version
+
+Environment:
+  OPENFORGE_PORT     Listen port (default: 7878)
+  OPENFORGE_PYTHON   Python binary to use (default: first python3 on PATH)
+
+Repo: ${REPO_DIR}
+Log:  ${LOG_PATH}
+URL:  ${SERVE_URL}
+HELP
+}
+
+cmd_version() { echo "forge ${VERSION}"; }
+
+cmd_status() {
+  echo "Repo:    $REPO_DIR"
+  echo "Plist:   $PLIST_PATH $([ -f "$PLIST_PATH" ] && echo "(present)" || c_warn "(missing — run: forge install)")"
+  if is_loaded; then
+    echo "Agent:   $(c_ok loaded)"
+    launchctl print "$(domain)/${LABEL}" 2>/dev/null | awk '/state =|pid =|last exit code =/{$1=$1; print "         " $0}' | head -5
+  else
+    echo "Agent:   $(c_warn 'not loaded')"
+  fi
+  local pid; pid="$(port_pid || true)"
+  if [ -n "$pid" ]; then
+    echo "Port:    $(c_ok "${PORT} listening") pid=${pid}"
+  else
+    echo "Port:    $(c_warn "${PORT} not listening")"
+  fi
+  echo "URL:     $SERVE_URL"
+  echo "Log:     $LOG_PATH"
+}
+
+cmd_start() {
+  require_repo
+  [ -f "$PLIST_PATH" ] || { log "no plist yet, generating…"; write_plist; }
+  if is_loaded; then
+    log "already loaded; use 'forge restart' if you want a fresh process"
+    return 0
+  fi
+  launchctl bootstrap "$(domain)" "$PLIST_PATH"
+  sleep 1
+  cmd_status
+}
+
+cmd_stop() {
+  if is_loaded; then
+    launchctl bootout "$(domain)" "$PLIST_PATH" 2>/dev/null || true
+    log "agent unloaded"
+  else
+    log "agent already stopped"
+  fi
+  # If the loaded agent is gone, kill any orphan listener too.
+  local pid; pid="$(port_pid || true)"
+  if [ -n "$pid" ]; then
+    log "killing orphan listener on :${PORT} (pid ${pid})"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
+cmd_restart() {
+  cmd_stop
+  sleep 0.5
+  cmd_start
+}
+
+cmd_logs() {
+  local n=80 follow=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n) n="$2"; shift 2 ;;
+      --follow|-f) follow=true; shift ;;
+      *) die "unknown logs arg: $1" ;;
+    esac
+  done
+  [ -f "$LOG_PATH" ] || die "no log yet at $LOG_PATH"
+  if $follow; then
+    tail -n "$n" -f "$LOG_PATH"
+  else
+    tail -n "$n" "$LOG_PATH"
+  fi
+}
+
+cmd_open() { open "$SERVE_URL"; }
+
+cmd_update() {
+  require_repo
+  log "git pull in $REPO_DIR"
+  ( cd "$REPO_DIR" && git pull --ff-only )
+  cmd_restart
+}
+
+cmd_install() {
+  require_repo
+  write_plist
+
+  # symlink this script onto PATH so `forge` works from anywhere.
+  local linked=""
+  for dir in "${PATH_CANDIDATES[@]}"; do
+    if [ -d "$dir" ] && [ -w "$dir" ]; then
+      ln -sf "$SELF" "$dir/forge"
+      linked="$dir/forge"
+      break
+    fi
+  done
+  if [ -z "$linked" ]; then
+    log "$(c_warn '⚠')  no writable PATH dir found; add this to your shell rc:"
+    log "    alias forge='$SELF'"
+  else
+    log "symlinked $linked → $SELF"
+  fi
+
+  # boot the service
+  if is_loaded; then
+    launchctl bootout "$(domain)" "$PLIST_PATH" 2>/dev/null || true
+  fi
+  launchctl bootstrap "$(domain)" "$PLIST_PATH"
+  sleep 1
+  cmd_status
+  echo
+  log "$(c_ok '✓') installed. Try: forge open"
+}
+
+cmd_uninstall() {
+  if is_loaded; then
+    launchctl bootout "$(domain)" "$PLIST_PATH" 2>/dev/null || true
+    log "agent unloaded"
+  fi
+  [ -f "$PLIST_PATH" ] && rm -f "$PLIST_PATH" && log "removed $PLIST_PATH"
+  for dir in "${PATH_CANDIDATES[@]}"; do
+    if [ -L "$dir/forge" ]; then
+      rm -f "$dir/forge" && log "removed $dir/forge"
+    fi
+  done
+  log "uninstalled. Repo + logs left intact."
+}
+
+# ─── dispatch ─────────────────────────────────────────────────────────
+case "${1:-help}" in
+  install)         shift; cmd_install   "$@" ;;
+  uninstall)       shift; cmd_uninstall "$@" ;;
+  start)           shift; cmd_start     "$@" ;;
+  stop)            shift; cmd_stop      "$@" ;;
+  restart)         shift; cmd_restart   "$@" ;;
+  status)          shift; cmd_status    "$@" ;;
+  logs)            shift; cmd_logs      "$@" ;;
+  open)            shift; cmd_open      "$@" ;;
+  update)          shift; cmd_update    "$@" ;;
+  version|-v|--version) cmd_version ;;
+  help|-h|--help)  cmd_help ;;
+  *) die "unknown command: $1 — try: forge help" ;;
+esac
