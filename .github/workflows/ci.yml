@@ -131,14 +131,7 @@ jobs:
           wait $SERVER_PID 2>/dev/null || true
           mkdir -p "$HOME/.openclaw/openforge" /tmp/docs-root
           echo '# doc' > /tmp/docs-root/seed.md
-          cat > "$HOME/.openclaw/openforge/config.json" <<JSON
-          {
-            "fileRoots": [
-              {"id":"files","label":"Files","path":"$HOME/.openclaw/openforge/files","writable":true},
-              {"id":"docs","label":"Docs","path":"/tmp/docs-root","writable":false}
-            ]
-          }
-JSON
+          python -c "import json,os; json.dump({'fileRoots':[{'id':'files','label':'Files','path':os.path.expanduser('~/.openclaw/openforge/files'),'writable':True},{'id':'docs','label':'Docs','path':'/tmp/docs-root','writable':False}]}, open(os.path.expanduser('~/.openclaw/openforge/config.json'),'w'))"
           python -u server.py --port 17878 > /tmp/server2.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 50); do
