@@ -17,6 +17,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# Make sure subprocesses (test_server boots a real server.py) inherit the
+# coverage subprocess hook. We unconditionally prepend REPO_ROOT to PYTHONPATH
+# so sitecustomize.py is importable; the hook itself only activates when
+# COVERAGE_PROCESS_START is set in the environment.
+_existing_pp = os.environ.get("PYTHONPATH", "")
+_pp_parts = [str(REPO_ROOT)] + ([_existing_pp] if _existing_pp else [])
+os.environ["PYTHONPATH"] = os.pathsep.join(_pp_parts)
+
 
 @pytest.fixture
 def fake_home(monkeypatch, tmp_path):
@@ -46,3 +54,55 @@ def store(fake_home):
 def router(fake_home):
     import post_router
     return post_router
+
+
+# ─── shared subprocess-server fixture for HTTP tests ─────────────────
+
+def _free_port() -> int:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_up(url: str, timeout: float = 8.0) -> None:
+    import time
+    import urllib.error
+    import urllib.request
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=0.5)
+            return
+        except (urllib.error.URLError, ConnectionResetError, ConnectionRefusedError):
+            time.sleep(0.1)
+    raise RuntimeError(f"server did not come up at {url}")
+
+
+@pytest.fixture
+def server(fake_home):
+    import signal
+    import subprocess
+    import sys
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(REPO_ROOT / "server.py"), "--port", str(port)],
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "HOME": str(fake_home)},
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        _wait_up(f"{base}/api/squads")
+        yield base
+    finally:
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()

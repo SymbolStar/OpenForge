@@ -1,0 +1,27 @@
+[run]
+branch = False
+parallel = True
+concurrency = multiprocessing,thread
+source =
+    agent_runtime
+    forge_store
+    post_router
+    server
+omit =
+    tests/*
+    .venv/*
+    web/*
+
+[paths]
+source =
+    .
+    */openforge
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    if TYPE_CHECKING:
+show_missing = True
+skip_covered = False

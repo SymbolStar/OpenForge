@@ -2,10 +2,6 @@
 from __future__ import annotations
 
 import json
-import socket
-import subprocess
-import sys
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,22 +10,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _wait_up(url: str, timeout: float = 8.0) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            urllib.request.urlopen(url, timeout=0.5)
-            return
-        except (urllib.error.URLError, ConnectionResetError, ConnectionRefusedError):
-            time.sleep(0.1)
-    raise RuntimeError(f"server did not come up at {url}")
+# Re-export the shared `server` fixture for tests that import it from here.
+from tests.conftest import server  # noqa: F401, E402  (pytest fixture re-export)
 
 
 def _get(url: str) -> dict:
@@ -51,29 +33,6 @@ def _post(url: str, body: dict) -> dict:
         # surface server error body so test failures are debuggable
         body_text = e.read().decode("utf-8", errors="replace")
         raise AssertionError(f"POST {url} -> {e.code}: {body_text}") from None
-
-
-@pytest.fixture
-def server(fake_home):
-    """Boot server.py against a fake $HOME on a random port."""
-    port = _free_port()
-    proc = subprocess.Popen(
-        [sys.executable, "-u", str(REPO_ROOT / "server.py"), "--port", str(port)],
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env={**__import__("os").environ, "HOME": str(fake_home)},
-    )
-    base = f"http://127.0.0.1:{port}"
-    try:
-        _wait_up(f"{base}/api/squads")
-        yield base
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
 
 
 def test_squads_starts_empty(server):
