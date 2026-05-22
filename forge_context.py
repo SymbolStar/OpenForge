@@ -159,7 +159,7 @@ def _stamp_updated_line(content: str, agent_id: str) -> str:
     out: list[str] = []
     inserted = False
     skip_existing_stamp = False
-    for i, line in enumerate(lines):
+    for line in lines:
         if not inserted and line.startswith("> 最后更新："):
             out.append(stamp_line)
             inserted = True

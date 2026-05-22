@@ -5,6 +5,8 @@
 
 ## 🔥 P0 — must-do before next dogfood round
 
+- [x] **v0.9 — Agent Context Bundle**: STATUS.md per agent + auto-injected three-source bundle (status + main session tail + memory hits) on every openforge spawn. Endpoints `POST/PATCH/GET /api/agents/<id>/status`, `GET /api/agents/<id>/context-bundle`. See `docs/PRD-v0.9-agent-context-bundle.md`.
+
 - [x] **Post routing**: when a `post_added` event with `speaker=scott` mentions one or more agents, spawn `openclaw agent` subprocesses sequentially and append each reply as a new `post_added` event. → `post_router.py` (single-worker serial queue, per-thread/agent stable session-id `forge-<tid>-<agent>`, errors recorded as `__router__` posts).
 - [x] **Archive `run_standup.py`**: removed from tree; standup is no longer a first-class feature. Snapshot/restore logic lives in `agent_runtime.py` and is reused by `post_router`.
 - [ ] Regression test: (a) snapshot a fake agent main, (b) clobber via the same path the post router uses, (c) confirm restore brings back the original sessionId.

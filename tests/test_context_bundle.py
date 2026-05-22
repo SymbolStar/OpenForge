@@ -386,7 +386,7 @@ def test_build_bundle_force_refresh(ctx):
 def test_build_bundle_ttl_expired(ctx, monkeypatch):
     ctx.write_status("sherry", "# S\n\n## 当前焦点\nx\n")
     _write_config(ctx, {"sherry": {"contextBundle": {"cache_ttl_seconds": 1}}})
-    b = ctx.build_context_bundle("sherry")
+    ctx.build_context_bundle("sherry")
     # simulate cache expiry by rewriting expires_at backward
     cp = ctx._cache_path("sherry")
     d = json.loads(cp.read_text())
