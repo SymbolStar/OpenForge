@@ -45,6 +45,11 @@ from agent_runtime import (
     snapshot_main,
 )
 
+try:
+    import forge_context  # type: ignore
+except Exception:  # pragma: no cover
+    forge_context = None  # type: ignore
+
 # ─── config ──────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
 
@@ -282,7 +287,14 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         l for l in md.splitlines() if not l.startswith("<!--")
     )
     trigger_preview = (trigger.get("content") or "").strip()
+
+    # v0.9: prepend OpenForge-collected context bundle so the spawned
+    # subprocess starts with situational awareness (STATUS + main session
+    # tail + memory hits) and doesn't redo work the main session already did.
+    bundle_preamble = _render_bundle_preamble(thread_id, agent_id, trigger_preview)
+
     return (
+        f"{bundle_preamble}"
         f"你正在参加 OpenForge 一个 thread 的讨论，scott 在最新一条 post "
         f"里 @ 了你（{agent_id}）。下面是 thread 当前的完整内容：\n\n"
         f"━━━ Thread ━━━\n{md_for_prompt}\n━━━ 结束 ━━━\n\n"
@@ -307,6 +319,42 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"- `[[docs/PRD.md]]`          → 指定 root id\n"
         f"- `[[docs/PRD.md|这份 PRD]]` → 自定义显示文本\n"
         f"前端会自动渲染为 📄 可点 chip；不要手动拼 URL，不要凭空推测文件名。\n"
+        f"\n[你的 STATUS.md 维护]\n"
+        f"当前你的 STATUS 会被 OpenForge 自动注入到你的上下文里（看到上面的 STATUS 区块了吗？）。\n"
+        f"以下场景主动更新：\n"
+        f"- 完成一个阶段性任务 / 进入新任务 / 袁 blocker\n"
+        f"更新方式（在你的 reply 中静默执行，不要跳出来告诉 scott）：\n"
+        f"  curl -sX PATCH http://127.0.0.1:7878/api/agents/{agent_id}/status \\\n"
+        f"    -H 'Content-Type: application/json' \\\n"
+        f"    -d '{{\"section\":\"当前焦点\",\"content\":\"...一句话...\"}}'\n"
+        f"或者全量重写：POST 同路径 body `{{\"content\":\"...完整 STATUS.md...\"}}`。\n"
+    )
+
+
+def _render_bundle_preamble(thread_id: str, agent_id: str, trigger_preview: str) -> str:
+    """Build and render the v0.9 context bundle as a prompt preamble.
+
+    Fails soft: if forge_context isn't importable or bundle building raises,
+    returns "" so the agent still gets a usable prompt.
+    """
+    if forge_context is None:
+        return ""
+    try:
+        thread = store.project_thread(thread_id) or {}
+        title = (thread.get("posts") or [{}])[0].get("content") or trigger_preview
+        query_hint = (title or "").strip()[:200]
+        bundle = forge_context.build_context_bundle(
+            agent_id, query_hint=query_hint,
+        )
+        rendered = bundle.render()
+    except Exception:
+        return ""
+    if not rendered:
+        return ""
+    return (
+        "## 你的最新上下文（OpenForge 已预查，请基于此回复）\n\n"
+        f"{rendered}\n\n"
+        "---\n\n"
     )
 
 

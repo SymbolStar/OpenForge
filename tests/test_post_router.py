@@ -215,6 +215,30 @@ def test_build_prompt_contains_agent_and_content(router, store):
     assert "completed" in p
 
 
+def test_build_prompt_injects_status_bundle(router, store, fake_home):
+    import forge_context
+    forge_context.write_status("milk", "# Milk\n\n## 当前焦点\nCI 已修复 ✍ 16:35\n")
+    t = _make_thread(store, "@milk fix CI")
+    trigger = {"post_id": t["posts"][0]["id"], "speaker": "scott",
+               "content": "@milk fix CI"}
+    p = router._build_prompt(t["thread_id"], "milk", trigger)
+    # Bundle preamble appears before the standard prompt.
+    assert "OpenForge 已预查" in p
+    assert "CI 已修复" in p
+    # And STATUS update hint is in the prompt
+    assert "/api/agents/milk/status" in p
+
+
+def test_build_prompt_no_status_no_bundle(router, store):
+    t = _make_thread(store, "@milk hi")
+    trigger = {"post_id": t["posts"][0]["id"], "speaker": "scott", "content": "@milk hi"}
+    p = router._build_prompt(t["thread_id"], "milk", trigger)
+    # No bundle preamble when no sources available
+    assert "OpenForge 已预查" not in p
+    # Standard prompt still present
+    assert "completed" in p
+
+
 # ─── heal_polluted_mains ─────────────────────────────────────────────
 def test_heal_polluted_mains(router, fake_home):
     sess = fake_home / ".openclaw" / "agents" / "milk" / "sessions"
