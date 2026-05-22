@@ -239,6 +239,16 @@ def test_build_prompt_no_status_no_bundle(router, store):
     assert "completed" in p
 
 
+def test_build_prompt_teaches_on_demand_memory_search(router, store):
+    """v0.9.1: system prompt must teach agent to call memory_search on demand,
+    since OpenForge no longer pre-fetches memory into the bundle."""
+    t = _make_thread(store, "@milk hi")
+    trigger = {"post_id": t["posts"][0]["id"], "speaker": "scott", "content": "@milk hi"}
+    p = router._build_prompt(t["thread_id"], "milk", trigger)
+    assert "memory_search" in p
+    assert "ask-on-demand" in p
+
+
 # ─── heal_polluted_mains ─────────────────────────────────────────────
 def test_heal_polluted_mains(router, fake_home):
     sess = fake_home / ".openclaw" / "agents" / "milk" / "sessions"

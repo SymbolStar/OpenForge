@@ -109,6 +109,33 @@ def test_load_agent_config_defaults(ctx):
     assert "status" in cfg["include"]
 
 
+def test_default_include_is_two_sources_no_memory(ctx):
+    """v0.9.1: default include is status + main_session only (memory dropped).
+
+    Memory is ask-on-demand — the agent calls memory_search itself in its turn.
+    OpenForge no longer pre-fetches it.
+    """
+    cfg = ctx.load_agent_config("sherry")
+    assert cfg["include"] == ["status", "main_session"]
+    assert "memory" not in cfg["include"]
+
+
+def test_build_bundle_default_skips_memory_even_if_query_hint(ctx, fake_home, tmp_path, monkeypatch):
+    """Even with a query hint + working memory bin, default 2-source bundle
+    must not include memory. (Regression guard for v0.9.1.)"""
+    ctx.write_status("sherry", "# S\n\n## 当前焦点\nx\n")
+    _seed_main_session(fake_home, "sherry", [("user", "hi")])
+    fake = _install_fake_memory_search(tmp_path, json.dumps({
+        "hits": [{"path": "mem.md", "snippet": "should-not-appear", "score": 0.9}]
+    }))
+    monkeypatch.setenv("OPENFORGE_OPENCLAW_BIN", str(fake))
+    b = ctx.build_context_bundle("sherry", query_hint="日报")
+    assert "memory" not in b.sources
+    assert "status" in b.sources
+    assert "main_session" in b.sources
+    assert "should-not-appear" not in b.render()
+
+
 def test_load_agent_config_override(ctx):
     _write_config(ctx, {
         "sherry": {
@@ -329,6 +356,13 @@ def test_collect_status_missing(ctx):
 
 
 def test_build_bundle_three_sources(ctx, fake_home, tmp_path, monkeypatch):
+    # v0.9.1: memory is no longer in the default include; opt back in
+    # explicitly to exercise the legacy 3-source path (still wired up for
+    # back-compat / debug).
+    _write_config(ctx, {"sherry": {"contextBundle": {
+        "include": ["status", "main_session", "memory"],
+        "memory_top_k": 5,
+    }}})
     # Seed all three sources
     ctx.write_status("sherry", "# Sherry\n\n## 当前焦点\n日报 16:35 已入箱\n")
     _seed_main_session(fake_home, "sherry", [
