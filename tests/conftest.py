@@ -37,6 +37,7 @@ def fake_home(monkeypatch, tmp_path):
     for name in [
         "forge_store",
         "forge_refs",
+        "forge_context",
         "agent_runtime",
         "post_router",
     ]:
