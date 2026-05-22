@@ -121,5 +121,37 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"../etc/passwd"}' http://127.0.0.1:17878/api/files)" = "400" && echo "files-400 OK"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"smoke.md"}' http://127.0.0.1:17878/api/files)" = "409" && echo "files-409 OK"
 
+          # v0.7 multi-root: list-roots and v0.6 deprecation header
+          curl -sf http://127.0.0.1:17878/api/file-roots | python -c 'import json,sys; d=json.load(sys.stdin); assert any(r["id"]=="files" for r in d["roots"]), d; print("file-roots OK")'
+          curl -sI http://127.0.0.1:17878/api/files/smoke.md | tr -d '\r' | grep -i '^Deprecation:' && echo "v0.6-deprecation-header OK"
+          curl -sf http://127.0.0.1:17878/api/files/files/smoke.md | python -c 'import json,sys; d=json.load(sys.stdin); assert d["root"]=="files" and d["content"]=="updated body", d; print("multi-root-read OK")'
+
+          # v0.7 multi-root with a configured docs root (read-only)
+          kill $SERVER_PID 2>/dev/null || true
+          wait $SERVER_PID 2>/dev/null || true
+          mkdir -p "$HOME/.openclaw/openforge" /tmp/docs-root
+          echo '# doc' > /tmp/docs-root/seed.md
+          cat > "$HOME/.openclaw/openforge/config.json" <<JSON
+          {
+            "fileRoots": [
+              {"id":"files","label":"Files","path":"$HOME/.openclaw/openforge/files","writable":true},
+              {"id":"docs","label":"Docs","path":"/tmp/docs-root","writable":false}
+            ]
+          }
+JSON
+          python -u server.py --port 17878 > /tmp/server2.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 50); do
+            curl -sf http://127.0.0.1:17878/api/file-roots >/dev/null && break
+            sleep 0.1
+          done
+          curl -sf http://127.0.0.1:17878/api/file-roots | python -c 'import json,sys; d=json.load(sys.stdin); ids=[r["id"] for r in d["roots"]]; assert "docs" in ids, d; ro=[r for r in d["roots"] if r["id"]=="docs"][0]; assert ro["writable"] is False, ro; assert ro["count"]==1, ro; print("docs-root listed OK")'
+          curl -sf http://127.0.0.1:17878/api/files/docs/seed.md | python -c 'import json,sys; d=json.load(sys.stdin); assert d["content"]=="# doc\n", d; print("docs-root read OK")'
+          # write to read-only → 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"new.md","content":"x"}' http://127.0.0.1:17878/api/files/docs)" = "403" && echo "docs-readonly POST=403 OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"content":"x"}' http://127.0.0.1:17878/api/files/docs/seed.md)" = "403" && echo "docs-readonly PUT=403 OK"
+
           kill $SERVER_PID 2>/dev/null || true
           cat /tmp/server.log
+          echo "--- server2 ---"
+          cat /tmp/server2.log
