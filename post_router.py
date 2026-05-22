@@ -328,6 +328,11 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"    -H 'Content-Type: application/json' \\\n"
         f"    -d '{{\"section\":\"当前焦点\",\"content\":\"...一句话...\"}}'\n"
         f"或者全量重写：POST 同路径 body `{{\"content\":\"...完整 STATUS.md...\"}}`。\n"
+        f"\n[需要历史细节？主动查 memory]\n"
+        f"上面这份 context bundle **不会**预查 memory（设计哲学：memory 是 ask-on-demand 仓库）。\n"
+        f"需要以前的决定 / 讨论 / 历史事件时，主动调你自己的 OpenClaw 工具：\n"
+        f"  memory_search(query=\"...\")\n"
+        f"未查就凭印象回答 = 黑线。\n"
     )
 
 
