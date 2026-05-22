@@ -94,9 +94,12 @@ def test_register_validation_empty_label_agent(fake_home, tmp_md):
 
 def test_list_filters(fake_home, tmp_path):
     import forge_refs
-    a = tmp_path / "a.md"; a.write_text("a")
-    b = tmp_path / "b.md"; b.write_text("b")
-    c = tmp_path / "c.md"; c.write_text("c")
+    a = tmp_path / "a.md"
+    a.write_text("a")
+    b = tmp_path / "b.md"
+    b.write_text("b")
+    c = tmp_path / "c.md"
+    c.write_text("c")
     r1 = forge_refs.register(label="a.md", abs_path=str(a), source_agent="milk", thread_id="th_1")
     r2 = forge_refs.register(label="b.md", abs_path=str(b), source_agent="judy", thread_id="th_1", squad_id="sq")
     r3 = forge_refs.register(label="c.md", abs_path=str(c), source_agent="milk", squad_id="sq")
@@ -364,8 +367,10 @@ def test_http_register_blocked_symlink(server, tmp_path):
 
 def test_http_filter_by_agent(server, tmp_path):
     base = server
-    a = tmp_path / "a.md"; a.write_text("a")
-    b = tmp_path / "b.md"; b.write_text("b")
+    a = tmp_path / "a.md"
+    a.write_text("a")
+    b = tmp_path / "b.md"
+    b.write_text("b")
     _call("POST", f"{base}/api/refs",
           {"label": "a.md", "abs_path": str(a), "source_agent": "milk"})
     _call("POST", f"{base}/api/refs",

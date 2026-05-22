@@ -37,7 +37,7 @@ import os
 import secrets
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -112,7 +112,7 @@ class Ref:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Ref":
+    def from_dict(cls, d: dict) -> Ref:
         return cls(
             id=d["id"],
             label=d["label"],
