@@ -49,7 +49,11 @@ import forge_files
 import forge_store as store
 import post_router
 
-FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_-]+\.md)"
+FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
+ROOT_ID_ROUTE_RE = r"([A-Za-z0-9_\-]{1,32})"
+# v0.6 deprecated routes: keep working but emit warning headers.
+DEPRECATION_DATE = "Fri, 22 May 2026 00:00:00 GMT"
+SUNSET_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
 
 SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
@@ -190,14 +194,24 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
             return False
 
-    def _json(self, obj, status: int = 200):
+    def _json(self, obj, status: int = 200, extra_headers: dict | None = None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _deprecated_v06_headers(self) -> dict:
+        return {
+            "Deprecation": DEPRECATION_DATE,
+            "Sunset": SUNSET_DATE,
+            "Warning": '299 - "v0.6 /api/files/<name> is deprecated; use /api/files/<root>/<name>"',
+            "Link": '</api/file-roots>; rel="successor-version"',
+        }
 
     def _file(self, path: Path, content_type: str):
         if not path.exists() or not path.is_file():
@@ -301,14 +315,45 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(data))
             return
 
-        # v0.6: markdown files
-        if path == "/api/files":
-            self._json({"files": forge_files.list_files()})
+        # v0.7: list file roots
+        if path == "/api/file-roots":
+            self._json({"roots": forge_files.list_file_roots()})
             return
+
+        # v0.7: list files in a root: /api/files?root=<id>  OR  /api/files (default)
+        if path == "/api/files":
+            qs = parse_qs(url.query or "")
+            rid = (qs.get("root") or [None])[0]
+            try:
+                files = forge_files.list_files(rid)
+            except forge_files.NotFoundError:
+                self._json({"error": "unknown root"}, 404)
+                return
+            root_id = rid or forge_files.default_root().id
+            self._json({"files": files, "root": root_id})
+            return
+
+        # v0.7: read with explicit root /api/files/<root>/<name>
+        m = re.match(rf"^/api/files/{ROOT_ID_ROUTE_RE}/{FILE_NAME_ROUTE_RE}$", path)
+        if m:
+            rid, name = m.group(1), m.group(2)
+            if forge_files.get_root(rid) is None:
+                self._json({"error": "unknown root"}, 404)
+                return
+            try:
+                self._json(forge_files.read_file(name, rid))
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+            except forge_files.NotFoundError:
+                self._json({"error": "not found"}, 404)
+            return
+
+        # v0.6 compat: /api/files/<name> → first root, with Deprecation header
         m = re.match(rf"^/api/files/{FILE_NAME_ROUTE_RE}$", path)
         if m:
             try:
-                self._json(forge_files.read_file(m.group(1)))
+                self._json(forge_files.read_file(m.group(1)),
+                           extra_headers=self._deprecated_v06_headers())
             except forge_files.FileNameError:
                 self._json({"error": "invalid filename"}, 400)
             except forge_files.NotFoundError:
@@ -453,7 +498,33 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(store.project_thread(tid)))
             return
 
-        # v0.6: create markdown file
+        # v0.7: create in a specific root: POST /api/files/<root>
+        m = re.match(rf"^/api/files/{ROOT_ID_ROUTE_RE}$", url.path)
+        if m:
+            rid = m.group(1)
+            if forge_files.get_root(rid) is None:
+                self._json({"error": "unknown root"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            name = (opts.get("name") or "").strip()
+            content = opts.get("content") if opts.get("content") is not None else ""
+            try:
+                meta = forge_files.create_file(name, content, rid)
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+                return
+            except forge_files.ReadOnlyError:
+                self._json({"error": "root is read-only"}, 403)
+                return
+            except forge_files.AlreadyExistsError:
+                self._json({"error": "already exists"}, 409)
+                return
+            self._json(meta, 201)
+            return
+
+        # v0.6 compat: POST /api/files → first root (with Deprecation header)
         if url.path == "/api/files":
             opts = self._read_json()
             if opts is None:
@@ -465,10 +536,13 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except forge_files.FileNameError:
                 self._json({"error": "invalid filename"}, 400)
                 return
+            except forge_files.ReadOnlyError:
+                self._json({"error": "root is read-only"}, 403)
+                return
             except forge_files.AlreadyExistsError:
                 self._json({"error": "already exists"}, 409)
                 return
-            self._json(meta, 201)
+            self._json(meta, 201, extra_headers=self._deprecated_v06_headers())
             return
 
         self.send_error(404)
@@ -478,6 +552,34 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
             return
+        # v0.7: PUT /api/files/<root>/<name>
+        m = re.match(rf"^/api/files/{ROOT_ID_ROUTE_RE}/{FILE_NAME_ROUTE_RE}$", url.path)
+        if m:
+            rid, name = m.group(1), m.group(2)
+            if forge_files.get_root(rid) is None:
+                self._json({"error": "unknown root"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            content = opts.get("content")
+            if content is None:
+                self._json({"error": "content required"}, 400)
+                return
+            try:
+                meta = forge_files.update_file(name, content, rid)
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+                return
+            except forge_files.ReadOnlyError:
+                self._json({"error": "root is read-only"}, 403)
+                return
+            except forge_files.NotFoundError:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(meta)
+            return
+        # v0.6 compat: PUT /api/files/<name> → first root, with Deprecation
         m = re.match(rf"^/api/files/{FILE_NAME_ROUTE_RE}$", url.path)
         if m:
             opts = self._read_json()
@@ -492,10 +594,13 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except forge_files.FileNameError:
                 self._json({"error": "invalid filename"}, 400)
                 return
+            except forge_files.ReadOnlyError:
+                self._json({"error": "root is read-only"}, 403)
+                return
             except forge_files.NotFoundError:
                 self._json({"error": "not found"}, 404)
                 return
-            self._json(meta)
+            self._json(meta, extra_headers=self._deprecated_v06_headers())
             return
         if url.path.startswith("/api/files/"):
             self._json({"error": "invalid filename"}, 400)

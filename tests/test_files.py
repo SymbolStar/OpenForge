@@ -153,7 +153,7 @@ def test_http_list_empty(server):
     base = server
     status, body = _call("GET", f"{base}/api/files")
     assert status == 200
-    assert body == {"files": []}
+    assert body["files"] == [] and body.get("root") == "files"
 
 
 def test_http_full_crud_cycle(server):
