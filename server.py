@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 import forge_context
 import forge_files
 import forge_refs
+import forge_session_search
 import forge_store as store
 import post_router
 
@@ -424,6 +425,30 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             d = bundle.to_dict()
             d["rendered"] = bundle.render()
             self._json(d)
+            return
+
+        # v0.9.2: GET /api/agents/<id>/session-search?q=...&days=30&max=10&scope=main
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/session-search$", path)
+        if m:
+            qs = parse_qs(url.query or "")
+            q = (qs.get("q") or qs.get("query") or [""])[0]
+            days_raw = (qs.get("days") or [str(forge_session_search.DEFAULT_DAYS)])[0]
+            max_raw = (qs.get("max") or [str(forge_session_search.DEFAULT_MAX_HITS)])[0]
+            scope = (qs.get("scope") or ["main"])[0]
+            try:
+                days = int(days_raw)
+                max_hits = int(max_raw)
+            except ValueError:
+                self._json({"error": "days/max must be integers"}, 400)
+                return
+            try:
+                result = forge_session_search.search(
+                    m.group(1), q, days=days, max_hits=max_hits, scope=scope,
+                )
+            except forge_session_search.SessionSearchError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(result)
             return
 
         self.send_error(404)
