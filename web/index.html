@@ -18,6 +18,9 @@
       <button class="icon-rail-item" type="button" data-view="files" data-enabled="1" title="Files">
         <span class="icon">📁</span><span class="label">Files</span>
       </button>
+      <button class="icon-rail-item" type="button" data-view="agents" data-enabled="1" title="Agents">
+        <span class="icon">🧑</span><span class="label">Agents</span>
+      </button>
       <button class="icon-rail-item is-dim" type="button" data-view="dms" title="DMs">
         <span class="icon">💬</span><span class="label">DMs</span>
       </button>
@@ -144,6 +147,35 @@
       </header>
       <div id="file-preview" class="markdown-body"></div>
       <textarea id="file-editor" hidden spellcheck="false" placeholder="# 在这里写 markdown…"></textarea>
+    </main>
+  </section>
+
+  <section id="agents-view" class="view-shell" hidden>
+    <aside id="agents-rail">
+      <header class="files-rail-head">
+        <span class="section-label">AGENTS</span>
+        <button id="btn-agents-refresh" type="button" class="new-squad-btn">↻</button>
+      </header>
+      <input id="agents-id-input" type="search" placeholder="输入 agent id (e.g. sherry)…" class="refs-search" />
+      <ul id="agents-list"></ul>
+      <p id="agents-empty" class="files-empty">输入 agent id 查看它的 STATUS / context bundle。</p>
+    </aside>
+    <main id="agents-pane">
+      <header id="agents-toolbar">
+        <div class="files-toolbar-info">
+          <h2 id="agent-title">选择一个 agent</h2>
+          <div id="agent-sub" class="meta"></div>
+        </div>
+        <div class="files-toolbar-actions">
+          <button id="btn-agent-bundle-refresh" type="button" class="ghost-btn" disabled>🔄 Bundle</button>
+        </div>
+      </header>
+      <div id="agent-status-card" class="markdown-body" hidden></div>
+      <details id="agent-bundle-card" class="agent-bundle" hidden>
+        <summary>🧠 Last Context Bundle</summary>
+        <pre id="agent-bundle-pre" class="agent-bundle-pre"></pre>
+      </details>
+      <p id="agent-empty" class="files-empty">从左侧输入 agent id 开始。</p>
     </main>
   </section>
 </div>

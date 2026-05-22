@@ -4,6 +4,7 @@ parallel = True
 concurrency = multiprocessing,thread
 source =
     agent_runtime
+    forge_context
     forge_refs
     forge_store
     post_router

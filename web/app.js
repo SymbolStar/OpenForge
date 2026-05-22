@@ -1309,20 +1309,33 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   function setActive(view) {
     items.forEach(it => it.classList.toggle('is-active', it.dataset.view === view));
-    if (view === 'files') {
+    const agentsView = document.getElementById('agents-view');
+    const hideAll = () => {
       homeView.hidden = true;
-      filesView.hidden = false;
-      // Initial tab load happens via routeFromHash + switchTab.
-      // Backfill workspace files if Workspace tab is active.
-      if (state.activeTab === 'workspace') loadFileList();
-    } else {
       filesView.hidden = true;
+      if (agentsView) agentsView.hidden = true;
+    };
+    if (view === 'files') {
+      hideAll();
+      filesView.hidden = false;
+      if (state.activeTab === 'workspace') loadFileList();
+    } else if (view === 'agents') {
+      hideAll();
+      if (agentsView) agentsView.hidden = false;
+    } else {
+      hideAll();
       homeView.hidden = false;
     }
   }
 
   function routeFromHash() {
     const h = location.hash || '';
+    if (h.startsWith('#/agents')) {
+      setActive('agents');
+      const m = h.match(/^#\/agents\/([A-Za-z0-9][A-Za-z0-9._\-]{0,63})$/);
+      if (m && window.__forgeAgentsSelect) window.__forgeAgentsSelect(decodeURIComponent(m[1]));
+      return;
+    }
     if (h.startsWith('#/files')) {
       setActive('files');
       // v0.8: #/files/refs/<id>
@@ -1358,11 +1371,16 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     }
   }
 
+  // Expose setActive for the agents IIFE
+  window.__forgeSetActive = setActive;
+
   items.forEach(it => {
     it.addEventListener('click', () => {
       const v = it.dataset.view;
       if (it.dataset.enabled === '1') {
-        location.hash = v === 'files' ? '#/files' : '#/squads';
+        if (v === 'files') location.hash = '#/files';
+        else if (v === 'agents') location.hash = '#/agents';
+        else location.hash = '#/squads';
       } else {
         toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
       }
@@ -1824,4 +1842,120 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   // initial routing
   loadRoots().then(() => loadRefIndex()).then(routeFromHash);
+})();
+
+/* ─── v0.9: Agents view (STATUS + context-bundle preview) ────────────────── */
+(function () {
+  const view = document.getElementById('agents-view');
+  if (!view) return;
+  const input = document.getElementById('agents-id-input');
+  const list = document.getElementById('agents-list');
+  const empty = document.getElementById('agents-empty');
+  const title = document.getElementById('agent-title');
+  const sub = document.getElementById('agent-sub');
+  const statusCard = document.getElementById('agent-status-card');
+  const bundleCard = document.getElementById('agent-bundle-card');
+  const bundlePre = document.getElementById('agent-bundle-pre');
+  const refreshBtn = document.getElementById('btn-agent-bundle-refresh');
+  const agentsRefreshBtn = document.getElementById('btn-agents-refresh');
+  const emptyMain = document.getElementById('agent-empty');
+
+  const knownAgents = new Set();
+  let current = null;
+
+  function renderList() {
+    list.innerHTML = '';
+    const ids = Array.from(knownAgents).sort();
+    if (!ids.length) {
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+    for (const id of ids) {
+      const li = document.createElement('li');
+      li.className = 'agents-item' + (id === current ? ' is-active' : '');
+      li.textContent = '🧑 ' + id;
+      li.addEventListener('click', () => { location.hash = '#/agents/' + encodeURIComponent(id); });
+      list.appendChild(li);
+    }
+  }
+
+  async function discoverAgents() {
+    try {
+      // Refs registry surfaces every agent that's ever registered a file.
+      const r = await fetch('/api/refs');
+      if (r.ok) {
+        const d = await r.json();
+        (d.refs || []).forEach(ref => {
+          if (ref.source_agent) knownAgents.add(ref.source_agent);
+        });
+      }
+    } catch (e) { /* graceful */ }
+    renderList();
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  async function selectAgent(agentId) {
+    current = agentId;
+    if (agentId) knownAgents.add(agentId);
+    renderList();
+    title.textContent = agentId ? '🧑 ' + agentId : '选择一个 agent';
+    sub.textContent = '';
+    statusCard.hidden = true;
+    bundleCard.hidden = true;
+    emptyMain.hidden = !agentId;
+    refreshBtn.disabled = !agentId;
+    if (!agentId) return;
+    // 1) STATUS
+    try {
+      const r = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/status');
+      if (r.ok) {
+        const d = await r.json();
+        const updated = new Date((d.updated_at || 0) * 1000).toLocaleString();
+        sub.textContent = '更新于 ' + updated + ' · ' + d.size + ' B';
+        statusCard.innerHTML = '<pre class="status-md">' + escapeHtml(d.content) + '</pre>';
+        statusCard.hidden = false;
+      } else if (r.status === 404) {
+        statusCard.innerHTML = '<p class="files-empty">该 agent 还没写过 STATUS.md。</p>';
+        statusCard.hidden = false;
+      }
+    } catch (e) { /* graceful */ }
+    // 2) Bundle preview
+    await refreshBundle(agentId, false);
+  }
+
+  async function refreshBundle(agentId, force) {
+    try {
+      const url = '/api/agents/' + encodeURIComponent(agentId) + '/context-bundle' + (force ? '?refresh=1' : '');
+      const r = await fetch(url);
+      if (!r.ok) return;
+      const d = await r.json();
+      bundleCard.hidden = false;
+      const gen = new Date((d.generated_at || 0) * 1000).toLocaleString();
+      const hit = d.cache_hit ? ' (cache hit)' : ' (fresh)';
+      bundlePre.textContent =
+        'generated_at: ' + gen + hit +
+        '\nsize_bytes: ' + d.size_bytes +
+        '\nsources: ' + Object.keys(d.sources || {}).join(', ') +
+        '\n\n─── rendered ───\n' + (d.rendered || '(empty)');
+    } catch (e) { /* graceful */ }
+  }
+
+  input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const v = input.value.trim();
+      if (v) location.hash = '#/agents/' + encodeURIComponent(v);
+    }
+  });
+  refreshBtn?.addEventListener('click', () => { if (current) refreshBundle(current, true); });
+  agentsRefreshBtn?.addEventListener('click', discoverAgents);
+
+  window.__forgeAgentsSelect = selectAgent;
+
+  // initial discovery
+  discoverAgents();
 })();
