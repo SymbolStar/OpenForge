@@ -44,9 +44,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
-      - run: pip install pytest
+      - run: pip install pytest coverage
       - run: chmod +x tests/fixtures/fake_openclaw.sh
-      - run: python -m pytest tests/ -v
+      - name: pytest (with coverage on 3.13)
+        env:
+          COVERAGE_PROCESS_START: ${{ github.workspace }}/.coveragerc
+        run: |
+          if [ "${{ matrix.python }}" = "3.13" ]; then
+            coverage run --rcfile=.coveragerc -m pytest tests/ -v
+            coverage combine --rcfile=.coveragerc
+            coverage report --rcfile=.coveragerc --fail-under=80
+            coverage xml --rcfile=.coveragerc -o coverage.xml || true
+          else
+            python -m pytest tests/ -v
+          fi
+      - name: Upload coverage artifact
+        if: matrix.python == '3.13' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            .coverage
+          if-no-files-found: ignore
 
   smoke:
     name: server boot smoke
