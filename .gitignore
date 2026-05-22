@@ -10,3 +10,7 @@ __pycache__/
 htmlcov/
 coverage.xml
 
+# Internal docs (PRDs, case studies, etc.) — kept local, not pushed to public main
+docs/
+
+
