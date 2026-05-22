@@ -170,6 +170,18 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/refs/$REF_ID)" = "404" && echo "refs-404-after-delete OK"
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/refs/$REF_ID/content)" = "404" && echo "refs-content-404 OK"
 
+          # v0.9 agent STATUS + context-bundle
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/agents/sherry/status)" = "404" && echo "v09-status-404-empty OK"
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"content":"# Sherry STATUS\n\n## current\n日报 16:35 已入箱\n"}' \
+            http://127.0.0.1:17878/api/agents/sherry/status | python -c 'import json,sys; d=json.load(sys.stdin); assert d["agent"]=="sherry" and d["size"]>0, d; print("v09-status-post OK")'
+          curl -sf http://127.0.0.1:17878/api/agents/sherry/status | python -c 'import json,sys; d=json.load(sys.stdin); assert "16:35" in d["content"], d; print("v09-status-get OK")'
+          curl -sf -X PATCH -H "Content-Type: application/json" \
+            -d '{"section":"current","content":"已入箱 ✅"}' \
+            http://127.0.0.1:17878/api/agents/sherry/status | python -c 'import json,sys; d=json.load(sys.stdin); assert d["agent"]=="sherry", d; print("v09-status-patch OK")'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{"section":"nope","content":"x"}' http://127.0.0.1:17878/api/agents/sherry/status)" = "404" && echo "v09-patch-404 OK"
+          curl -sf "http://127.0.0.1:17878/api/agents/sherry/context-bundle?refresh=1" | python -c 'import json,sys; d=json.load(sys.stdin); assert "status" in d["sources"] and d["rendered"], d; print("v09-bundle OK", d["size_bytes"])'
+
           kill $SERVER_PID 2>/dev/null || true
           cat /tmp/server.log
           echo "--- server2 ---"
