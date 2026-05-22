@@ -182,6 +182,18 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{"section":"nope","content":"x"}' http://127.0.0.1:17878/api/agents/sherry/status)" = "404" && echo "v09-patch-404 OK"
           curl -sf "http://127.0.0.1:17878/api/agents/sherry/context-bundle?refresh=1" | python -c 'import json,sys; d=json.load(sys.stdin); assert "status" in d["sources"] and d["rendered"], d; print("v09-bundle OK", d["size_bytes"])'
 
+          # v0.9.2 session-search
+          # Seed a fake jsonl history under HOME/.openclaw/agents/sherry/sessions/
+          mkdir -p "$HOME/.openclaw/agents/sherry/sessions"
+          python -c "import json,os,time; from datetime import datetime,timezone; iso=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'); line=json.dumps({'type':'message','timestamp':iso,'message':{'role':'assistant','content':[{'type':'text','text':'mustafa email archive completed in v092 smoke'}]}}); open(os.path.expanduser('~/.openclaw/agents/sherry/sessions/main-smoke.jsonl'),'w').write(line+'\n')"
+          curl -sf "http://127.0.0.1:17878/api/agents/sherry/session-search?q=mustafa&days=30" | python -c 'import json,sys; d=json.load(sys.stdin); assert d["agent"]=="sherry" and d["total_hits"]>=1 and d["scope"]=="main", d; assert d["hits"][0]["session_id"]=="main-smoke", d; print("v092-session-search OK", d["total_hits"], "hits")'
+          # scope=forge → no hits (no forge-* file)
+          curl -sf "http://127.0.0.1:17878/api/agents/sherry/session-search?q=mustafa&scope=forge" | python -c 'import json,sys; d=json.load(sys.stdin); assert d["total_hits"]==0 and d["scope"]=="forge", d; print("v092-session-search-forge-empty OK")'
+          # validation: empty q / bad days / bad scope → 400
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:17878/api/agents/sherry/session-search?q=')" = "400" && echo "v092-empty-q-400 OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:17878/api/agents/sherry/session-search?q=x&days=bogus')" = "400" && echo "v092-bad-days-400 OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:17878/api/agents/sherry/session-search?q=x&scope=lol')" = "400" && echo "v092-bad-scope-400 OK"
+
           kill $SERVER_PID 2>/dev/null || true
           cat /tmp/server.log
           echo "--- server2 ---"
