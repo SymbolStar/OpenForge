@@ -49,6 +49,9 @@ button { cursor: pointer; }
 #files-view {
   grid-template-columns: var(--w-files, 280px) minmax(0, 1fr);
 }
+#agents-view {
+  grid-template-columns: var(--w-agents, 260px) minmax(0, 1fr);
+}
 #app > .view-shell[hidden] { display: none; }
 
 /* ─── icon rail (leftmost, v0.6) ────────────────────────────── */
@@ -1287,14 +1290,16 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 }
 
 /* ─── v0.9 Agents view ─────────────────────────────────────────────── */
-#agents-view { display: flex; height: 100%; }
+/* NOTE: layout (display: grid + columns) is defined above next to #files-view
+   so specificity matches `#app > .view-shell`. */
 #agents-rail {
-  width: 260px;
   border-right: 1px solid var(--border, #2a2a2a);
   display: flex;
   flex-direction: column;
   padding: 0;
   background: var(--rail-bg, #1a1a1a);
+  min-width: 0;
+  overflow: hidden;
 }
 #agents-rail .files-rail-head {
   padding: 12px 12px 6px;
@@ -1322,11 +1327,20 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   border-left-color: var(--accent, #4a9eff);
 }
 #agents-pane {
-  flex: 1;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
   padding: 16px 24px;
+  min-width: 0;
+  min-height: 0;
+}
+#agent-status-card.markdown-body {
+  /* let the long STATUS markdown breathe; pane handles the scroll. */
+  flex: 0 0 auto;
+}
+#agent-status-card.markdown-body pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 #agents-toolbar {
   display: flex;
