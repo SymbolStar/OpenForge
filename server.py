@@ -45,8 +45,11 @@ ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
+import forge_files
 import forge_store as store
 import post_router
+
+FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_-]+\.md)"
 
 SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
@@ -298,6 +301,24 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(data))
             return
 
+        # v0.6: markdown files
+        if path == "/api/files":
+            self._json({"files": forge_files.list_files()})
+            return
+        m = re.match(rf"^/api/files/{FILE_NAME_ROUTE_RE}$", path)
+        if m:
+            try:
+                self._json(forge_files.read_file(m.group(1)))
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+            except forge_files.NotFoundError:
+                self._json({"error": "not found"}, 404)
+            return
+        # invalid filename inside /api/files/<...> → 400 (not 404) per PRD
+        if path.startswith("/api/files/"):
+            self._json({"error": "invalid filename"}, 400)
+            return
+
         self.send_error(404)
 
     def do_POST(self):
@@ -432,6 +453,53 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(store.project_thread(tid)))
             return
 
+        # v0.6: create markdown file
+        if url.path == "/api/files":
+            opts = self._read_json()
+            if opts is None:
+                return
+            name = (opts.get("name") or "").strip()
+            content = opts.get("content") if opts.get("content") is not None else ""
+            try:
+                meta = forge_files.create_file(name, content)
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+                return
+            except forge_files.AlreadyExistsError:
+                self._json({"error": "already exists"}, 409)
+                return
+            self._json(meta, 201)
+            return
+
+        self.send_error(404)
+
+    def do_PUT(self):
+        url = urlparse(self.path)
+        if not self._check_auth():
+            self.send_error(401, "auth required for non-local host")
+            return
+        m = re.match(rf"^/api/files/{FILE_NAME_ROUTE_RE}$", url.path)
+        if m:
+            opts = self._read_json()
+            if opts is None:
+                return
+            content = opts.get("content")
+            if content is None:
+                self._json({"error": "content required"}, 400)
+                return
+            try:
+                meta = forge_files.update_file(m.group(1), content)
+            except forge_files.FileNameError:
+                self._json({"error": "invalid filename"}, 400)
+                return
+            except forge_files.NotFoundError:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(meta)
+            return
+        if url.path.startswith("/api/files/"):
+            self._json({"error": "invalid filename"}, 400)
+            return
         self.send_error(404)
 
     def do_PATCH(self):

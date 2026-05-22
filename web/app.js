@@ -1150,3 +1150,260 @@ document.querySelectorAll('.col-gutter').forEach(wireGutter);
 
 buildMemberControls();
 loadSquads().then(() => { refreshAgentList(); startPolling(); });
+
+/* ─── v0.6: icon-rail routing + Files view ─────────────────────────────── */
+(function () {
+  const homeView = document.getElementById('home-view');
+  const filesView = document.getElementById('files-view');
+  const items = Array.from(document.querySelectorAll('.icon-rail-item'));
+  const toastEl = document.getElementById('toast');
+
+  function toast(msg) {
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { toastEl.hidden = true; }, 1800);
+  }
+
+  function setActive(view) {
+    items.forEach(it => it.classList.toggle('is-active', it.dataset.view === view));
+    if (view === 'files') {
+      homeView.hidden = true;
+      filesView.hidden = false;
+      loadFileList();
+    } else {
+      filesView.hidden = true;
+      homeView.hidden = false;
+    }
+  }
+
+  function routeFromHash() {
+    const h = location.hash || '';
+    if (h.startsWith('#/files')) {
+      setActive('files');
+      const m = h.match(/^#\/files\/([A-Za-z0-9_-]+\.md)$/);
+      if (m) selectFile(m[1]);
+    } else {
+      setActive('home');
+    }
+  }
+
+  items.forEach(it => {
+    it.addEventListener('click', () => {
+      const v = it.dataset.view;
+      if (it.dataset.enabled === '1') {
+        location.hash = v === 'files' ? '#/files' : '#/squads';
+      } else {
+        toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
+      }
+    });
+  });
+  window.addEventListener('hashchange', routeFromHash);
+
+  /* ── files state ── */
+  const state = {
+    files: [],
+    current: null,        // filename string
+    content: '',
+    dirty: false,
+    mode: 'preview',      // 'preview' | 'edit'
+  };
+
+  const listEl = document.getElementById('file-list');
+  const emptyEl = document.getElementById('file-list-empty');
+  const titleEl = document.getElementById('file-title');
+  const subEl = document.getElementById('file-sub');
+  const previewEl = document.getElementById('file-preview');
+  const editorEl = document.getElementById('file-editor');
+  const btnToggle = document.getElementById('btn-toggle-edit');
+  const btnSave = document.getElementById('btn-save-file');
+  const btnNew = document.getElementById('btn-new-file');
+
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString();
+  }
+  function fmtSize(n) {
+    if (n < 1024) return n + ' B';
+    return (n / 1024).toFixed(1) + ' KB';
+  }
+
+  async function loadFileList() {
+    try {
+      const r = await fetch('/api/files');
+      const data = await r.json();
+      state.files = data.files || [];
+      renderList();
+      if (state.current && !state.files.find(f => f.name === state.current)) {
+        clearSelection();
+      }
+    } catch (e) {
+      toast('加载文件失败');
+    }
+  }
+
+  function renderList() {
+    listEl.innerHTML = '';
+    if (!state.files.length) {
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    for (const f of state.files) {
+      const li = document.createElement('li');
+      li.textContent = f.name.replace(/\.md$/, '');
+      li.title = `${f.name} · ${fmtSize(f.size)} · ${fmtTime(f.mtime)}`;
+      li.dataset.name = f.name;
+      if (f.name === state.current) li.classList.add('is-active');
+      li.addEventListener('click', () => {
+        if (state.dirty && !confirm('当前文件未保存，切换会丢失改动。继续？')) return;
+        location.hash = '#/files/' + f.name;
+      });
+      listEl.appendChild(li);
+    }
+  }
+
+  function clearSelection() {
+    state.current = null;
+    state.content = '';
+    state.dirty = false;
+    state.mode = 'preview';
+    titleEl.textContent = '选择一个文件';
+    subEl.textContent = '';
+    previewEl.innerHTML = '';
+    editorEl.value = '';
+    editorEl.hidden = true;
+    previewEl.hidden = false;
+    btnToggle.disabled = true;
+    btnToggle.textContent = '编辑';
+    btnSave.hidden = true;
+    btnSave.disabled = true;
+  }
+
+  async function selectFile(name) {
+    try {
+      const r = await fetch('/api/files/' + encodeURIComponent(name));
+      if (!r.ok) { toast('打开失败 ' + r.status); return; }
+      const data = await r.json();
+      state.current = name;
+      state.content = data.content || '';
+      state.dirty = false;
+      state.mode = 'preview';
+      titleEl.textContent = name;
+      subEl.textContent = `${fmtSize(data.size)} · 修改于 ${fmtTime(data.mtime)}`;
+      editorEl.value = state.content;
+      renderPreview();
+      setMode('preview');
+      btnToggle.disabled = false;
+      renderList();
+    } catch (e) {
+      toast('加载文件失败');
+    }
+  }
+
+  function renderPreview() {
+    if (typeof marked !== 'undefined' && marked.parse) {
+      previewEl.innerHTML = marked.parse(state.content || '');
+    } else {
+      previewEl.textContent = state.content || '';
+    }
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    if (mode === 'edit') {
+      previewEl.hidden = true;
+      editorEl.hidden = false;
+      btnToggle.textContent = '预览';
+      btnSave.hidden = false;
+      btnSave.disabled = !state.dirty;
+      editorEl.focus();
+    } else {
+      editorEl.hidden = true;
+      previewEl.hidden = false;
+      btnToggle.textContent = '编辑';
+      btnSave.hidden = true;
+    }
+  }
+
+  btnToggle.addEventListener('click', () => {
+    if (!state.current) return;
+    setMode(state.mode === 'preview' ? 'edit' : 'preview');
+  });
+
+  editorEl.addEventListener('input', () => {
+    state.content = editorEl.value;
+    state.dirty = true;
+    btnSave.disabled = false;
+    renderPreview();
+  });
+
+  async function saveCurrent() {
+    if (!state.current || !state.dirty) return;
+    btnSave.disabled = true;
+    try {
+      const r = await fetch('/api/files/' + encodeURIComponent(state.current), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: state.content }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        toast('保存失败 ' + r.status + ' ' + (err.error || ''));
+        btnSave.disabled = false;
+        return;
+      }
+      const meta = await r.json();
+      state.dirty = false;
+      subEl.textContent = `${fmtSize(meta.size)} · 修改于 ${fmtTime(meta.mtime)}`;
+      toast('已保存');
+      setMode('preview');
+      loadFileList();
+    } catch (e) {
+      toast('保存失败');
+      btnSave.disabled = false;
+    }
+  }
+  btnSave.addEventListener('click', saveCurrent);
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's' && !filesView.hidden && state.mode === 'edit') {
+      e.preventDefault();
+      saveCurrent();
+    }
+  });
+
+  window.addEventListener('beforeunload', (e) => {
+    if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  btnNew.addEventListener('click', async () => {
+    let name = prompt('新文件名（必须以 .md 结尾，只能是字母数字 _ -）：', 'untitled.md');
+    if (!name) return;
+    name = name.trim();
+    if (!/^[A-Za-z0-9_-]+\.md$/.test(name)) {
+      toast('文件名非法');
+      return;
+    }
+    try {
+      const r = await fetch('/api/files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, content: '' }),
+      });
+      if (r.status === 409) { toast('已存在同名文件'); return; }
+      if (!r.ok) { toast('创建失败 ' + r.status); return; }
+      await loadFileList();
+      location.hash = '#/files/' + name;
+      // open in edit mode by default
+      setTimeout(() => setMode('edit'), 50);
+    } catch (e) {
+      toast('创建失败');
+    }
+  });
+
+  // initial routing
+  routeFromHash();
+})();

@@ -86,5 +86,20 @@ jobs:
           # detail
           curl -sf http://127.0.0.1:17878/api/threads/$TID | python -c 'import json,sys; d=json.load(sys.stdin); assert d["post_count"]==2, d; print("OK", d["post_count"], "posts")'
 
+          # v0.6 files API smoke (no @ content; router stays out)
+          curl -sf http://127.0.0.1:17878/api/files | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("files")==[], d; print("files-empty OK")'
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"name":"smoke.md","content":"# smoke\n"}' \
+            http://127.0.0.1:17878/api/files | python -c 'import json,sys; d=json.load(sys.stdin); assert d["name"]=="smoke.md" and d["size"]==len(b"# smoke\n"), d; print("files-create OK")'
+          curl -sf http://127.0.0.1:17878/api/files | python -c 'import json,sys; d=json.load(sys.stdin); assert [f["name"] for f in d["files"]]==["smoke.md"], d; print("files-list OK")'
+          curl -sf -X PUT -H "Content-Type: application/json" \
+            -d '{"content":"updated body"}' \
+            http://127.0.0.1:17878/api/files/smoke.md | python -c 'import json,sys; d=json.load(sys.stdin); assert d["size"]==len(b"updated body"), d; print("files-put OK")'
+          curl -sf http://127.0.0.1:17878/api/files/smoke.md | python -c 'import json,sys; d=json.load(sys.stdin); assert d["content"]=="updated body", d; print("files-read OK")'
+          # negative cases
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/files/missing.md)" = "404" && echo "files-404 OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"../etc/passwd"}' http://127.0.0.1:17878/api/files)" = "400" && echo "files-400 OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"smoke.md"}' http://127.0.0.1:17878/api/files)" = "409" && echo "files-409 OK"
+
           kill $SERVER_PID 2>/dev/null || true
           cat /tmp/server.log

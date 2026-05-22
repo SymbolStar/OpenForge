@@ -5,9 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>OpenForge · Multi-Agent Topic Tracker</title>
 <link rel="stylesheet" href="/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 <div id="app">
+  <nav id="icon-rail" aria-label="主导航">
+    <div class="icon-rail-top">
+      <div class="icon-rail-logo" title="OpenForge">🔨</div>
+      <button class="icon-rail-item is-active" type="button" data-view="home" data-enabled="1" title="Home">
+        <span class="icon">🏠</span><span class="label">Home</span>
+      </button>
+      <button class="icon-rail-item" type="button" data-view="files" data-enabled="1" title="Files">
+        <span class="icon">📁</span><span class="label">Files</span>
+      </button>
+      <button class="icon-rail-item is-dim" type="button" data-view="dms" title="DMs">
+        <span class="icon">💬</span><span class="label">DMs</span>
+      </button>
+      <button class="icon-rail-item is-dim" type="button" data-view="activity" title="Activity">
+        <span class="icon">🔔</span><span class="label">Activity</span>
+      </button>
+      <button class="icon-rail-item is-dim" type="button" data-view="later" title="Later">
+        <span class="icon">🔖</span><span class="label">Later</span>
+      </button>
+      <button class="icon-rail-item is-dim" type="button" data-view="more" title="More">
+        <span class="icon">⋯</span><span class="label">More</span>
+      </button>
+    </div>
+  </nav>
+
+  <div id="home-view" class="view-shell">
   <aside id="squad-rail">
     <div class="brand">
       <div class="brand-title">OpenForge <span>🔨</span></div>
@@ -79,6 +105,32 @@
       <button id="btn-send-post" type="button" disabled>发送</button>
     </footer>
   </main>
+  </div><!-- /#home-view -->
+
+  <section id="files-view" class="view-shell" hidden>
+    <aside id="files-rail">
+      <header class="files-rail-head">
+        <span class="section-label">FILES</span>
+        <button id="btn-new-file" type="button" class="new-squad-btn">+ 新建</button>
+      </header>
+      <ul id="file-list"></ul>
+      <p id="file-list-empty" class="files-empty" hidden>还没有 md 文件，点上面 <b>+ 新建</b> 一个吧。</p>
+    </aside>
+    <main id="files-pane">
+      <header id="files-toolbar">
+        <div class="files-toolbar-info">
+          <h2 id="file-title">选择一个文件</h2>
+          <div id="file-sub" class="meta"></div>
+        </div>
+        <div class="files-toolbar-actions">
+          <button id="btn-toggle-edit" type="button" class="ghost-btn" disabled>编辑</button>
+          <button id="btn-save-file" type="button" class="ghost-btn" hidden disabled>保存</button>
+        </div>
+      </header>
+      <div id="file-preview" class="markdown-body"></div>
+      <textarea id="file-editor" hidden spellcheck="false" placeholder="# 在这里写 markdown…"></textarea>
+    </main>
+  </section>
 </div>
 
 <div id="squad-modal" class="modal-backdrop" aria-hidden="true">
@@ -162,6 +214,8 @@
     </form>
   </div>
 </div>
+
+<div id="toast" class="toast" hidden></div>
 
 <script src="/app.js"></script>
 </body>
