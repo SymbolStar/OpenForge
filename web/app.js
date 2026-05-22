@@ -1863,6 +1863,15 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   const knownAgents = new Set();
   let current = null;
 
+  function normalizeId(s) {
+    return String(s || '').trim().toLowerCase();
+  }
+
+  function addAgent(id) {
+    const n = normalizeId(id);
+    if (n) knownAgents.add(n);
+  }
+
   function renderList() {
     list.innerHTML = '';
     const ids = Array.from(knownAgents).sort();
@@ -1881,14 +1890,20 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   }
 
   async function discoverAgents() {
+    // Primary source: /api/agents (union of squad members + ~/.openclaw/agents/*).
+    // Falls back to /api/refs source_agent if the new endpoint is missing.
     try {
-      // Refs registry surfaces every agent that's ever registered a file.
+      const r = await fetch('/api/agents');
+      if (r.ok) {
+        const d = await r.json();
+        if (Array.isArray(d)) d.forEach(addAgent);
+      }
+    } catch (e) { /* graceful */ }
+    try {
       const r = await fetch('/api/refs');
       if (r.ok) {
         const d = await r.json();
-        (d.refs || []).forEach(ref => {
-          if (ref.source_agent) knownAgents.add(ref.source_agent);
-        });
+        (d.refs || []).forEach(ref => { if (ref.source_agent) addAgent(ref.source_agent); });
       }
     } catch (e) { /* graceful */ }
     renderList();
@@ -1900,24 +1915,29 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   }
 
   async function selectAgent(agentId) {
-    current = agentId;
-    if (agentId) knownAgents.add(agentId);
+    current = normalizeId(agentId);
+    if (current) addAgent(current);
     renderList();
-    title.textContent = agentId ? '🧑 ' + agentId : '选择一个 agent';
+    title.textContent = current ? '🧑 ' + current : '选择一个 agent';
     sub.textContent = '';
     statusCard.hidden = true;
     bundleCard.hidden = true;
-    emptyMain.hidden = !agentId;
-    refreshBtn.disabled = !agentId;
-    if (!agentId) return;
-    // 1) STATUS
+    emptyMain.hidden = !current;
+    refreshBtn.disabled = !current;
+    if (!current) return;
+    // 1) STATUS — render as markdown (mirrors Files view's preview).
     try {
-      const r = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/status');
+      const r = await fetch('/api/agents/' + encodeURIComponent(current) + '/status');
       if (r.ok) {
         const d = await r.json();
         const updated = new Date((d.updated_at || 0) * 1000).toLocaleString();
         sub.textContent = '更新于 ' + updated + ' · ' + d.size + ' B';
-        statusCard.innerHTML = '<pre class="status-md">' + escapeHtml(d.content) + '</pre>';
+        const md = d.content || '';
+        if (typeof marked !== 'undefined' && marked.parse) {
+          statusCard.innerHTML = marked.parse(md);
+        } else {
+          statusCard.textContent = md;
+        }
         statusCard.hidden = false;
       } else if (r.status === 404) {
         statusCard.innerHTML = '<p class="files-empty">该 agent 还没写过 STATUS.md。</p>';
@@ -1925,7 +1945,7 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
       }
     } catch (e) { /* graceful */ }
     // 2) Bundle preview
-    await refreshBundle(agentId, false);
+    await refreshBundle(current, false);
   }
 
   async function refreshBundle(agentId, force) {
@@ -1947,7 +1967,7 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   input?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      const v = input.value.trim();
+      const v = normalizeId(input.value);
       if (v) location.hash = '#/agents/' + encodeURIComponent(v);
     }
   });
