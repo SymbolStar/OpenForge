@@ -293,6 +293,14 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"- 你的回复会被独立保存为这条 thread 的一条新 post\n"
         f"- 直接针对 scott 的最新 post 回应，不要复述之前的内容\n"
         f"- 如果 scott 的问题已经被回答过或不需要你回答，回复 `completed`\n"
+        f"\n"
+        f"[文件引用语法 v0.7]\n"
+        f"如果你需要让 scott 看某个 Markdown 文件，可以在回复里嵌入文件链接：\n"
+        f"- `[[name.md]]`              → 默认根目录下的文件\n"
+        f"- `[[docs/PRD.md]]`          → 指定 root id（如 docs / files / readme）\n"
+        f"- `[[docs/PRD.md|这份 PRD]]` → 自定义显示文本\n"
+        f"前端会自动渲染为 📄 可点 chip；不要手动拼 URL。"
+        f"只在有明确文件可指时使用，不要凭空推测文件名。\n"
     )
 
 
