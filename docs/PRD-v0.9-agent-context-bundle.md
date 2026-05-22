@@ -35,7 +35,15 @@ Scott @sherry 在 OpenForge thread 里问「日报做完了吗」→ 子 session
 让 OpenForge spawn 的 sherry 子 session 一启动就**自动具备**：
 1. Sherry **自己当前在做什么**（STATUS.md）
 2. Sherry **主 session 最近的活动摘要**（去重，避免重复劳动）
-3. Sherry **沉淀过的相关记忆**（memory_search）
+
+> ⚠️ **关于 memory（2026-05-22 修订）**：原计划三源注入（+ memory_search top K），讨论后改为**两源**。
+>
+> 原因：OpenClaw memory 是「**ask-on-demand 仓库**」设计 — agent 在 turn 里主动 `memory_search(query=...)` 才准。由 OpenForge 预查会遇到：
+> 1. **query 不准**：用 thread 主题做 query 与用户真正要问的可能偏，召回不相关 → 浪费 token
+> 2. **与设计哲学冲突**：Letta / Anthropic / OpenClaw 都偏「memory = on-demand」，不是 always-loaded context
+> 3. **交给 agent 自己查更准**：system prompt 提示「需要历史细节时主动调 memory_search」
+>
+> **所以 v0.9 bundle = STATUS + main_session 两源**，memory 交给 agent 自己在 turn 里按需查。
 
 实现路径借鉴：
 - Letta 的「core memory 永远注入」
@@ -47,13 +55,15 @@ Scott @sherry 在 OpenForge thread 里问「日报做完了吗」→ 子 session
 
 ### ✅ In scope
 1. **STATUS.md 标准化**：约定文件位置、schema、写入接口
-2. **Context Bundle 自动注入**：OpenForge spawn 子 session 时拼三源 context 注入 task message
-3. **`update_status` 工具**：给 agent 主动维护 STATUS.md 的 CLI / HTTP 接口
+2. **Context Bundle 自动注入**：OpenForge spawn 子 session 时拼**两源** context（STATUS + main_session）注入 task message
+3. **`update_status` 接口**：给 agent 主动维护 STATUS.md 的 HTTP 接口
+7. **提示 agent 按需查 memory**：system prompt 明确告诉 agent「需要历史细节调 memory_search」
 4. **主 session 识别**：每个 agent 配 `mainSessionKey`，可被 sessions_history 拉取
 5. **可配置策略**：每个 agent 自定义注入哪些源、截断多长
 6. **Bundle 缓存**：短时间内复用 bundle 避免反复查
 
 ### ❌ Out of scope
+- **预查 memory 并注入 bundle** — 原因见 §2，memory 由 agent 在 turn 内按需查
 - 双向状态同步（child → main 回流）—— v1.0
 - 跨 agent 状态共享（sherry 知道 milk 在干啥）—— v1.0
 - Memory hierarchical paging（Letta 路线）—— 不需要，文件够用
@@ -111,9 +121,8 @@ Scott @sherry 在 OpenForge thread 里问「日报做完了吗」→ 子 session
       "mainSessionKey": "agent:sherry:main",
       "contextBundle": {
         "enabled": true,
-        "include": ["status", "main_session", "memory"],
+        "include": ["status", "main_session"],
         "main_session_turns": 20,
-        "memory_top_k": 5,
         "status_max_bytes": 4096,
         "main_session_max_bytes": 8192,
         "cache_ttl_seconds": 60
@@ -128,9 +137,8 @@ Scott @sherry 在 OpenForge thread 里问「日报做完了吗」→ 子 session
 ```
 
 默认值（agent 没配置时）：
-- `include`: `["status", "main_session", "memory"]`
+- `include`: `["status", "main_session"]`
 - `main_session_turns`: 20
-- `memory_top_k`: 5
 - 各 size cap：合理默认
 - `cache_ttl_seconds`: 60
 

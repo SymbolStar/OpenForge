@@ -1,11 +1,20 @@
 """OpenForge v0.9 — Agent Context Bundle.
 
-Assemble three context sources for an agent's spawned (child) session so it
-starts with the same situational awareness as its main session:
+Assemble context sources for an agent's spawned (child) session so it starts
+with the same situational awareness as its main session.
+
+v0.9.1 (2026-05-22): default sources reduced from 3 → 2:
 
   1. STATUS.md  — agent-curated "what I'm doing right now"
   2. main_session — last N turns from agent:<id>:main jsonl
-  3. memory — top K hits from `openclaw memory search`
+
+`memory` is intentionally **not** pre-fetched by OpenForge. Memory is an
+ask-on-demand store — the agent itself should call `memory_search(query=...)`
+inside its turn when it needs historical detail (better query targeting, no
+wasted tokens on irrelevant recall). See PRD §2 for rationale.
+
+`collect_memory()` is kept for back-compat / debugging — passing
+`include=["memory", ...]` explicitly still works.
 
 All sources fail soft: any one source raising / timing out / being empty is
 skipped silently, the bundle still ships.
@@ -36,7 +45,10 @@ from pathlib import Path
 
 DEFAULT_BUNDLE_CONFIG = {
     "enabled": True,
-    "include": ["status", "main_session", "memory"],
+    # v0.9.1: memory dropped from defaults — agent fetches on demand.
+    # `collect_memory()` and the "memory" branch are still wired up so a caller
+    # can opt back in with include=["status", "main_session", "memory"].
+    "include": ["status", "main_session"],
     "main_session_turns": 20,
     "memory_top_k": 5,
     "status_max_bytes": 4096,
@@ -592,7 +604,11 @@ def build_context_bundle(
     query_hint: str | None = None,
     force_refresh: bool = False,
 ) -> ContextBundle:
-    """Assemble the three-source bundle for `agent_id`.
+    """Assemble the context bundle for `agent_id`.
+
+    By default this is a 2-source bundle (STATUS + main_session). The `memory`
+    branch is still honored if explicitly opted into via
+    `include=["...", "memory"]` in agent config.
 
     Returns a ContextBundle (possibly empty) — never raises for missing sources.
     """
