@@ -1,6 +1,11 @@
 // OpenForge web app — squad / thread / posts, vanilla JS, Slack-shaped.
 
+// Legacy hardcoded list — kept ONLY as fallback for AGENT_COLOR_CLASS (avatar colours).
+// The squad-modal member list is built dynamically from /api/agents (see buildMemberControls).
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
+// Runtime / LLM CLI profiles that live under ~/.openclaw/agents/* but are NOT
+// real employees (no SOUL.md, not selectable as squad members).
+const NON_EMPLOYEE_AGENTS = new Set(['codex', 'claude-code', 'claude', 'main', 'designer']);
 const POLL_MS = 8000;
 let showArchivedSquads = false;
 
@@ -830,7 +835,7 @@ async function closeCurrentThread() {
 let modalMode = 'create';
 let editingSquadId = null;
 
-function openModal() {
+async function openModal() {
   modalMode = 'create';
   editingSquadId = null;
   els.form.reset();
@@ -840,6 +845,7 @@ function openModal() {
   els.btnDeleteSquad.hidden = true;
   const archiveRow = document.getElementById('squad-archive-row');
   if (archiveRow) archiveRow.hidden = true;
+  await buildMemberControls();
   [...els.memberCheckboxes.querySelectorAll('input')].forEach((input, idx) => {
     input.checked = idx === 0;
   });
@@ -849,7 +855,7 @@ function openModal() {
   els.form.elements.id.focus();
 }
 
-function openEditModal(squad) {
+async function openEditModal(squad) {
   modalMode = 'edit';
   editingSquadId = squad.id;
   els.form.reset();
@@ -862,7 +868,21 @@ function openEditModal(squad) {
   if (els.form.elements.name) els.form.elements.name.value = squad.name || '';
   if (els.form.elements.description) els.form.elements.description.value = squad.description || '';
   if (els.form.elements.emoji) els.form.elements.emoji.value = squad.emoji || '';
+  await buildMemberControls();
+  // Make sure existing members are present as checkboxes even if /api/agents
+  // didn't surface them (e.g. transient fetch failure or stale agent dir).
   const members = new Set(squad.members || []);
+  const known = new Set(
+    [...els.memberCheckboxes.querySelectorAll('input')].map(i => i.value)
+  );
+  members.forEach(m => {
+    if (!known.has(m) && !NON_EMPLOYEE_AGENTS.has(m)) {
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" name="members" value="${m}" /> ${m}`;
+      label.querySelector('input').onchange = syncChairOptions;
+      els.memberCheckboxes.appendChild(label);
+    }
+  });
   [...els.memberCheckboxes.querySelectorAll('input')].forEach(input => {
     input.checked = members.has(input.value);
   });
@@ -894,9 +914,23 @@ function syncChairOptions() {
   });
 }
 
-function buildMemberControls() {
+// Build the squad-modal member checkboxes from the live /api/agents list,
+// filtering out runtime/LLM-CLI profiles (codex, claude-code, ...).
+// Falls back to the legacy hardcoded AGENTS list if the fetch fails.
+async function buildMemberControls() {
+  let agents = null;
+  try {
+    const res = await fetch('/api/agents');
+    if (res.ok) agents = await res.json();
+  } catch (e) { /* network error — fall back below */ }
+  if (!Array.isArray(agents) || agents.length === 0) {
+    agents = AGENTS.slice();
+  }
+  const list = agents
+    .filter(a => typeof a === 'string' && a && !NON_EMPLOYEE_AGENTS.has(a))
+    .sort();
   els.memberCheckboxes.innerHTML = '';
-  AGENTS.forEach(agent => {
+  list.forEach(agent => {
     const label = document.createElement('label');
     label.innerHTML = `<input type="checkbox" name="members" value="${agent}" /> ${agent}`;
     label.querySelector('input').onchange = syncChairOptions;

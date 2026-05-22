@@ -777,7 +777,7 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   border-radius: 6px;
 }
 #squad-form legend { padding: 0 6px; font-weight: 700; }
-.checkbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.checkbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 240px; overflow-y: auto; }
 .checkbox-grid label { display: flex !important; gap: 8px; align-items: center; font-weight: 400 !important; }
 .checkbox-grid input { width: auto !important; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
