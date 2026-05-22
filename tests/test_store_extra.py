@@ -99,11 +99,14 @@ def test_thread_id_validation(store):
 
 
 def test_list_threads_for_squad_sorted(store):
+    import time as _t
     store.ensure_default_squads()
     store.create_squad({"id": "sq", "name": "sq", "members": ["m"], "chair": "m"})
     t1 = store.create_thread("sq", "scott", "first")
+    _t.sleep(0.02)  # ensure t2 timestamp > t1
     t2 = store.create_thread("sq", "scott", "second")
-    # bump t1 with a later post so it should sort first
+    _t.sleep(0.02)
+    # bump t1 with a later post so it should sort first by last_post_at
     store.add_thread_post(t1["thread_id"], "scott", "bump")
     items = store.list_threads_for_squad("sq")
     assert [i["thread_id"] for i in items] == [t1["thread_id"], t2["thread_id"]]
@@ -125,13 +128,10 @@ def test_render_and_write_thread_markdown(store, tmp_path):
 
     # empty thread (no events) → empty render + file removed
     assert store.render_thread_markdown("th_dead_beef") == ""
-    # touch the file then call write — should unlink
-    fake = store.thread_md_path(t["thread_id"])
-    # simulate empty by removing the events file? simpler: project a fresh tid
-    # with no events
+    # write_thread_markdown on an empty/missing thread should not crash;
+    # the file should not exist.
     nonexistent = "th_aaaa_bbbb"
     p = store.write_thread_markdown(nonexistent)
-    # path doesn't matter; what matters is no crash
     assert not p.exists()
 
 

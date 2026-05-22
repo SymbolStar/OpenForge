@@ -1,4 +1,5 @@
 """End-to-end HTTP smoke test: boot server, hit API, assert behaviour."""
+# ruff: noqa: F811  (pytest fixture re-export shadows the import)
 from __future__ import annotations
 
 import json

@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_server import _get, _post  # noqa: E402
 from tests.conftest import _free_port, _wait_up  # noqa: E402
+from tests.test_server import _get, _post  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
