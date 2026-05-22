@@ -501,6 +501,25 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .thread-by { font-weight: 600; color: var(--text-mute); }
 .thread-time { margin-left: auto; }
 
+/* Closed threads: muted + sunk to the bottom (sorting in JS). */
+.thread-item--closed { opacity: 0.55; }
+.thread-item--closed:hover { opacity: 1; }
+.thread-item--closed .thread-preview { color: var(--text-mute); }
+.thread-closed-chip {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+.thread-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  padding: 8px 14px 4px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
 @keyframes pulse {
   70% { box-shadow: 0 0 0 6px rgba(43,172,118,0); }
   100% { box-shadow: 0 0 0 0 rgba(43,172,118,0); }
