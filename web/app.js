@@ -118,12 +118,41 @@ function escapeAttr(s) {
   return String(s).replace(/["<>&]/g, c => ({'"':'&quot;','<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 }
 
+// v0.7: file linking chip syntax — [[name.md]] or [[root/name.md]] with optional |label
+// Match within renderBody BEFORE escape so users can write the raw form.
+const FILE_LINK_RE = /\[\[([A-Za-z0-9_.\-\/]+\.md)(?:\|([^\]]+))?\]\]/g;
+
 function renderBody(text) {
-  let html = escapeHtml(text);
+  // Replace [[file]] tokens with sentinel placeholders BEFORE escaping, so
+  // the chip HTML survives escapeHtml(). Sentinels use \u0001 markers.
+  const chips = [];
+  const piped = (text || '').replace(FILE_LINK_RE, (_, target, label) => {
+    let root = '';
+    let name = target;
+    const slash = target.indexOf('/');
+    if (slash > 0) {
+      root = target.slice(0, slash);
+      name = target.slice(slash + 1);
+    }
+    const display = (label || name).trim();
+    chips.push({ root, name, display, target });
+    return `\u0001CHIP${chips.length - 1}\u0001`;
+  });
+  let html = escapeHtml(piped);
   html = html.replace(MENTION_RE,
     (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
   html = html.replace(/`([^`\n]+)`/g,
     (_, code) => `<code>${escapeHtml(code)}</code>`);
+  html = html.replace(/\u0001CHIP(\d+)\u0001/g, (_, idx) => {
+    const c = chips[Number(idx)];
+    if (!c) return '';
+    const hashRoot = c.root || '';
+    const href = hashRoot
+      ? `#/files/${encodeURIComponent(hashRoot)}/${encodeURIComponent(c.name)}`
+      : `#/files/${encodeURIComponent(c.name)}`;
+    return `<a class="file-chip" href="${href}" title="打开 ${escapeAttr(c.target)}" data-file-chip="1">`
+      + `<span class="file-chip-icon">📄</span>${escapeHtml(c.display)}</a>`;
+  });
   return html;
 }
 
@@ -1182,8 +1211,15 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     const h = location.hash || '';
     if (h.startsWith('#/files')) {
       setActive('files');
-      const m = h.match(/^#\/files\/([A-Za-z0-9_-]+\.md)$/);
-      if (m) selectFile(m[1]);
+      // New: #/files/<root>/<name>
+      let m = h.match(/^#\/files\/([A-Za-z0-9_\-]{1,32})\/([A-Za-z0-9_.\-]+\.md)$/);
+      if (m) {
+        selectFile(decodeURIComponent(m[2]), decodeURIComponent(m[1]));
+        return;
+      }
+      // Legacy: #/files/<name> — fall back to first known root or default
+      m = h.match(/^#\/files\/([A-Za-z0-9_.\-]+\.md)$/);
+      if (m) selectFile(decodeURIComponent(m[1]), null);
     } else {
       setActive('home');
     }
@@ -1203,6 +1239,8 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   /* ── files state ── */
   const state = {
+    roots: [],            // [{id, label, writable, count}]
+    currentRoot: null,    // root id
     files: [],
     current: null,        // filename string
     content: '',
@@ -1219,6 +1257,7 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   const btnToggle = document.getElementById('btn-toggle-edit');
   const btnSave = document.getElementById('btn-save-file');
   const btnNew = document.getElementById('btn-new-file');
+  const rootSelect = document.getElementById('file-root-select');
 
   function fmtTime(ts) {
     if (!ts) return '';
@@ -1230,11 +1269,64 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     return (n / 1024).toFixed(1) + ' KB';
   }
 
+  function currentRootMeta() {
+    return state.roots.find(r => r.id === state.currentRoot) || null;
+  }
+
+  async function loadRoots() {
+    try {
+      const r = await fetch('/api/file-roots');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      state.roots = data.roots || [];
+    } catch (e) {
+      // fallback: synthesise a single 'files' root
+      state.roots = [{ id: 'files', label: 'Files', writable: true, count: 0 }];
+    }
+    if (!state.currentRoot || !state.roots.find(r => r.id === state.currentRoot)) {
+      state.currentRoot = state.roots[0]?.id || 'files';
+    }
+    renderRootSelect();
+  }
+
+  function renderRootSelect() {
+    if (!rootSelect) return;
+    rootSelect.innerHTML = '';
+    for (const r of state.roots) {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = `${r.label}${r.writable ? '' : ' 🔒'} (${r.count})`;
+      if (r.id === state.currentRoot) opt.selected = true;
+      rootSelect.appendChild(opt);
+    }
+  }
+
+  if (rootSelect) {
+    rootSelect.addEventListener('change', () => {
+      const newRoot = rootSelect.value;
+      if (state.dirty && !confirm('当前文件未保存，切换会丢失改动。继续？')) {
+        rootSelect.value = state.currentRoot;
+        return;
+      }
+      state.currentRoot = newRoot;
+      clearSelection();
+      location.hash = '#/files/' + encodeURIComponent(newRoot);
+      loadFileList();
+    });
+  }
+
   async function loadFileList() {
     try {
-      const r = await fetch('/api/files');
+      if (!state.roots.length) await loadRoots();
+      const root = state.currentRoot || (state.roots[0]?.id) || 'files';
+      state.currentRoot = root;
+      const r = await fetch('/api/files?root=' + encodeURIComponent(root));
       const data = await r.json();
       state.files = data.files || [];
+      // refresh counts on the selector
+      const meta = state.roots.find(x => x.id === root);
+      if (meta) meta.count = state.files.length;
+      renderRootSelect();
       renderList();
       if (state.current && !state.files.find(f => f.name === state.current)) {
         clearSelection();
@@ -1246,8 +1338,12 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   function renderList() {
     listEl.innerHTML = '';
+    const meta = currentRootMeta();
     if (!state.files.length) {
       emptyEl.hidden = false;
+      emptyEl.textContent = meta && !meta.writable
+        ? '这个目录是只读的，且没有文件。'
+        : '还没有 md 文件，点上面 + 新建 一个吧。';
       return;
     }
     emptyEl.hidden = true;
@@ -1259,7 +1355,7 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
       if (f.name === state.current) li.classList.add('is-active');
       li.addEventListener('click', () => {
         if (state.dirty && !confirm('当前文件未保存，切换会丢失改动。继续？')) return;
-        location.hash = '#/files/' + f.name;
+        location.hash = '#/files/' + encodeURIComponent(state.currentRoot) + '/' + f.name;
       });
       listEl.appendChild(li);
     }
@@ -1282,22 +1378,40 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     btnSave.disabled = true;
   }
 
-  async function selectFile(name) {
+  async function selectFile(name, rootId) {
     try {
-      const r = await fetch('/api/files/' + encodeURIComponent(name));
+      if (!state.roots.length) await loadRoots();
+      // If a root was specified in the URL, switch to it first.
+      if (rootId && rootId !== state.currentRoot) {
+        if (!state.roots.find(r => r.id === rootId)) {
+          toast('未知目录: ' + rootId);
+          return;
+        }
+        state.currentRoot = rootId;
+        await loadFileList();
+      } else if (!rootId && !state.currentRoot) {
+        await loadFileList();
+      }
+      const root = state.currentRoot;
+      const url = '/api/files/' + encodeURIComponent(root) + '/' + encodeURIComponent(name);
+      const r = await fetch(url);
       if (!r.ok) { toast('打开失败 ' + r.status); return; }
       const data = await r.json();
       state.current = name;
       state.content = data.content || '';
       state.dirty = false;
       state.mode = 'preview';
-      titleEl.textContent = name;
-      subEl.textContent = `${fmtSize(data.size)} · 修改于 ${fmtTime(data.mtime)}`;
+      const meta = currentRootMeta();
+      const readOnly = meta && !meta.writable;
+      titleEl.textContent = name + (readOnly ? '  🔒' : '');
+      subEl.textContent = `${fmtSize(data.size)} · 修改于 ${fmtTime(data.mtime)}` + (readOnly ? ' · 只读' : '');
       editorEl.value = state.content;
       renderPreview();
       setMode('preview');
-      btnToggle.disabled = false;
+      btnToggle.disabled = !!readOnly;
+      btnToggle.title = readOnly ? '此目录只读' : '';
       renderList();
+      renderRootSelect();
     } catch (e) {
       toast('加载文件失败');
     }
@@ -1342,9 +1456,13 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
 
   async function saveCurrent() {
     if (!state.current || !state.dirty) return;
+    const meta = currentRootMeta();
+    if (meta && !meta.writable) { toast('该目录只读'); return; }
     btnSave.disabled = true;
     try {
-      const r = await fetch('/api/files/' + encodeURIComponent(state.current), {
+      const root = state.currentRoot;
+      const url = '/api/files/' + encodeURIComponent(root) + '/' + encodeURIComponent(state.current);
+      const r = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: state.content }),
@@ -1355,9 +1473,9 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
         btnSave.disabled = false;
         return;
       }
-      const meta = await r.json();
+      const data = await r.json();
       state.dirty = false;
-      subEl.textContent = `${fmtSize(meta.size)} · 修改于 ${fmtTime(meta.mtime)}`;
+      subEl.textContent = `${fmtSize(data.size)} · 修改于 ${fmtTime(data.mtime)}`;
       toast('已保存');
       setMode('preview');
       loadFileList();
@@ -1380,24 +1498,27 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   });
 
   btnNew.addEventListener('click', async () => {
-    let name = prompt('新文件名（必须以 .md 结尾，只能是字母数字 _ -）：', 'untitled.md');
+    const meta = currentRootMeta();
+    if (meta && !meta.writable) { toast('此目录只读'); return; }
+    let name = prompt('新文件名（必须以 .md 结尾，只能是字母数字 _ - .）：', 'untitled.md');
     if (!name) return;
     name = name.trim();
-    if (!/^[A-Za-z0-9_-]+\.md$/.test(name)) {
+    if (!/^[A-Za-z0-9_.\-]+\.md$/.test(name) || name.startsWith('.')) {
       toast('文件名非法');
       return;
     }
     try {
-      const r = await fetch('/api/files', {
+      const root = state.currentRoot || 'files';
+      const r = await fetch('/api/files/' + encodeURIComponent(root), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, content: '' }),
       });
+      if (r.status === 403) { toast('此目录只读'); return; }
       if (r.status === 409) { toast('已存在同名文件'); return; }
       if (!r.ok) { toast('创建失败 ' + r.status); return; }
       await loadFileList();
-      location.hash = '#/files/' + name;
-      // open in edit mode by default
+      location.hash = '#/files/' + encodeURIComponent(root) + '/' + name;
       setTimeout(() => setMode('edit'), 50);
     } catch (e) {
       toast('创建失败');
@@ -1405,5 +1526,5 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   });
 
   // initial routing
-  routeFromHash();
+  loadRoots().then(routeFromHash);
 })();
