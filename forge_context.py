@@ -551,7 +551,20 @@ class ContextBundle:
         if not parts:
             return ""
         header = f"_OpenForge context bundle generated {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.generated_at))}_"
-        return header + "\n\n" + "\n\n".join(parts)
+        # v0.9.2: teach the agent to self-search before claiming "not found".
+        teach = (
+            "### 🔎 找不到记忆？先 session_search 自查\n\n"
+            "上面只是你主会话最近若干 turns 的窗口。**几天前的事 bundle 没有。**\n\n"
+            "在说「找不到 / 没记录 / 不记得」之前，按顺序试两个工具：\n\n"
+            "1. `memory_search(query=\"…\")` — 你沉淀过的 markdown 笔记。\n"
+            "2. **session_search（v0.9.2 新加）** — 搜你自己主会话的全量 jsonl：\n\n"
+            "   ```bash\n"
+            f"   curl -s 'http://127.0.0.1:7878/api/agents/{self.agent}/session-search?q=<keyword>&days=30'\n"
+            "   ```\n\n"
+            "   返回时间倒序的命中片段（含 ts / role / snippet / session_id）。\n"
+            "   多关键词都没命中再说没有。"
+        )
+        return header + "\n\n" + "\n\n".join(parts) + "\n\n" + teach
 
 
 def _cache_path(agent_id: str) -> Path:
