@@ -144,6 +144,32 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"name":"new.md","content":"x"}' http://127.0.0.1:17878/api/files/docs)" = "403" && echo "docs-readonly POST=403 OK"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"content":"x"}' http://127.0.0.1:17878/api/files/docs/seed.md)" = "403" && echo "docs-readonly PUT=403 OK"
 
+          # v0.8 refs end-to-end: register → list → GET content → DELETE → 404
+          mkdir -p /tmp/agent-workspace
+          printf '# from milk\nhello refs\n' > /tmp/agent-workspace/report.md
+          REF_JSON=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"label":"report.md","abs_path":"/tmp/agent-workspace/report.md","source_agent":"milk"}' \
+            http://127.0.0.1:17878/api/refs)
+          echo "$REF_JSON" | python -c 'import json,sys; d=json.loads(sys.stdin.read()); assert d["id"].startswith("ref_") and d["source_agent"]=="milk" and d["label"]=="report.md", d; print("refs-register OK", d["id"])'
+          REF_ID=$(echo "$REF_JSON" | python -c 'import json,sys; print(json.loads(sys.stdin.read())["id"])')
+          # idempotent: re-register returns same id
+          REF2=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"label":"report.md","abs_path":"/tmp/agent-workspace/report.md","source_agent":"milk"}' \
+            http://127.0.0.1:17878/api/refs | python -c 'import json,sys; print(json.loads(sys.stdin.read())["id"])')
+          test "$REF2" = "$REF_ID" && echo "refs-idempotent OK"
+          curl -sf "http://127.0.0.1:17878/api/refs?agent=milk" | python -c "import json,sys; d=json.load(sys.stdin); assert any(r['id']=='$REF_ID' for r in d['refs']), d; print('refs-list OK', len(d['refs']))"
+          BODY=$(curl -sf "http://127.0.0.1:17878/api/refs/$REF_ID/content")
+          test "$BODY" = "$(printf '# from milk\nhello refs\n')" && echo "refs-content OK"
+          # blocked symlink
+          ln -sf /tmp/agent-workspace/report.md /tmp/agent-workspace/link.md
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"label":"link.md","abs_path":"/tmp/agent-workspace/link.md","source_agent":"milk"}' http://127.0.0.1:17878/api/refs)" = "403" && echo "refs-symlink-403 OK"
+          # PUT 403 (not writable)
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary 'new' http://127.0.0.1:17878/api/refs/$REF_ID/content)" = "403" && echo "refs-put-readonly-403 OK"
+          # DELETE then 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE http://127.0.0.1:17878/api/refs/$REF_ID)" = "204" && echo "refs-delete OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/refs/$REF_ID)" = "404" && echo "refs-404-after-delete OK"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:17878/api/refs/$REF_ID/content)" = "404" && echo "refs-content-404 OK"
+
           kill $SERVER_PID 2>/dev/null || true
           cat /tmp/server.log
           echo "--- server2 ---"
