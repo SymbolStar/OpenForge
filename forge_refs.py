@@ -249,10 +249,11 @@ def _resolve_abs_path(raw_path) -> Path:
     p = Path(raw_path)
     # Reject symlinks at the leaf (don't auto-follow into unexpected places).
     try:
-        if p.is_symlink():
-            raise RefBlockedError("symlinks not allowed")
+        is_link = p.is_symlink()
     except OSError as e:
         raise RefValidationError(f"abs_path stat failed: {e}") from None
+    if is_link:
+        raise RefBlockedError("symlinks not allowed")
     try:
         resolved = p.resolve(strict=True)
     except FileNotFoundError:
