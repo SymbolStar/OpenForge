@@ -36,6 +36,7 @@ def fake_home(monkeypatch, tmp_path):
     # Force reload so module-level Path.home() captures the new HOME.
     for name in [
         "forge_store",
+        "forge_refs",
         "agent_runtime",
         "post_router",
     ]:

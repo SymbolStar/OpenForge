@@ -46,11 +46,13 @@ WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
 import forge_files
+import forge_refs
 import forge_store as store
 import post_router
 
 FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
 ROOT_ID_ROUTE_RE = r"([A-Za-z0-9_\-]{1,32})"
+REF_ID_ROUTE_RE = r"(ref_[A-Za-z0-9]{4,16})"
 # v0.6 deprecated routes: keep working but emit warning headers.
 DEPRECATION_DATE = "Fri, 22 May 2026 00:00:00 GMT"
 SUNSET_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
@@ -364,7 +366,58 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"error": "invalid filename"}, 400)
             return
 
+        # ─── v0.8 refs ────────────────────────────────────────
+        m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}/content$", path)
+        if m:
+            self._refs_get_content(m.group(1))
+            return
+        m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}$", path)
+        if m:
+            ref = forge_refs.get_ref(m.group(1))
+            if not ref:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json(ref)
+            return
+        if path == "/api/refs":
+            qs = parse_qs(url.query or "")
+            agent = (qs.get("agent") or [None])[0]
+            thread = (qs.get("thread") or [None])[0]
+            squad = (qs.get("squad") or [None])[0]
+            try:
+                refs = forge_refs.list_refs(agent=agent, thread=thread, squad=squad)
+            except forge_refs.RefValidationError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json({"refs": refs})
+            return
+
         self.send_error(404)
+
+    def _refs_get_content(self, ref_id: str) -> None:
+        try:
+            data, mime, ref = forge_refs.read_content(ref_id)
+        except forge_refs.RefNotFoundError:
+            self._json({"error": "not found"}, 404)
+            return
+        except forge_refs.RefMissingError:
+            self._json({"error": "file gone"}, 404)
+            return
+        except forge_refs.RefTooLargeError:
+            self._json({"error": "file too large"}, 413)
+            return
+        except forge_refs.RefBlockedError as e:
+            self._json({"error": str(e) or "blocked"}, 403)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Ref-Label", ref.get("label", ""))
+        self.send_header("X-Ref-Source-Agent", ref.get("source_agent", ""))
+        self.send_header("X-Ref-Id", ref.get("id", ""))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self):
         url = urlparse(self.path)
@@ -524,6 +577,36 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(meta, 201)
             return
 
+        # v0.8 refs: POST /api/refs (register)
+        if url.path == "/api/refs":
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            try:
+                ref = forge_refs.register(
+                    label=opts.get("label"),
+                    abs_path=opts.get("abs_path"),
+                    source_agent=opts.get("source_agent"),
+                    thread_id=opts.get("thread_id"),
+                    squad_id=opts.get("squad_id"),
+                    writable=bool(opts.get("writable", False)),
+                    content_type=opts.get("content_type"),
+                )
+            except forge_refs.RefBlockedError as e:
+                self._json({"error": str(e) or "blocked"}, 403)
+                return
+            except forge_refs.RefTooLargeError as e:
+                self._json({"error": str(e) or "too large"}, 413)
+                return
+            except forge_refs.RefValidationError as e:
+                self._json({"error": str(e) or "invalid"}, 400)
+                return
+            self._json(ref, 201)
+            return
+
         # v0.6 compat: POST /api/files → first root (with Deprecation header)
         if url.path == "/api/files":
             opts = self._read_json()
@@ -551,6 +634,36 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+        # v0.8: PUT /api/refs/<id>/content
+        m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}/content$", url.path)
+        if m:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > forge_refs.MAX_BYTES:
+                self._json({"error": "body too large"}, 413)
+                return
+            body = self.rfile.read(length) if length else b""
+            try:
+                out = forge_refs.write_content(m.group(1), body)
+            except forge_refs.RefNotFoundError:
+                self._json({"error": "not found"}, 404)
+                return
+            except forge_refs.RefMissingError:
+                self._json({"error": "file gone"}, 404)
+                return
+            except forge_refs.RefReadOnlyError:
+                self._json({"error": "ref is read-only"}, 403)
+                return
+            except forge_refs.RefBlockedError as e:
+                self._json({"error": str(e) or "blocked"}, 403)
+                return
+            except forge_refs.RefTooLargeError:
+                self._json({"error": "body too large"}, 413)
+                return
+            except forge_refs.RefValidationError as e:
+                self._json({"error": str(e) or "invalid"}, 400)
+                return
+            self._json(out)
             return
         # v0.7: PUT /api/files/<root>/<name>
         m = re.match(rf"^/api/files/{ROOT_ID_ROUTE_RE}/{FILE_NAME_ROUTE_RE}$", url.path)
@@ -634,6 +747,16 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # v0.8: DELETE /api/refs/<id>
+        m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}$", url.path)
+        if m:
+            if not forge_refs.unregister(m.group(1)):
+                self._json({"error": "not found"}, 404)
+                return
+            self.send_response(204)
+            self.end_headers()
             return
 
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", url.path)
