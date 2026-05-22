@@ -47,12 +47,14 @@ WEB_DIR = ROOT / "web"
 sys.path.insert(0, str(ROOT))
 import forge_files
 import forge_refs
+import forge_context
 import forge_store as store
 import post_router
 
 FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
 ROOT_ID_ROUTE_RE = r"([A-Za-z0-9_\-]{1,32})"
 REF_ID_ROUTE_RE = r"(ref_[A-Za-z0-9]{4,16})"
+AGENT_ID_ROUTE_RE = r"([A-Za-z0-9][A-Za-z0-9._\-]{0,63})"
 # v0.6 deprecated routes: keep working but emit warning headers.
 DEPRECATION_DATE = "Fri, 22 May 2026 00:00:00 GMT"
 SUNSET_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
@@ -392,6 +394,38 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"refs": refs})
             return
 
+        # v0.9: GET /api/agents/<id>/status
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/status$", path)
+        if m:
+            try:
+                info = forge_context.read_status(m.group(1))
+            except forge_context.StatusError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            if info is None:
+                self._json({"error": "not found", "agent": m.group(1)}, 404)
+                return
+            self._json(info)
+            return
+
+        # v0.9: GET /api/agents/<id>/context-bundle?refresh=1&query=...
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/context-bundle$", path)
+        if m:
+            qs = parse_qs(url.query or "")
+            refresh = (qs.get("refresh") or [""])[0] in ("1", "true", "yes")
+            query_hint = (qs.get("query") or [None])[0]
+            try:
+                bundle = forge_context.build_context_bundle(
+                    m.group(1), query_hint=query_hint, force_refresh=refresh,
+                )
+            except forge_context.StatusError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            d = bundle.to_dict()
+            d["rendered"] = bundle.render()
+            self._json(d)
+            return
+
         self.send_error(404)
 
     def _refs_get_content(self, ref_id: str) -> None:
@@ -628,6 +662,27 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(meta, 201, extra_headers=self._deprecated_v06_headers())
             return
 
+        # v0.9: POST /api/agents/<id>/status — full replace STATUS.md
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/status$", url.path)
+        if m:
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            content = opts.get("content")
+            if not isinstance(content, str):
+                self._json({"error": "content (string) required"}, 400)
+                return
+            try:
+                info = forge_context.write_status(m.group(1), content)
+            except forge_context.StatusError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(info)
+            return
+
         self.send_error(404)
 
     def do_PUT(self):
@@ -724,6 +779,35 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+        # v0.9: PATCH /api/agents/<id>/status — update one section
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/status$", url.path)
+        if m:
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            section = opts.get("section")
+            content = opts.get("content")
+            if not isinstance(section, str) or not section.strip():
+                self._json({"error": "section required"}, 400)
+                return
+            if not isinstance(content, str):
+                self._json({"error": "content (string) required"}, 400)
+                return
+            try:
+                info = forge_context.patch_status_section(m.group(1), section, content)
+            except forge_context.StatusError as e:
+                # Distinguish 404 (section not found / no STATUS yet) from 400.
+                msg = str(e)
+                if "not found" in msg or "does not exist" in msg:
+                    self._json({"error": msg}, 404)
+                else:
+                    self._json({"error": msg}, 400)
+                return
+            self._json(info)
             return
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", url.path)
         if not m:
