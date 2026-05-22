@@ -1192,3 +1192,77 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   padding: 0 12px 6px;
   font-style: italic;
 }
+
+/* v0.8 — References tab + ref chips */
+.files-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.files-tab {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font: inherit;
+  color: var(--text-soft);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+.files-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent, #6aa3ff);
+  font-weight: 600;
+}
+.files-tab:hover { color: var(--text); }
+.files-tab-pane { padding: 8px 0; }
+.refs-search {
+  width: calc(100% - 24px);
+  margin: 6px 12px 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.refs-group-head {
+  padding: 8px 12px 2px;
+  font-size: 11px;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  list-style: none;
+}
+.refs-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 3px solid transparent;
+}
+.refs-item:hover { background: rgba(120, 160, 240, 0.08); }
+.refs-item.is-active {
+  background: rgba(120, 160, 240, 0.16);
+  border-left-color: var(--accent, #6aa3ff);
+}
+.refs-item-label { font-size: 13px; color: var(--text); }
+.refs-item-meta { font-size: 11px; color: var(--text-soft); }
+.file-chip-ref {
+  background: rgba(120, 180, 120, 0.18);
+}
+.file-chip-ref:hover { background: rgba(120, 180, 120, 0.28); }
+.file-chip-agent {
+  font-size: 0.78em;
+  color: var(--text-soft);
+  margin-left: 4px;
+  opacity: 0.85;
+}
+.file-chip-missing {
+  background: rgba(220, 140, 60, 0.16);
+  color: var(--text-soft);
+  cursor: help;
+}

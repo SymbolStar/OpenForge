@@ -113,12 +113,23 @@
         <span class="section-label">FILES</span>
         <button id="btn-new-file" type="button" class="new-squad-btn">+ 新建</button>
       </header>
-      <div class="files-root-selector">
-        <label for="file-root-select">目录：</label>
-        <select id="file-root-select"></select>
+      <div class="files-tabs" role="tablist">
+        <button id="files-tab-refs" type="button" class="files-tab is-active" data-tab="refs" role="tab">References</button>
+        <button id="files-tab-workspace" type="button" class="files-tab" data-tab="workspace" role="tab">Workspace</button>
       </div>
-      <ul id="file-list"></ul>
-      <p id="file-list-empty" class="files-empty" hidden>还没有 md 文件，点上面 <b>+ 新建</b> 一个吧。</p>
+      <div id="files-refs-pane" class="files-tab-pane">
+        <input id="refs-search" type="search" placeholder="过滤 label…" class="refs-search" />
+        <ul id="refs-list"></ul>
+        <p id="refs-empty" class="files-empty" hidden>还没有 agent 注册过文件引用。</p>
+      </div>
+      <div id="files-workspace-pane" class="files-tab-pane" hidden>
+        <div class="files-root-selector">
+          <label for="file-root-select">目录：</label>
+          <select id="file-root-select"></select>
+        </div>
+        <ul id="file-list"></ul>
+        <p id="file-list-empty" class="files-empty" hidden>还没有 md 文件，点上面 <b>+ 新建</b> 一个吧。</p>
+      </div>
     </aside>
     <main id="files-pane">
       <header id="files-toolbar">

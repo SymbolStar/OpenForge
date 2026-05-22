@@ -118,15 +118,84 @@ function escapeAttr(s) {
   return String(s).replace(/["<>&]/g, c => ({'"':'&quot;','<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
 }
 
-// v0.7: file linking chip syntax — [[name.md]] or [[root/name.md]] with optional |label
-// Match within renderBody BEFORE escape so users can write the raw form.
-const FILE_LINK_RE = /\[\[([A-Za-z0-9_.\-\/]+\.md)(?:\|([^\]]+))?\]\]/g;
+// v0.7/v0.8: file linking chip syntax — supports:
+//   [[name.md]]                 → v0.7 default-root file (refs fallback)
+//   [[root/name.md]]            → v0.7 explicit root  OR  v0.8 agent/label
+//   [[ref:ref_abc123]]          → v0.8 explicit ref id
+//   any of the above with |display label
+const FILE_LINK_RE = /\[\[([A-Za-z0-9_.\-\/:]+)(?:\|([^\]]+))?\]\]/g;
+
+// Async ref index used by chip renderer + References tab.
+window._forgeRefs = window._forgeRefs || { byId: new Map(), all: [], loaded: false, loading: null };
+
+async function loadRefIndex(force) {
+  const idx = window._forgeRefs;
+  if (idx.loaded && !force) return idx;
+  if (idx.loading && !force) return idx.loading;
+  idx.loading = (async () => {
+    try {
+      const r = await fetch('/api/refs');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const all = Array.isArray(data.refs) ? data.refs : [];
+      idx.all = all;
+      idx.byId = new Map(all.map(x => [x.id, x]));
+      idx.loaded = true;
+      return idx;
+    } catch (e) {
+      idx.all = [];
+      idx.byId = new Map();
+      idx.loaded = true;
+      return idx;
+    } finally {
+      idx.loading = null;
+    }
+  })();
+  return idx.loading;
+}
+
+// Synchronous lookup against cached refs (used during HTML render).
+function resolveChipFromRefs(target) {
+  const idx = window._forgeRefs;
+  if (!idx || !idx.loaded) return null;
+  // [[ref:id]]
+  if (target.startsWith('ref:')) {
+    return idx.byId.get(target.slice(4)) || null;
+  }
+  const slash = target.indexOf('/');
+  if (slash > 0) {
+    const agent = target.slice(0, slash);
+    const label = target.slice(slash + 1);
+    const hit = idx.all.find(r => r.source_agent === agent && r.label === label);
+    if (hit) return hit;
+    // also try label-only match in case agent segment was actually a root id
+    const byLabel = idx.all.filter(r => r.label === label);
+    if (byLabel.length === 1) return byLabel[0];
+    return null;
+  }
+  // bare label — only unambiguous match wins
+  const byLabel = idx.all.filter(r => r.label === target);
+  if (byLabel.length === 1) return byLabel[0];
+  return null;
+}
 
 function renderBody(text) {
   // Replace [[file]] tokens with sentinel placeholders BEFORE escaping, so
   // the chip HTML survives escapeHtml(). Sentinels use \u0001 markers.
   const chips = [];
   const piped = (text || '').replace(FILE_LINK_RE, (_, target, label) => {
+    // v0.8: try refs registry first (sync lookup against cached index)
+    const refHit = resolveChipFromRefs(target);
+    if (refHit) {
+      chips.push({ kind: 'ref', ref: refHit, display: (label || refHit.label).trim(), target });
+      return `\u0001CHIP${chips.length - 1}\u0001`;
+    }
+    // v0.7 fallback: [[name.md]] or [[root/name.md]]
+    if (!/\.md$/i.test(target.split('/').pop() || '')) {
+      // unresolved + not even a v0.7-shaped path → render as plain text
+      chips.push({ kind: 'unresolved', display: (label || target).trim(), target });
+      return `\u0001CHIP${chips.length - 1}\u0001`;
+    }
     let root = '';
     let name = target;
     const slash = target.indexOf('/');
@@ -135,7 +204,7 @@ function renderBody(text) {
       name = target.slice(slash + 1);
     }
     const display = (label || name).trim();
-    chips.push({ root, name, display, target });
+    chips.push({ kind: 'workspace', root, name, display, target });
     return `\u0001CHIP${chips.length - 1}\u0001`;
   });
   let html = escapeHtml(piped);
@@ -146,6 +215,16 @@ function renderBody(text) {
   html = html.replace(/\u0001CHIP(\d+)\u0001/g, (_, idx) => {
     const c = chips[Number(idx)];
     if (!c) return '';
+    if (c.kind === 'ref') {
+      const href = `#/files/refs/${encodeURIComponent(c.ref.id)}`;
+      const agentTag = c.ref.source_agent ? ` <span class="file-chip-agent">${escapeHtml(c.ref.source_agent)}</span>` : '';
+      return `<a class="file-chip file-chip-ref" href="${href}" title="${escapeAttr(c.ref.label + ' · ' + (c.ref.source_agent || ''))}" data-file-chip="1" data-ref-id="${escapeAttr(c.ref.id)}">`
+        + `<span class="file-chip-icon">📄</span>${escapeHtml(c.display)}${agentTag}</a>`;
+    }
+    if (c.kind === 'unresolved') {
+      return `<span class="file-chip file-chip-missing" title="未注册的引用: ${escapeAttr(c.target)}">`
+        + `<span class="file-chip-icon">⚠️</span>${escapeHtml(c.display)}</span>`;
+    }
     const hashRoot = c.root || '';
     const href = hashRoot
       ? `#/files/${encodeURIComponent(hashRoot)}/${encodeURIComponent(c.name)}`
@@ -1200,7 +1279,9 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     if (view === 'files') {
       homeView.hidden = true;
       filesView.hidden = false;
-      loadFileList();
+      // Initial tab load happens via routeFromHash + switchTab.
+      // Backfill workspace files if Workspace tab is active.
+      if (state.activeTab === 'workspace') loadFileList();
     } else {
       filesView.hidden = true;
       homeView.hidden = false;
@@ -1211,15 +1292,34 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     const h = location.hash || '';
     if (h.startsWith('#/files')) {
       setActive('files');
-      // New: #/files/<root>/<name>
-      let m = h.match(/^#\/files\/([A-Za-z0-9_\-]{1,32})\/([A-Za-z0-9_.\-]+\.md)$/);
+      // v0.8: #/files/refs/<id>
+      let m = h.match(/^#\/files\/refs\/(ref_[A-Za-z0-9]+)$/);
       if (m) {
+        switchTab('refs');
+        selectRef(decodeURIComponent(m[1]));
+        return;
+      }
+      // v0.8: #/files/refs (list tab)
+      if (h === '#/files/refs' || h.startsWith('#/files/refs?')) {
+        switchTab('refs');
+        return;
+      }
+      // New: #/files/<root>/<name>
+      m = h.match(/^#\/files\/([A-Za-z0-9_\-]{1,32})\/([A-Za-z0-9_.\-]+\.md)$/);
+      if (m) {
+        switchTab('workspace');
         selectFile(decodeURIComponent(m[2]), decodeURIComponent(m[1]));
         return;
       }
       // Legacy: #/files/<name> — fall back to first known root or default
       m = h.match(/^#\/files\/([A-Za-z0-9_.\-]+\.md)$/);
-      if (m) selectFile(decodeURIComponent(m[1]), null);
+      if (m) {
+        switchTab('workspace');
+        selectFile(decodeURIComponent(m[1]), null);
+        return;
+      }
+      // Bare /#/files → default to refs tab
+      switchTab(state.activeTab || 'refs');
     } else {
       setActive('home');
     }
@@ -1246,6 +1346,11 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
     content: '',
     dirty: false,
     mode: 'preview',      // 'preview' | 'edit'
+    // v0.8
+    activeTab: 'refs',    // 'refs' | 'workspace'
+    refs: [],             // [{id,label,abs_path,source_agent,...}]
+    refSearch: '',
+    currentRef: null,     // ref object
   };
 
   const listEl = document.getElementById('file-list');
@@ -1258,6 +1363,165 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   const btnSave = document.getElementById('btn-save-file');
   const btnNew = document.getElementById('btn-new-file');
   const rootSelect = document.getElementById('file-root-select');
+  // v0.8
+  const tabRefs = document.getElementById('files-tab-refs');
+  const tabWorkspace = document.getElementById('files-tab-workspace');
+  const refsPane = document.getElementById('files-refs-pane');
+  const wsPane = document.getElementById('files-workspace-pane');
+  const refsListEl = document.getElementById('refs-list');
+  const refsEmptyEl = document.getElementById('refs-empty');
+  const refsSearchEl = document.getElementById('refs-search');
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    const isRefs = tab === 'refs';
+    if (tabRefs) tabRefs.classList.toggle('is-active', isRefs);
+    if (tabWorkspace) tabWorkspace.classList.toggle('is-active', !isRefs);
+    if (refsPane) refsPane.hidden = !isRefs;
+    if (wsPane) wsPane.hidden = isRefs;
+    if (btnNew) btnNew.style.visibility = isRefs ? 'hidden' : '';
+    if (isRefs) {
+      loadRefs();
+    } else {
+      loadFileList();
+    }
+  }
+
+  if (tabRefs) tabRefs.addEventListener('click', () => { location.hash = '#/files/refs'; });
+  if (tabWorkspace) tabWorkspace.addEventListener('click', () => {
+    const root = state.currentRoot || (state.roots[0]?.id) || 'files';
+    location.hash = '#/files/' + encodeURIComponent(root);
+  });
+  if (refsSearchEl) refsSearchEl.addEventListener('input', () => {
+    state.refSearch = refsSearchEl.value || '';
+    renderRefsList();
+  });
+
+  async function loadRefs() {
+    try {
+      const r = await fetch('/api/refs');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      state.refs = Array.isArray(data.refs) ? data.refs : [];
+      // share with the chip resolver
+      if (window._forgeRefs) {
+        window._forgeRefs.all = state.refs;
+        window._forgeRefs.byId = new Map(state.refs.map(r => [r.id, r]));
+        window._forgeRefs.loaded = true;
+      }
+      renderRefsList();
+    } catch (e) {
+      state.refs = [];
+      renderRefsList();
+      toast('加载引用列表失败');
+    }
+  }
+
+  function renderRefsList() {
+    if (!refsListEl) return;
+    refsListEl.innerHTML = '';
+    const q = (state.refSearch || '').toLowerCase().trim();
+    const filtered = q
+      ? state.refs.filter(r => (r.label || '').toLowerCase().includes(q)
+          || (r.source_agent || '').toLowerCase().includes(q))
+      : state.refs;
+    if (!filtered.length) {
+      refsEmptyEl.hidden = false;
+      refsEmptyEl.textContent = q
+        ? '没有匹配“' + q + '”的引用。'
+        : '还没有 agent 注册过文件引用。';
+      return;
+    }
+    refsEmptyEl.hidden = true;
+    // group by source_agent
+    const groups = new Map();
+    for (const r of filtered) {
+      const key = r.source_agent || 'unknown';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    for (const [agent, refs] of groups) {
+      const head = document.createElement('li');
+      head.className = 'refs-group-head';
+      head.textContent = agent + ' (' + refs.length + ')';
+      refsListEl.appendChild(head);
+      for (const r of refs) {
+        const li = document.createElement('li');
+        li.className = 'refs-item';
+        if (state.currentRef && state.currentRef.id === r.id) li.classList.add('is-active');
+        li.title = r.abs_path;
+        li.innerHTML = '<span class="refs-item-label">' + escapeHtml(r.label) + '</span>'
+          + '<span class="refs-item-meta">' + fmtSize(r.size_hint || 0) + ' · ' + fmtTime(r.registered_at) + '</span>';
+        li.addEventListener('click', () => {
+          location.hash = '#/files/refs/' + encodeURIComponent(r.id);
+        });
+        refsListEl.appendChild(li);
+      }
+    }
+  }
+
+  async function selectRef(refId) {
+    try {
+      if (!state.refs.length) await loadRefs();
+      let ref = state.refs.find(r => r.id === refId);
+      if (!ref) {
+        // Refresh in case we registered very recently
+        const meta = await fetch('/api/refs/' + encodeURIComponent(refId));
+        if (!meta.ok) { toast('引用不存在: ' + refId); return; }
+        ref = await meta.json();
+        state.refs = [ref, ...state.refs.filter(r => r.id !== ref.id)];
+      }
+      state.currentRef = ref;
+      state.current = null;
+      state.dirty = false;
+      state.mode = 'preview';
+      titleEl.textContent = ref.label + (ref.writable ? '' : '  🔒');
+      subEl.textContent = (ref.source_agent ? ref.source_agent + ' · ' : '')
+        + fmtSize(ref.size_hint || 0) + ' · 注册于 ' + fmtTime(ref.registered_at)
+        + ' · ' + ref.abs_path;
+      previewEl.innerHTML = '<p class="meta">加载中…</p>';
+      editorEl.hidden = true;
+      previewEl.hidden = false;
+      btnSave.hidden = true;
+      btnToggle.disabled = true;
+      btnToggle.textContent = '编辑';
+      const r = await fetch('/api/refs/' + encodeURIComponent(refId) + '/content');
+      if (!r.ok) {
+        previewEl.innerHTML = '<p class="meta">加载失败: HTTP ' + r.status + '</p>';
+        renderRefsList();
+        return;
+      }
+      const ctype = (r.headers.get('Content-Type') || '').toLowerCase();
+      const buf = await r.arrayBuffer();
+      if (ctype.startsWith('image/')) {
+        const blob = new Blob([buf], { type: ctype });
+        const url = URL.createObjectURL(blob);
+        previewEl.innerHTML = '<img alt="' + escapeAttr(ref.label) + '" src="' + url + '" style="max-width:100%;height:auto" />';
+      } else {
+        const text = new TextDecoder().decode(buf);
+        state.content = text;
+        if ((ctype.startsWith('text/markdown') || /\.md$/i.test(ref.label)) && typeof marked !== 'undefined' && marked.parse) {
+          previewEl.innerHTML = marked.parse(text);
+        } else if (ctype.includes('json')) {
+          try {
+            previewEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(JSON.parse(text), null, 2)) + '</pre>';
+          } catch (_) {
+            previewEl.innerHTML = '<pre>' + escapeHtml(text) + '</pre>';
+          }
+        } else {
+          previewEl.innerHTML = '<pre>' + escapeHtml(text) + '</pre>';
+        }
+        editorEl.value = text;
+        if (ref.writable) {
+          btnToggle.disabled = false;
+          btnToggle.title = '';
+        }
+      }
+      renderRefsList();
+    } catch (e) {
+      toast('打开引用失败');
+    }
+  }
 
   function fmtTime(ts) {
     if (!ts) return '';
@@ -1526,5 +1790,5 @@ loadSquads().then(() => { refreshAgentList(); startPolling(); });
   });
 
   // initial routing
-  loadRoots().then(routeFromHash);
+  loadRoots().then(() => loadRefIndex()).then(routeFromHash);
 })();
