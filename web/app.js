@@ -390,15 +390,48 @@ function renderThreadList(threads) {
       '<li class="empty-row">还没有 thread，在下面输入一条开始。</li>';
     return;
   }
-  threads.forEach(t => {
+
+  // Sort: open (in_progress=true) first, then closed; within each group,
+  // most recent activity first. Closed threads sink to the bottom so the
+  // active conversations stay front and center.
+  const sorted = threads.slice().sort((a, b) => {
+    const aOpen = a.in_progress ? 1 : 0;
+    const bOpen = b.in_progress ? 1 : 0;
+    if (aOpen !== bOpen) return bOpen - aOpen;
+    const aTime = a.last_post_at || 0;
+    const bTime = b.last_post_at || 0;
+    return bTime - aTime;
+  });
+
+  const hasOpen = sorted.some(t => t.in_progress);
+  const hasClosed = sorted.some(t => !t.in_progress);
+  let closedLabelInserted = false;
+
+  sorted.forEach(t => {
+    // Insert a small group label between active and closed threads
+    // (only when both groups exist).
+    if (!t.in_progress && hasOpen && hasClosed && !closedLabelInserted) {
+      const label = document.createElement('li');
+      label.className = 'thread-group-label';
+      label.textContent = '已关闭';
+      els.threadList.appendChild(label);
+      closedLabelInserted = true;
+    }
+
     const li = document.createElement('li');
-    li.className = 'thread-item' + (t.thread_id === state.currentThreadId ? ' active' : '');
+    const closedCls = t.in_progress ? '' : ' thread-item--closed';
+    li.className = 'thread-item' + closedCls
+      + (t.thread_id === state.currentThreadId ? ' active' : '');
     const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
+    const closedChip = t.in_progress
+      ? ''
+      : '<span class="thread-closed-chip" title="Closed">🔒</span>';
     li.innerHTML = `
       <button type="button">
         <div class="thread-line-1">
           ${liveDot}
           <span class="thread-preview">${escapeHtml(t.preview || '(empty)')}</span>
+          ${closedChip}
         </div>
         <div class="thread-line-2">
           <span class="thread-by">${escapeHtml(t.created_by)}</span>
