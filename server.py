@@ -47,6 +47,7 @@ ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
+import forge_config
 import forge_context
 import forge_employees
 import forge_files
@@ -58,6 +59,22 @@ import post_router
 
 FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
 ROOT_ID_ROUTE_RE = r"([A-Za-z0-9_\-]{1,32})"
+
+# ─────────────────────────────────────────────────────────────────────
+# OPERATOR_ID — the single human who is allowed to close a thread.
+#
+# V1.0.0 conscious limitation (see docs/AGENT-COLLAB-OPEN-QUESTIONS.md Q2):
+# OpenForge is a local cockpit for one human ("scott"). Close permission is
+# hard-coded here rather than derived from auth/identity, because:
+#   - There is no multi-user auth story yet.
+#   - PRD-v1.0 Rule 6 explicitly says "only Scott closes".
+# The day a second human operator shows up — or we expose OpenForge beyond
+# loopback for real — this constant is the FIRST place to change. Replace
+# the equality check with an identity-aware lookup (bearer token → operator
+# id, or role tag on the speaker) and the close handler will be the only
+# site that needs to follow.
+# ─────────────────────────────────────────────────────────────────────
+OPERATOR_ID = "scott"
 REF_ID_ROUTE_RE = r"(ref_[A-Za-z0-9]{4,16})"
 AGENT_ID_ROUTE_RE = r"([A-Za-z0-9][A-Za-z0-9._\-]{0,63})"
 # v0.6 deprecated routes: keep working but emit warning headers.
@@ -299,6 +316,14 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             # real employees. Single source of truth — no hardcoded
             # blocklist anywhere in the codebase.
             self._json(forge_employees.list_employees())
+            return
+
+        if path == "/api/config":
+            # V1.0.0 §4.3: front-end pulls this at boot to learn the
+            # webchat base URL (employee-avatar deep-links). Cheap GET,
+            # never blocks rendering on the client side — client falls
+            # back to its hardcoded default if this 5xx's.
+            self._json(forge_config.get_config())
             return
 
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", path)
@@ -657,7 +682,21 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json({"error": "unknown thread"}, 404)
                 return
             opts = self._read_json(default={}) or {}
-            store.close_thread(tid, (opts.get("closed_by") or "scott").strip() or "scott")
+            # PRD-v1.0 §3 Rule 6: only Scott closes. Accept either `by`
+            # (PRD field name) or `closed_by` (legacy field). Field is
+            # REQUIRED — missing → 400. Value must equal OPERATOR_ID — any
+            # other id → 403.
+            raw_by = opts.get("by")
+            if raw_by is None:
+                raw_by = opts.get("closed_by")
+            if raw_by is None:
+                self._json({"error": "`by` field required"}, 400)
+                return
+            by = str(raw_by).strip()
+            if by != OPERATOR_ID:
+                self._json({"error": "thread close 权限仅限 scott"}, 403)
+                return
+            store.close_thread(tid, by)
             self._json(_serializable_thread(store.project_thread(tid)))
             return
 

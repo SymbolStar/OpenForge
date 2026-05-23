@@ -657,6 +657,36 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   color: #fff;
   font-weight: 800;
 }
+/* PR-3 / PRD-v1.0 §4: employee avatars become deep-links to the agent's
+   webchat main session. Keep the same box but make it feel clickable. */
+a.avatar.avatar-link,
+a.mini-avatar.avatar-link {
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
+  transition: opacity 0.12s ease;
+}
+a.avatar.avatar-link:hover,
+a.mini-avatar.avatar-link:hover {
+  opacity: 0.82;
+}
+a.avatar.avatar-link::after,
+a.mini-avatar.avatar-link::after {
+  content: '↗';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.6;
+  color: inherit;
+  pointer-events: none;
+}
+a.avatar.avatar-link:focus-visible,
+a.mini-avatar.avatar-link:focus-visible {
+  outline: 2px solid #5b9bff;
+  outline-offset: 2px;
+}
 .post-content { min-width: 0; }
 .post-head {
   min-height: 22px;

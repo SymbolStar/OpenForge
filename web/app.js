@@ -103,6 +103,61 @@ function avatarLabel(name) {
   return [...(name || '?')][0].toUpperCase();
 }
 
+// ─── PR-3 / PRD-v1.0 §4: employee-avatar deep-link to agent webchat ───
+// Boot-time fetch of /api/config caches the webchat base URL; /api/employees
+// caches the employee roster. renderAvatarTag() then emits a clickable <a>
+// for any post.speaker that is an employee, or a plain <div> otherwise
+// (scott / __router__ / unknown ids stay non-interactive).
+let _webchatBase = 'http://127.0.0.1:18789';
+let _employeeSet = new Set();
+
+async function loadWebchatBase() {
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg && typeof cfg.webchat_base_url === 'string' && cfg.webchat_base_url) {
+        _webchatBase = cfg.webchat_base_url.replace(/\/$/, '');
+      }
+    }
+  } catch (e) {
+    // Network error → keep the hardcoded fallback so rendering isn't blocked.
+  }
+}
+
+async function loadEmployeeSet() {
+  try {
+    const res = await fetch('/api/employees');
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        _employeeSet = new Set(list.filter(x => typeof x === 'string' && x));
+      }
+    }
+  } catch (e) {
+    // Empty set is safe: every avatar will just render as a plain div.
+  }
+}
+
+function isEmployee(name) {
+  return !!name && _employeeSet.has(name);
+}
+
+function webchatLinkFor(agentId) {
+  return `${_webchatBase}/chat?session=agent:${encodeURIComponent(agentId)}:main`;
+}
+
+function renderAvatarTag(name, { extraClass = '', styleAttr = '' } = {}) {
+  const cls = `avatar ${avatarClass(name)}${extraClass ? ' ' + extraClass : ''}`;
+  const label = escapeHtml(avatarLabel(name));
+  if (isEmployee(name)) {
+    const href = webchatLinkFor(name);
+    const title = `点击查看 ${name} 的 main session`;
+    return `<a class="${cls} avatar-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"${styleAttr}>${label}</a>`;
+  }
+  return `<div class="${cls}"${styleAttr} title="${escapeHtml(name || '')}">${label}</div>`;
+}
+
 function avatarClass(name) {
   if ((name || '').toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
     return 'av-custom';
@@ -568,14 +623,27 @@ function renderDetail({ keepScroll = false } = {}) {
 function renderParticipants(members) {
   els.detailParticipants.innerHTML = '';
   (members || []).slice(0, 6).forEach(name => {
-    const av = document.createElement('div');
-    av.className = `mini-avatar ${avatarClass(name)}`;
-    if (name.toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
-      av.style.background = state.settings.myAvatarColor.trim();
+    const cls = `mini-avatar ${avatarClass(name)}`;
+    const label = avatarLabel(name);
+    let el;
+    if (isEmployee(name)) {
+      // PR-3: clickable employee mini-avatar → webchat main session.
+      el = document.createElement('a');
+      el.href = webchatLinkFor(name);
+      el.target = '_blank';
+      el.rel = 'noopener noreferrer';
+      el.className = `${cls} avatar-link`;
+      el.title = `点击查看 ${name} 的 main session`;
+    } else {
+      el = document.createElement('div');
+      el.className = cls;
+      el.title = name;
     }
-    av.title = name;
-    av.textContent = avatarLabel(name);
-    els.detailParticipants.appendChild(av);
+    if (name.toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
+      el.style.background = state.settings.myAvatarColor.trim();
+    }
+    el.textContent = label;
+    els.detailParticipants.appendChild(el);
   });
 }
 
@@ -601,7 +669,7 @@ function renderPostNode(post, includeChildren) {
   row.dataset.postId = postId;
   const showReplyBtn = state.settings.replyNesting && post.speaker !== '__router__';
   row.innerHTML = `
-    <div class="avatar ${avatarClass(post.speaker)}"${avatarStyle(post.speaker)}>${escapeHtml(avatarLabel(post.speaker))}</div>
+    ${renderAvatarTag(post.speaker, { styleAttr: avatarStyle(post.speaker) })}
     <div class="post-content">
       <div class="post-head">
         <span class="post-name">${escapeHtml(post.speaker)}</span>
@@ -839,7 +907,7 @@ async function closeCurrentThread() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ closed_by: 'scott' }),
+        body: JSON.stringify({ by: 'scott' }),
       }
     );
     renderDetail();
@@ -1487,7 +1555,13 @@ loadColWidths();
 document.querySelectorAll('.col-gutter').forEach(wireGutter);
 
 buildMemberControls();
-loadSquads().then(() => { refreshAgentList(); startPolling(); });
+// PR-3 (PRD-v1.0 §4): fetch webchat base URL + employee roster at boot
+// so renderPostNode / renderParticipants can render employee avatars as
+// deep-links. Both calls degrade gracefully (default URL / empty set)
+// so they never block initial rendering.
+Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
+  loadSquads().then(() => { refreshAgentList(); startPolling(); });
+});
 
 /* ─── v0.6: icon-rail routing + Files view ─────────────────────────────── */
 (function () {

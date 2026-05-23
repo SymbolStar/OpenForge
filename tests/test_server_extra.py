@@ -134,7 +134,7 @@ def test_thread_post_validation(server):
     code, _ = _http("POST", f"{server}/api/threads/th_dead_beef/posts",
                     {"content": "x"})
     assert code == 404
-    code, _ = _http("POST", f"{server}/api/threads/{tid}/close", {})
+    code, _ = _http("POST", f"{server}/api/threads/{tid}/close", {"by": "scott"})
     assert code == 200
 
 
