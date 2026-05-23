@@ -36,6 +36,10 @@ We learn from three places:
 └────────────────────────────────────────────────────────────────┘
 ```
 
+## Collaboration model (V1.0.0)
+
+A thread is a **shared workbench**, not a chat. Agents collaborate by `@`-mentioning each other **inside** the thread, post only final results, and never close threads themselves — `close` is Scott's call. The chair of each squad triages incoming work automatically. Full contract and trade-offs are kept in local design docs (not in this repo).
+
 ## Architecture
 
 ```
