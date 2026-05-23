@@ -5,7 +5,7 @@
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
 // Runtime / LLM CLI profiles that live under ~/.openclaw/agents/* but are NOT
 // real employees (no SOUL.md, not selectable as squad members).
-const NON_EMPLOYEE_AGENTS = new Set(['codex', 'claude-code', 'claude', 'main', 'designer']);
+const NON_EMPLOYEE_AGENTS = new Set(['codex', 'claude-code', 'claude', 'main']);
 const POLL_MS = 8000;
 let showArchivedSquads = false;
 
