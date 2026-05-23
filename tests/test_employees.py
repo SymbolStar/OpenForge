@@ -18,11 +18,19 @@ from tests.conftest import server  # noqa: F401, E402
 
 # ─── module-level unit tests ────────────────────────────────────────
 
-def _make_workspace(home: Path, agent_id: str, *, with_soul: bool = True) -> None:
+def _make_workspace(home: Path, agent_id: str, *, with_soul: bool = True, with_agent: bool = True) -> None:
+    """Create a workspace and (by default) a matching agents/<id>/ dir.
+
+    A real employee needs BOTH workspace-<id>/SOUL.md AND agents/<id>/.
+    Tests can pass with_agent=False to simulate workspace-only project repos
+    like workspace-clawdesign.
+    """
     ws = home / f"workspace-{agent_id}"
     ws.mkdir(parents=True, exist_ok=True)
     if with_soul:
         (ws / "SOUL.md").write_text(f"# SOUL — {agent_id}\n")
+    if with_agent:
+        (home / "agents" / agent_id).mkdir(parents=True, exist_ok=True)
 
 
 def test_list_employees_empty_on_fresh_home(fake_home):
@@ -39,6 +47,20 @@ def test_list_employees_finds_workspace_with_soul(fake_home):
     _make_workspace(oc, "dora")
     _make_workspace(oc, "judy")
     assert forge_employees.list_employees() == ["alice", "dora", "judy"]
+
+
+def test_list_employees_skips_workspace_without_agent_dir(fake_home):
+    """Regression for the clawdesign bug. workspace-clawdesign has a SOUL.md
+    (it's a complete OpenClaw project template) but no agents/clawdesign/
+    — the actual agent is `designer`. The workspace is a *project repo*,
+    not an employee."""
+    import forge_employees
+    oc = fake_home / ".openclaw"
+    oc.mkdir()
+    _make_workspace(oc, "alice")
+    _make_workspace(oc, "clawdesign", with_agent=False)
+    _make_workspace(oc, "designer")
+    assert forge_employees.list_employees() == ["alice", "designer"]
 
 
 def test_list_employees_skips_workspace_without_soul(fake_home):
@@ -103,6 +125,15 @@ def test_is_employee_negative(fake_home):
     assert forge_employees.is_employee("ghost") is False
 
 
+def test_is_employee_requires_agent_dir(fake_home):
+    """Workspace + SOUL.md alone (no agents/<id>/) is a project repo, not an employee."""
+    import forge_employees
+    oc = fake_home / ".openclaw"
+    oc.mkdir()
+    _make_workspace(oc, "clawdesign", with_agent=False)
+    assert forge_employees.is_employee("clawdesign") is False
+
+
 @pytest.mark.parametrize("bad", ["", "../passwd", "a/b", None])
 def test_is_employee_rejects_invalid_ids(fake_home, bad):
     import forge_employees
@@ -126,6 +157,20 @@ def test_http_employees_endpoint_returns_workspace_owners(fake_home, server):
     code, body = _get(f"{server}/api/employees")
     assert code == 200
     assert body == ["alice", "designer", "judy"]
+
+
+def test_http_employees_excludes_project_repos(fake_home, server):
+    """Regression for the clawdesign-in-members bug."""
+    oc = fake_home / ".openclaw"
+    oc.mkdir(exist_ok=True)
+    _make_workspace(oc, "alice")
+    _make_workspace(oc, "clawdesign", with_agent=False)
+    _make_workspace(oc, "designer")
+
+    code, body = _get(f"{server}/api/employees")
+    assert code == 200
+    assert body == ["alice", "designer"]
+    assert "clawdesign" not in body
 
 
 def test_http_employees_excludes_runtime_profiles(fake_home, server):
