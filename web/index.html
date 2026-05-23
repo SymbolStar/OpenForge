@@ -187,7 +187,7 @@
       <button id="btn-close-modal" type="button" title="Close">×</button>
     </div>
     <form id="squad-form">
-      <label>ID<input name="id" required maxlength="32" pattern="\w{1,32}" placeholder="frontend" /></label>
+      <label>ID<input name="id" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,31}" placeholder="frontend / ai-research" title="字母/数字开头，允许 字母、数字、下划线(_)、连字符(-)，最长 32 字符" /><small class="field-hint">字母/数字开头，可包含 <code>_</code> 和 <code>-</code>，最长 32 字符</small></label>
       <label>Name<input name="name" required placeholder="Frontend Team" /></label>
       <label>Description<textarea name="description" rows="3" placeholder="Focus, scope, or rituals"></textarea></label>
       <label>Emoji<input name="emoji" maxlength="8" placeholder="✨" /></label>

@@ -60,7 +60,7 @@ AGENT_ID_ROUTE_RE = r"([A-Za-z0-9][A-Za-z0-9._\-]{0,63})"
 DEPRECATION_DATE = "Fri, 22 May 2026 00:00:00 GMT"
 SUNSET_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
 
-SQUAD_ID_RE = re.compile(r"^\w{1,32}$")
+SQUAD_ID_RE = re.compile(r"^[A-Za-z0-9][\w-]{0,31}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
 THREAD_ROUTE_RE = r"(th_[0-9a-f]+_[0-9a-f]+)"
 
@@ -104,7 +104,7 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
     squad_id = payload.get("id")
     members = payload.get("members")
     if not isinstance(squad_id, str) or not SQUAD_ID_RE.fullmatch(squad_id):
-        return None, "id must match \\w{1,32}"
+        return None, "id 必须以字母/数字开头，仅允许 [A-Za-z0-9_-]，最长 32 字符"
     if not isinstance(members, list) or not members:
         return None, "members must contain at least one member"
     clean_members = []

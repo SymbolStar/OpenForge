@@ -1161,6 +1161,20 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   cursor: pointer;
 }
 .squad-archive-row strong { display: block; font-weight: 600; font-size: 14px; }
+.field-hint {
+  display: block;
+  color: var(--text-soft);
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.field-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 0 3px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 3px;
+}
 .squad-archive-row small {
   display: block;
   color: var(--text-soft);
