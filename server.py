@@ -48,6 +48,7 @@ WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
 import forge_context
+import forge_employees
 import forge_files
 import forge_refs
 import forge_session_search
@@ -289,6 +290,15 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                     if child.is_dir() and (child / "sessions").exists():
                         ids.add(child.name)
             self._json(sorted(ids))
+            return
+
+        if path == "/api/employees":
+            # Curated employee roster: agents with workspace-<id>/SOUL.md.
+            # Drives the squad member-picker; excludes runtime LLM profiles
+            # (codex, claude-code, ...) that live in agents/ but aren't
+            # real employees. Single source of truth — no hardcoded
+            # blocklist anywhere in the codebase.
+            self._json(forge_employees.list_employees())
             return
 
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", path)

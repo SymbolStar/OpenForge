@@ -1,11 +1,10 @@
 // OpenForge web app — squad / thread / posts, vanilla JS, Slack-shaped.
 
-// Legacy hardcoded list — kept ONLY as fallback for AGENT_COLOR_CLASS (avatar colours).
-// The squad-modal member list is built dynamically from /api/agents (see buildMemberControls).
+// Legacy hardcoded list — kept ONLY as fallback for AGENT_COLOR_CLASS (avatar
+// colours) and as a last-resort fallback if /api/employees is unreachable.
+// The squad-modal member list is built dynamically from /api/employees
+// (curated roster: agents with workspace-<id>/SOUL.md). See buildMemberControls.
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
-// Runtime / LLM CLI profiles that live under ~/.openclaw/agents/* but are NOT
-// real employees (no SOUL.md, not selectable as squad members).
-const NON_EMPLOYEE_AGENTS = new Set(['codex', 'claude-code', 'claude', 'main']);
 const POLL_MS = 8000;
 let showArchivedSquads = false;
 
@@ -888,14 +887,15 @@ async function openEditModal(squad) {
   if (els.form.elements.description) els.form.elements.description.value = squad.description || '';
   if (els.form.elements.emoji) els.form.elements.emoji.value = squad.emoji || '';
   await buildMemberControls();
-  // Make sure existing members are present as checkboxes even if /api/agents
-  // didn't surface them (e.g. transient fetch failure or stale agent dir).
+  // Make sure existing members are present as checkboxes even if /api/employees
+  // didn't surface them (e.g. transient fetch failure or member is a legacy
+  // entry without a workspace-<id>/SOUL.md).
   const members = new Set(squad.members || []);
   const known = new Set(
     [...els.memberCheckboxes.querySelectorAll('input')].map(i => i.value)
   );
   members.forEach(m => {
-    if (!known.has(m) && !NON_EMPLOYEE_AGENTS.has(m)) {
+    if (!known.has(m)) {
       const label = document.createElement('label');
       label.innerHTML = `<input type="checkbox" name="members" value="${m}" /> ${m}`;
       label.querySelector('input').onchange = syncChairOptions;
@@ -933,21 +933,22 @@ function syncChairOptions() {
   });
 }
 
-// Build the squad-modal member checkboxes from the live /api/agents list,
-// filtering out runtime/LLM-CLI profiles (codex, claude-code, ...).
-// Falls back to the legacy hardcoded AGENTS list if the fetch fails.
+// Build the squad-modal member checkboxes from the curated employee
+// roster (GET /api/employees). The roster is authoritative — it returns
+// only agents with ~/.openclaw/workspace-<id>/SOUL.md on the server side,
+// so adding a new employee requires zero front-end code changes.
 async function buildMemberControls() {
-  let agents = null;
+  let employees = null;
   try {
-    const res = await fetch('/api/agents');
-    if (res.ok) agents = await res.json();
+    const res = await fetch('/api/employees');
+    if (res.ok) employees = await res.json();
   } catch (e) { /* network error — fall back below */ }
-  if (!Array.isArray(agents) || agents.length === 0) {
-    agents = AGENTS.slice();
+  if (!Array.isArray(employees) || employees.length === 0) {
+    // Last-resort fallback: legacy hardcoded list. Used only if /api/employees
+    // is unreachable AND returned nothing usable, so the picker is never empty.
+    employees = AGENTS.slice();
   }
-  const list = agents
-    .filter(a => typeof a === 'string' && a && !NON_EMPLOYEE_AGENTS.has(a))
-    .sort();
+  const list = employees.filter(a => typeof a === 'string' && a).sort();
   els.memberCheckboxes.innerHTML = '';
   list.forEach(agent => {
     const label = document.createElement('label');
