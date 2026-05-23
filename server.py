@@ -31,6 +31,8 @@ Writes: thread events (squads.json under openforge/).
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import re
 import secrets
@@ -50,6 +52,7 @@ import forge_files
 import forge_refs
 import forge_session_search
 import forge_store as store
+import forge_uploads
 import post_router
 
 FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
@@ -320,6 +323,17 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(data))
             return
 
+        # uploads (paste-image feature): GET /api/uploads/<filename>
+        m = re.match(r"^/api/uploads/([A-Za-z0-9._-]+)$", path)
+        if m:
+            resolved = forge_uploads.get_upload_path(m.group(1))
+            if resolved is None:
+                self._json({"error": "not found"}, 404)
+                return
+            up_path, up_mime = resolved
+            self._file(up_path, up_mime)
+            return
+
         # v0.7: list file roots
         if path == "/api/file-roots":
             self._json({"roots": forge_files.list_file_roots()})
@@ -482,6 +496,33 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # Image upload (paste-image in composer): POST /api/uploads
+        # Body: {"content_base64": "...", "content_type": "image/png"}
+        if url.path == "/api/uploads":
+            opts = self._read_json()
+            if opts is None:
+                return
+            b64 = opts.get("content_base64")
+            mime = opts.get("content_type")
+            if not isinstance(b64, str) or not b64:
+                self._json({"error": "content_base64 required"}, 400)
+                return
+            try:
+                raw = base64.b64decode(b64, validate=True)
+            except (binascii.Error, ValueError):
+                self._json({"error": "content_base64 is not valid base64"}, 400)
+                return
+            if len(raw) > forge_uploads.MAX_BYTES:
+                self._json({"error": f"file too large: max {forge_uploads.MAX_BYTES} bytes"}, 413)
+                return
+            try:
+                meta = forge_uploads.save_upload(raw, mime)
+            except forge_uploads.UploadError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(meta, 201)
             return
 
         if url.path == "/api/squads":

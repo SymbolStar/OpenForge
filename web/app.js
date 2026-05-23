@@ -184,11 +184,22 @@ function resolveChipFromRefs(target) {
   return null;
 }
 
+// Markdown image syntax `![alt](url)` — only `/api/uploads/<file>` URLs are
+// trusted and rendered as <img>; everything else falls through as plain text
+// (XSS hardening).
+const IMAGE_MD_RE = /!\[([^\]]*)\]\((\/api\/uploads\/[A-Za-z0-9._-]+)\)/g;
+
 function renderBody(text) {
-  // Replace [[file]] tokens with sentinel placeholders BEFORE escaping, so
-  // the chip HTML survives escapeHtml(). Sentinels use \u0001 markers.
+  // Replace [[file]] tokens AND ![](url) image tokens with sentinel
+  // placeholders BEFORE escaping, so chip/img HTML survives escapeHtml().
+  // Sentinels use \u0001 markers.
   const chips = [];
-  const piped = (text || '').replace(FILE_LINK_RE, (_, target, label) => {
+  const images = [];
+  let piped = (text || '').replace(IMAGE_MD_RE, (_, alt, url) => {
+    images.push({ url, alt });
+    return `\u0001IMG${images.length - 1}\u0001`;
+  });
+  piped = piped.replace(FILE_LINK_RE, (_, target, label) => {
     // v0.8: try refs registry first (sync lookup against cached index)
     const refHit = resolveChipFromRefs(target);
     if (refHit) {
@@ -236,6 +247,12 @@ function renderBody(text) {
       : `#/files/${encodeURIComponent(c.name)}`;
     return `<a class="file-chip" href="${href}" title="打开 ${escapeAttr(c.target)}" data-file-chip="1">`
       + `<span class="file-chip-icon">📄</span>${escapeHtml(c.display)}</a>`;
+  });
+  html = html.replace(/\u0001IMG(\d+)\u0001/g, (_, idx) => {
+    const im = images[Number(idx)];
+    if (!im) return '';
+    return `<a class="post-image-link" href="${escapeAttr(im.url)}" target="_blank" rel="noopener">`
+      + `<img class="post-image" src="${escapeAttr(im.url)}" alt="${escapeAttr(im.alt || 'image')}" loading="lazy" /></a>`;
   });
   return html;
 }
@@ -747,7 +764,7 @@ function cancelReply() {
 
 // ─── composer: new thread ─────────────────────────────────────────────
 async function submitNewThread() {
-  const content = els.threadComposerInput.value.trim();
+  const content = buildSubmitContent(els.threadComposerInput);
   if (!content) return;
   if (!state.currentSquadId) {
     setStatus('请先选择一个 squad', false);
@@ -764,6 +781,7 @@ async function submitNewThread() {
       }
     );
     els.threadComposerInput.value = '';
+    clearAttachments(els.threadComposerInput);
     updateComposerCount(els.threadComposerInput, els.threadComposerCount);
     autosize(els.threadComposerInput);
     await refreshThreadsForCurrentSquad();
@@ -778,7 +796,7 @@ async function submitNewThread() {
 
 // ─── composer: new post ───────────────────────────────────────────────
 async function submitPost() {
-  const content = els.postComposerInput.value.trim();
+  const content = buildSubmitContent(els.postComposerInput);
   if (!content || !state.currentThreadId) return;
   els.postComposerInput.disabled = true;
   els.btnSendPost.disabled = true;
@@ -796,6 +814,7 @@ async function submitPost() {
       }
     );
     els.postComposerInput.value = '';
+    clearAttachments(els.postComposerInput);
     autosize(els.postComposerInput);
     cancelReply();
     state.currentThread = updated;
@@ -944,11 +963,150 @@ function updateComposerCount(input, counter) {
   if (counter) counter.textContent = input.value.length;
 }
 
+// ─── paste-image upload ───────────────────────────────────────────
+// Listen for `paste` events on a composer textarea; if the clipboard
+// contains an image, POST it to /api/uploads and insert a markdown
+// `![paste](/api/uploads/<sha>.<ext>)` reference at the caret. The
+// renderer (renderBody) turns that into an inline <img>.
+
+async function uploadPastedImage(file) {
+  const buf = await file.arrayBuffer();
+  // base64 in chunks (avoid 'Maximum call stack' on big buffers)
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  const b64 = btoa(bin);
+  const res = await fetch('/api/uploads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content_base64: b64,
+      content_type: file.type || 'image/png',
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data; // { url, filename, size, content_type, sha256 }
+}
+
+function insertAtCaret(input, snippet) {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  const before = input.value.slice(0, start);
+  const after = input.value.slice(end);
+  // Pad with surrounding newlines so the image renders on its own line.
+  const needLeadNl = before.length > 0 && !before.endsWith('\n');
+  const needTrailNl = after.length > 0 && !after.startsWith('\n');
+  const insert = (needLeadNl ? '\n' : '') + snippet + (needTrailNl ? '\n' : '');
+  input.value = before + insert + after;
+  const caret = (before + insert).length;
+  input.selectionStart = input.selectionEnd = caret;
+  autosize(input);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ─── composer attachments ──────────────────────────────────────────
+// Pasted images are NOT inserted into the textarea as markdown anymore;
+// instead they live on `input._attachments = [{url, alt}]` and are shown
+// in the sibling preview strip (with a × close button). On submit we
+// concatenate them onto the message body.
+function getAttachments(input) {
+  if (!input._attachments) input._attachments = [];
+  return input._attachments;
+}
+function addAttachment(input, att) {
+  getAttachments(input).push(att);
+  if (input._refreshPreview) input._refreshPreview();
+}
+function removeAttachment(input, idx) {
+  const arr = getAttachments(input);
+  arr.splice(idx, 1);
+  if (input._refreshPreview) input._refreshPreview();
+}
+function clearAttachments(input) {
+  input._attachments = [];
+  if (input._refreshPreview) input._refreshPreview();
+}
+function buildSubmitContent(input) {
+  const text = input.value.trim();
+  const atts = getAttachments(input);
+  if (atts.length === 0) return text;
+  const imgMd = atts.map(a => `![${a.alt || 'paste'}](${a.url})`).join('\n');
+  return text ? `${text}\n\n${imgMd}` : imgMd;
+}
+
+function attachPasteUpload(input) {
+  if (!input || input.dataset.pasteUploadBound === '1') return;
+  input.dataset.pasteUploadBound = '1';
+  input.addEventListener('paste', async event => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const imageItems = items.filter(it => it.kind === 'file' && /^image\//.test(it.type));
+    if (imageItems.length === 0) return;
+    event.preventDefault();
+    setStatus(`上传图片中 (${imageItems.length})...`);
+    try {
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        const meta = await uploadPastedImage(file);
+        addAttachment(input, { url: meta.url, alt: 'paste' });
+      }
+      setStatus('图片已上传 ✅');
+    } catch (err) {
+      setStatus(`图片上传失败: ${err.message}`, false);
+    }
+  });
+}
+
+// ─── composer image preview ───────────────────────────────────────
+// Scan the composer textarea for `/api/uploads/<file>` URLs (from
+// `![paste](...)` markdown) and render thumbnails in a sibling preview
+// strip so users see what they pasted before submitting.
+const COMPOSER_IMG_RE = /!\[([^\]]*)\]\((\/api\/uploads\/[A-Za-z0-9._-]+)\)/g;
+
+function attachComposerPreview(input) {
+  if (!input || input.dataset.previewBound === '1') return;
+  input.dataset.previewBound = '1';
+  const strip = document.createElement('div');
+  strip.className = 'composer-preview';
+  strip.hidden = true;
+  input.insertAdjacentElement('beforebegin', strip);
+  const update = () => {
+    const items = getAttachments(input);
+    if (items.length === 0) {
+      strip.hidden = true;
+      strip.innerHTML = '';
+      return;
+    }
+    strip.hidden = false;
+    strip.innerHTML = items.map((it, i) =>
+      `<span class="composer-preview-thumb" data-idx="${i}" title="${escapeAttr(it.url)}">`
+      + `<img src="${escapeAttr(it.url)}" alt="${escapeAttr(it.alt || 'image')}" loading="lazy" />`
+      + `<button type="button" class="composer-preview-remove" data-idx="${i}" title="移除">×</button>`
+      + `</span>`
+    ).join('');
+  };
+  strip.addEventListener('click', e => {
+    const btn = e.target.closest('.composer-preview-remove');
+    if (!btn) return;
+    e.preventDefault();
+    const idx = Number(btn.dataset.idx);
+    if (Number.isInteger(idx)) removeAttachment(input, idx);
+  });
+  input.addEventListener('input', update);
+  // expose so the post-submit reset can clear the strip too
+  input._refreshPreview = update;
+}
+
 function wireComposer(input, submit, counter) {
   input.addEventListener('input', () => {
     autosize(input);
     updateComposerCount(input, counter);
     updateMentionPicker(input);
+    if (input._refreshPreview) input._refreshPreview();
   });
   input.addEventListener('keydown', event => {
     if (mentionPickerKeydown(input, event)) return;  // picker consumed it
@@ -1149,6 +1307,10 @@ els.btnDeleteSquad.onclick = () => {
 
 wireComposer(els.threadComposerInput, submitNewThread, els.threadComposerCount);
 wireComposer(els.postComposerInput, submitPost, null);
+attachPasteUpload(els.postComposerInput);
+attachPasteUpload(els.threadComposerInput);
+attachComposerPreview(els.postComposerInput);
+attachComposerPreview(els.threadComposerInput);
 els.btnSendPost.onclick = submitPost;
 els.btnCloseThread.onclick = closeCurrentThread;
 els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
