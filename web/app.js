@@ -657,6 +657,12 @@ function renderParticipants(members) {
 // parent posts for the inline quote card. Avoids walking state.currentThread
 // inside the render loop.
 let _postLookup = new Map();
+// Chronological index of *live* posts only (drops superseded + drops
+// __router__ placeholders/errors). Used to suppress the inline quote card
+// when an agent reply's parent is the immediately-preceding human post —
+// in that case the quoted text is right above and the card is pure noise
+// (Scott 2026-05-24: "Sherry 回复中的 消息引用 我觉得没必要").
+let _liveIndex = new Map();
 
 function renderPosts(posts) {
   els.postList.innerHTML = '';
@@ -665,6 +671,11 @@ function renderPosts(posts) {
   (posts || []).forEach(p => {
     const pid = p.id || p.post_id;
     if (pid) _postLookup.set(pid, p);
+  });
+  _liveIndex = new Map();
+  live.forEach((p, i) => {
+    const pid = p.id || p.post_id;
+    if (pid) _liveIndex.set(pid, i);
   });
   if (!live.length) {
     els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
@@ -766,14 +777,24 @@ function renderPostNode(post, _unused) {
       ${showReplyBtn ? '<button class="btn-reply" type="button" title="回复这条">↩ Reply</button>' : ''}
     </div>
   `;
-  // Inline quote card: if this post is a reply and the parent is still in
-  // the projection, render the card above the body. Parent missing (e.g.
-  // pruned) → silently skip; the post still makes sense on its own.
+  // Inline quote card: skip if this post's parent is the immediately
+  // preceding live (non-router) post — quoting context that's literally
+  // one row above is just visual noise. Auto-injected agent replies
+  // (router sets parent_post_id to the @-trigger) are the dominant case.
+  // The card *does* render when the parent is further back, which is
+  // exactly when a quote helps: scott manually replied to an old post,
+  // or an agent replied across other intervening posts.
   const parentId = post.parent_post_id;
   if (parentId) {
     const parent = _postLookup.get(parentId);
     if (parent) {
-      row.querySelector('.post-quote-slot').appendChild(renderQuoteCard(parent));
+      const myIdx = _liveIndex.get(postId);
+      const parentIdx = _liveIndex.get(parentId);
+      const adjacent = myIdx !== undefined && parentIdx !== undefined
+        && myIdx - parentIdx === 1;
+      if (!adjacent) {
+        row.querySelector('.post-quote-slot').appendChild(renderQuoteCard(parent));
+      }
     }
   }
   if (showReplyBtn) {
