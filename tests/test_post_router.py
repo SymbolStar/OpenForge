@@ -56,6 +56,59 @@ def test_enqueue_no_mentions_no_parent(router, store):
     assert router.enqueue_if_needed(t["thread_id"], post) is False
 
 
+def test_chair_token_resolves_to_squad_chair(router, store, monkeypatch):
+    """@chair → dispatched to squad's actual chair (PRD-v1.0 §2)."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqc", "name": "sqc",
+                        "members": ["sherry", "scott"], "chair": "sherry"})
+    t = store.create_thread("sqc", "scott", "@chair fyi")
+    post = {"speaker": "scott", "post_id": "p1", "mentions": ["chair"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["sherry"]
+
+
+def test_chair_token_collapses_with_explicit_chair_name(router, store, monkeypatch):
+    """@chair + @sherry (chair=sherry) → single dispatch."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqc2", "name": "sqc2",
+                        "members": ["sherry", "scott"], "chair": "sherry"})
+    t = store.create_thread("sqc2", "scott", "@chair @sherry hey")
+    post = {"speaker": "scott", "post_id": "p1",
+            "mentions": ["chair", "sherry"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["sherry"]
+
+
+def test_chair_token_dropped_when_chair_recursive(router, store, monkeypatch):
+    """Squad whose chair is literally 'chair' → token is dropped, not
+    routed (avoids the 'Unknown agent id chair' error post)."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqc3", "name": "sqc3",
+                        "members": ["chair", "scott"], "chair": "chair"})
+    t = store.create_thread("sqc3", "scott", "@chair help")
+    post = {"speaker": "scott", "post_id": "p1", "mentions": ["chair"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert calls == []
+
+
 def test_enqueue_dedupes_mentions(router, store, monkeypatch):
     """Two @milk in one post → one dispatch."""
     calls: list[tuple] = []

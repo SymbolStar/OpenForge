@@ -82,6 +82,12 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     if (post.get("speaker") or "").strip().lower() != "scott":
         return False
     mentions = list(post.get("mentions") or [])
+    # V1.1: resolve the special @chair token to the actual chair of the
+    # thread's squad. PRD-v1.0 §2 treats 'chair' as a role, not an agent id.
+    # Doing this here (before dedupe) means @chair + @<chair_name> in the
+    # same post collapses to one route, which is what users expect.
+    if mentions and any((m or "").strip().lower() == "chair" for m in mentions):
+        mentions = _resolve_chair_token(thread_id, mentions)
     # Implicit mention: if scott replies (parent_post_id set) to an agent
     # post without an explicit @, treat it as @<that agent>. Mirrors Slack
     # / Discord thread-reply semantics. Replies to scott's own or to
@@ -113,6 +119,36 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
 
 
 _RESERVED_SPEAKERS = {"scott", ROUTER_SPEAKER_FALLBACK.lower()}
+
+
+def _resolve_chair_token(thread_id: str, mentions: list[str]) -> list[str]:
+    """Replace any occurrence of 'chair' in `mentions` with the actual
+    chair of the thread's squad. If we can't resolve (thread gone, squad
+    gone, no chair set), drop the 'chair' token entirely — better than
+    routing to a nonexistent agent and getting the ugly
+    'Unknown agent id "chair"' router-error post.
+    """
+    chair_id: str | None = None
+    try:
+        thread = store.project_thread(thread_id)
+        squad_id = (thread or {}).get("squad_id")
+        if squad_id:
+            squad = store.get_squad(squad_id)
+            ch = (squad or {}).get("chair") or ""
+            ch = ch.strip().lower()
+            if ch and ch != "chair":  # guard against pathological recursion
+                chair_id = ch
+    except Exception:
+        chair_id = None
+    out: list[str] = []
+    for m in mentions:
+        if (m or "").strip().lower() == "chair":
+            if chair_id:
+                out.append(chair_id)
+            # else: drop silently (downstream dedupe handles empties)
+        else:
+            out.append(m)
+    return out
 
 
 def _implicit_mention_from_parent(thread_id: str, parent_post_id: str | None) -> str | None:
