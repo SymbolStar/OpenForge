@@ -149,16 +149,36 @@ function isEmployee(name) {
   return !!name && _employeeSet.has(name);
 }
 
-function webchatLinkFor(agentId) {
-  return `${_webchatBase}/chat?session=agent:${encodeURIComponent(agentId)}:main`;
+// Build the webchat deep-link for an agent avatar. With a thread_id, we
+// link to the per-thread explicit session the post-router actually spawns
+// (`agent:<id>:explicit:forge-<thread_id>-<id>`), so clicking the avatar
+// lands in the same conversation that produced this thread's posts.
+// Without a thread_id, we fall back to the agent's `main` session (used
+// outside any thread context).
+//
+// The format must match what post_router constructs when calling
+// `openclaw agent` — if you change one side, change the other and bump
+// the V1.x note in docs/PRD-v1.0-thread-collaboration.md §4.3.
+function webchatLinkFor(agentId, threadId) {
+  const id = encodeURIComponent(agentId);
+  if (threadId) {
+    // No encoding on threadId or session segment: openclaw session ids
+    // never contain reserved URL chars (validated by SQUAD_ROUTE_RE-style
+    // gates) and the webchat parser splits on `:` so keeping it raw
+    // matches what users see in chat history shares.
+    return `${_webchatBase}/chat?session=agent:${id}:explicit:forge-${threadId}-${id}`;
+  }
+  return `${_webchatBase}/chat?session=agent:${id}:main`;
 }
 
-function renderAvatarTag(name, { extraClass = '', styleAttr = '' } = {}) {
+function renderAvatarTag(name, { extraClass = '', styleAttr = '', threadId = null } = {}) {
   const cls = `avatar ${avatarClass(name)}${extraClass ? ' ' + extraClass : ''}`;
   const label = escapeHtml(avatarLabel(name));
   if (isEmployee(name)) {
-    const href = webchatLinkFor(name);
-    const title = `点击查看 ${name} 的 main session`;
+    const href = webchatLinkFor(name, threadId);
+    const title = threadId
+      ? `点击查看 ${name} 在本 thread 的 session`
+      : `点击查看 ${name} 的 main session`;
     return `<a class="${cls} avatar-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"${styleAttr}>${label}</a>`;
   }
   return `<div class="${cls}"${styleAttr} title="${escapeHtml(name || '')}">${label}</div>`;
@@ -633,13 +653,17 @@ function renderParticipants(members) {
     const label = avatarLabel(name);
     let el;
     if (isEmployee(name)) {
-      // PR-3: clickable employee mini-avatar → webchat main session.
+      // V1.1: prefer per-thread explicit session if a thread is open;
+      // falls back to main when participants are rendered before a
+      // thread is selected.
       el = document.createElement('a');
-      el.href = webchatLinkFor(name);
+      el.href = webchatLinkFor(name, state.currentThreadId || null);
       el.target = '_blank';
       el.rel = 'noopener noreferrer';
       el.className = `${cls} avatar-link`;
-      el.title = `点击查看 ${name} 的 main session`;
+      el.title = state.currentThreadId
+        ? `点击查看 ${name} 在本 thread 的 session`
+        : `点击查看 ${name} 的 main session`;
     } else {
       el = document.createElement('div');
       el.className = cls;
@@ -762,7 +786,7 @@ function renderPostNode(post, _unused) {
   // quote-card UI replaced the tree-nesting UI.
   const showReplyBtn = post.speaker !== '__router__';
   row.innerHTML = `
-    ${renderAvatarTag(post.speaker, { styleAttr: avatarStyle(post.speaker) })}
+    ${renderAvatarTag(post.speaker, { styleAttr: avatarStyle(post.speaker), threadId: state.currentThreadId || null })}
     <div class="post-content">
       <div class="post-head">
         <span class="post-name">${escapeHtml(post.speaker)}</span>
