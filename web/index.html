@@ -97,10 +97,7 @@
     </header>
     <div id="post-list"></div>
     <footer id="post-composer">
-      <div id="composer-reply-banner">
-        <span class="reply-target"></span>
-        <button type="button" id="btn-cancel-reply" title="取消回复">×</button>
-      </div>
+      <div id="composer-reply-banner"></div>
       <textarea id="post-composer-input"
                 rows="1"
                 placeholder="发一条消息… (Enter 发送 · Shift+Enter 换行 · @ 可提到 agent)"
@@ -218,16 +215,6 @@
     </div>
     <form id="settings-form">
       <fieldset>
-        <legend>Features</legend>
-        <label class="setting-row">
-          <input type="checkbox" name="replyNesting" />
-          <span>
-            <strong>嵌套回复</strong>
-            <small>每条 post hover 出现 ↩ Reply，发送后嵌套渲染</small>
-          </span>
-        </label>
-      </fieldset>
-      <fieldset>
         <legend>我的头像</legend>
         <div class="avatar-editor">
           <div id="avatar-preview" class="avatar avatar-lg">S</div>
@@ -255,6 +242,7 @@
         </div>
       </fieldset>
       <div class="modal-actions">
+        <small class="version-tag" id="settings-version" title="OpenForge build">v?</small>
         <span class="flex-spacer"></span>
         <button type="button" id="btn-close-settings-2">关闭</button>
       </div>

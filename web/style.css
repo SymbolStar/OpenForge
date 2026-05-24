@@ -869,7 +869,14 @@ a.mini-avatar.avatar-link:focus-visible {
 .checkbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 240px; overflow-y: auto; }
 .checkbox-grid label { display: flex !important; gap: 8px; align-items: center; font-weight: 400 !important; }
 .checkbox-grid input { width: auto !important; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.modal-actions .version-tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted, #888);
+  opacity: 0.75;
+  user-select: text;
+}
 .modal-actions button {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -1016,45 +1023,79 @@ a.mini-avatar.avatar-link:focus-visible {
 }
 .reaction-picker .r-pick:hover { background: #f0f0f0; }
 
-.post-children {
-  margin-left: 44px;
-  padding-left: 12px;
-  border-left: 2px solid var(--border);
-}
-.post-children .post-children {
-  margin-left: 24px; /* shallower indent at deeper levels */
-}
-
-.reply-quote {
+/* ─── V1.1 quote card ──────────────────────────────────────
+   Replaces both the old tree-nesting (.post-children) and the old
+   reply banner (.reply-quote / #composer-reply-banner inline span).
+   Same DOM is rendered in two places:
+     1. inside a post that has parent_post_id (inline)
+     2. inside #composer-reply-banner when starting a reply (cancelable)
+   Style mirrors the screenshot Scott provided: faint bordered card,
+   one author/time line, one truncated content line, optional × button. */
+.quote-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--rail-bg, rgba(255,255,255,0.02));
   font-size: 12px;
   color: var(--text-soft);
-  background: var(--accent-soft);
-  border-left: 3px solid var(--accent);
-  padding: 4px 8px;
-  margin-bottom: 6px;
-  border-radius: 0 4px 4px 0;
-  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.reply-quote .quote-author { font-weight: 600; margin-right: 6px; }
+.quote-card.quote-clickable { cursor: pointer; }
+.quote-card.quote-clickable:hover { background: var(--accent-soft); }
+.quote-card .quote-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.quote-card .quote-author { font-weight: 600; color: var(--text); }
+.quote-card .quote-time { opacity: 0.7; }
+.quote-card .quote-cancel {
+  margin-left: auto;
+  background: none; border: none; cursor: pointer; color: var(--text-soft);
+  font-size: 16px; line-height: 1; padding: 0 2px;
+}
+.quote-card .quote-cancel:hover { color: var(--text); }
+.quote-card .quote-body {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+/* Quote-card cancel × must beat #post-composer button green styling. */
+#post-composer .quote-card .quote-cancel {
+  background: none;
+  color: var(--text-soft);
+  border: none;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 1;
+  min-width: 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+}
+#post-composer .quote-card .quote-cancel:hover { background: none; color: var(--text); }
+
+/* Flash highlight when a quote-card click scrolls to the original post. */
+@keyframes post-flash-kf {
+  0%   { background-color: var(--accent-soft); }
+  100% { background-color: transparent; }
+}
+.post.post-flash { animation: post-flash-kf 1.4s ease-out; }
 
 #composer-reply-banner {
   display: none;
-  background: var(--accent-soft);
-  border-left: 3px solid var(--accent);
-  padding: 6px 10px;
   margin: 0 0 6px 0;
-  font-size: 12px;
-  color: var(--text);
-  align-items: center;
-  gap: 8px;
   grid-column: 1 / -1;
 }
-#composer-reply-banner.active { display: flex; }
-#composer-reply-banner .reply-target { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#composer-reply-banner button {
-  background: none; border: none; cursor: pointer; color: var(--text-soft);
-  font-size: 16px; line-height: 1;
-}
+#composer-reply-banner.active { display: block; }
+#composer-reply-banner .quote-card { margin-bottom: 0; }
 
 
 /* ─── settings modal ─────────────────────────────────────── */

@@ -52,12 +52,14 @@ const els = {
   btnCloseSettings: document.getElementById('btn-close-settings'),
   btnCloseSettings2: document.getElementById('btn-close-settings-2'),
   composerReplyBanner: document.getElementById('composer-reply-banner'),
-  btnCancelReply: document.getElementById('btn-cancel-reply'),
+  // (btnCancelReply removed in V1.1 — cancel × lives inside renderQuoteCard)
 };
 
 // ─── settings (localStorage) ─────────────────────────────────
 const SETTINGS_KEY = 'openforge.settings.v1';
-const SETTINGS_DEFAULTS = { replyNesting: false, myAvatar: '', myAvatarColor: '' };
+// `replyNesting` was removed in V1.1 (inline quote-card UI replaced tree
+// nesting). Default kept here only so old localStorage payloads don't barf.
+const SETTINGS_DEFAULTS = { myAvatar: '', myAvatarColor: '' };
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
@@ -118,6 +120,10 @@ async function loadWebchatBase() {
       const cfg = await res.json();
       if (cfg && typeof cfg.webchat_base_url === 'string' && cfg.webchat_base_url) {
         _webchatBase = cfg.webchat_base_url.replace(/\/$/, '');
+      }
+      if (cfg && typeof cfg.version === 'string' && cfg.version) {
+        const el = document.getElementById('settings-version');
+        if (el) el.textContent = cfg.version;
       }
     }
   } catch (e) {
@@ -647,27 +653,103 @@ function renderParticipants(members) {
   });
 }
 
+// Built fresh each render pass; renderPostNode reads it to look up
+// parent posts for the inline quote card. Avoids walking state.currentThread
+// inside the render loop.
+let _postLookup = new Map();
+
 function renderPosts(posts) {
   els.postList.innerHTML = '';
   const live = (posts || []).filter(p => !p.superseded);
+  _postLookup = new Map();
+  (posts || []).forEach(p => {
+    const pid = p.id || p.post_id;
+    if (pid) _postLookup.set(pid, p);
+  });
   if (!live.length) {
     els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
     return;
   }
-  if (state.settings.replyNesting) {
-    renderPostsNested(live);
-  } else {
-    live.forEach(p => els.postList.appendChild(renderPostNode(p, false)));
-  }
+  // V1.1: flat chronological list. Reply context is rendered as an inline
+  // quote card at the top of each child post (see renderPostNode), not as
+  // tree nesting — that was too visually heavy in real threads.
+  live.forEach(p => els.postList.appendChild(renderPostNode(p, false)));
 }
 
-function renderPostNode(post, includeChildren) {
+// One-line preview of a post's content for use inside quote cards / banners.
+// Strips markdown noise just enough to look clean in 1 line; never returns
+// more than n chars.
+function quotePreview(text, n = 140) {
+  const raw = (text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  return raw.length <= n ? raw : raw.slice(0, n - 1) + '…';
+}
+
+// Render the gray bordered "quoted message" card. Used in two places:
+//   1. top of any post that has parent_post_id (inline quote)
+//   2. composer reply banner (with the × cancel button)
+// `opts.cancelable=true` adds the × button. Returns an HTMLElement.
+function renderQuoteCard(parent, opts = {}) {
+  const card = document.createElement('div');
+  card.className = 'quote-card';
+  const author = parent.speaker || '?';
+  // Prefer the ISO ts (locale-formatted) for the quote header — matches
+  // the visual reference Scott showed ("2026/5/23 14:52").
+  let timeLabel = parent.time || '';
+  if (parent.ts) {
+    try {
+      const d = new Date(parent.ts);
+      if (!isNaN(d.getTime())) {
+        timeLabel = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ` +
+                    `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      }
+    } catch (e) { /* keep fallback */ }
+  }
+  const cancelBtn = opts.cancelable
+    ? '<button type="button" class="quote-cancel" title="取消回复">×</button>'
+    : '';
+  card.innerHTML = `
+    <div class="quote-head">
+      <span class="quote-author">${escapeHtml(author)}</span>
+      <span class="quote-time">${escapeHtml(timeLabel)}</span>
+      ${cancelBtn}
+    </div>
+    <div class="quote-body">${escapeHtml(quotePreview(parent.content))}</div>
+  `;
+  if (!opts.cancelable) {
+    // click-to-scroll only for inline quote cards rendered inside posts.
+    card.classList.add('quote-clickable');
+    card.title = '跳到原消息';
+    card.onclick = (e) => {
+      e.stopPropagation();
+      const pid = parent.id || parent.post_id;
+      if (pid) scrollToPost(pid);
+    };
+  }
+  return card;
+}
+
+function scrollToPost(postId) {
+  const target = document.querySelector(`.post[data-post-id="${CSS.escape(postId)}"]`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.remove('post-flash');
+  // force reflow so the animation restarts even if user clicks twice in a row
+  void target.offsetWidth;
+  target.classList.add('post-flash');
+  setTimeout(() => target.classList.remove('post-flash'), 1400);
+}
+
+function renderPostNode(post, _unused) {
   const row = document.createElement('article');
   row.className = 'post';
   row.dataset.speaker = post.speaker;
   const postId = post.id || post.post_id || '';
   row.dataset.postId = postId;
-  const showReplyBtn = state.settings.replyNesting && post.speaker !== '__router__';
+  // V1.1: Reply button is always available except on router system posts.
+  // Old `state.settings.replyNesting` gating was removed when the inline
+  // quote-card UI replaced the tree-nesting UI.
+  const showReplyBtn = post.speaker !== '__router__';
   row.innerHTML = `
     ${renderAvatarTag(post.speaker, { styleAttr: avatarStyle(post.speaker) })}
     <div class="post-content">
@@ -675,6 +757,7 @@ function renderPostNode(post, includeChildren) {
         <span class="post-name">${escapeHtml(post.speaker)}</span>
         <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
       </div>
+      <div class="post-quote-slot"></div>
       <div class="post-body">${renderBody(post.content)}</div>
       <div class="post-reactions"></div>
     </div>
@@ -683,6 +766,16 @@ function renderPostNode(post, includeChildren) {
       ${showReplyBtn ? '<button class="btn-reply" type="button" title="回复这条">↩ Reply</button>' : ''}
     </div>
   `;
+  // Inline quote card: if this post is a reply and the parent is still in
+  // the projection, render the card above the body. Parent missing (e.g.
+  // pruned) → silently skip; the post still makes sense on its own.
+  const parentId = post.parent_post_id;
+  if (parentId) {
+    const parent = _postLookup.get(parentId);
+    if (parent) {
+      row.querySelector('.post-quote-slot').appendChild(renderQuoteCard(parent));
+    }
+  }
   if (showReplyBtn) {
     row.querySelector('.btn-reply').onclick = (e) => {
       e.stopPropagation();
@@ -782,51 +875,33 @@ async function toggleReaction(postId, emoji) {
   }
 }
 
-function renderPostsNested(posts) {
-  // build id -> post + children adjacency
-  const byId = new Map();
-  posts.forEach(p => byId.set(p.id || p.post_id, { post: p, children: [] }));
-  const roots = [];
-  posts.forEach(p => {
-    const node = byId.get(p.id || p.post_id);
-    const parentId = p.parent_post_id;
-    if (parentId && byId.has(parentId)) {
-      byId.get(parentId).children.push(node);
-    } else {
-      roots.push(node);
-    }
-  });
-  const renderNode = (node, depth) => {
-    const wrap = document.createElement('div');
-    const article = renderPostNode(node.post, false);
-    wrap.appendChild(article);
-    if (node.children.length) {
-      const kids = document.createElement('div');
-      kids.className = 'post-children';
-      node.children.forEach(c => kids.appendChild(renderNode(c, depth + 1)));
-      wrap.appendChild(kids);
-    }
-    return wrap;
-  };
-  roots.forEach(r => els.postList.appendChild(renderNode(r, 0)));
-}
+// renderPostsNested removed in V1.1 — the tree-nesting UI was replaced by
+// inline quote cards (see renderQuoteCard + renderPostNode).
 
 function startReplyTo(post) {
   state.replyTo = {
     post_id: post.id || post.post_id,
     speaker: post.speaker,
     content: post.content,
+    ts: post.ts,
+    time: post.time,
   };
-  const preview = (post.content || '').replace(/\s+/g, ' ').slice(0, 80);
+  // Render the same gray quote card we use inline inside posts, with a ×
+  // to cancel. Replacing the whole banner contents on each call — cheap and
+  // avoids leaking handlers from a previous reply target.
+  els.composerReplyBanner.innerHTML = '';
+  const card = renderQuoteCard(post, { cancelable: true });
+  els.composerReplyBanner.appendChild(card);
   els.composerReplyBanner.classList.add('active');
-  els.composerReplyBanner.querySelector('.reply-target').innerHTML =
-    `↩ Replying to <strong>${escapeHtml(post.speaker)}</strong>: ${escapeHtml(preview)}`;
+  const cancelBtn = card.querySelector('.quote-cancel');
+  if (cancelBtn) cancelBtn.onclick = (e) => { e.stopPropagation(); cancelReply(); };
   els.postComposerInput.focus();
 }
 
 function cancelReply() {
   state.replyTo = null;
   els.composerReplyBanner.classList.remove('active');
+  els.composerReplyBanner.innerHTML = '';
 }
 
 // ─── composer: new thread ─────────────────────────────────────────────
@@ -1446,7 +1521,7 @@ els.settingsForm && els.settingsForm.addEventListener('change', (e) => {
   saveSettings(state.settings);
   refreshAvatarPreview();
   if (state.currentThread) renderDetail({ keepScroll: true });
-  if (!state.settings.replyNesting) cancelReply();
+  // (V1.1: reply is always on; no-op kept for call-site stability)
 });
 els.settingsForm && els.settingsForm.addEventListener('input', (e) => {
   const t = e.target;
@@ -1482,7 +1557,7 @@ btnResetAvatar && btnResetAvatar.addEventListener('click', () => {
   if (state.currentThread) renderDetail({ keepScroll: true });
 });
 
-els.btnCancelReply && (els.btnCancelReply.onclick = cancelReply);
+// (btn-cancel-reply listener gone — see renderQuoteCard cancelable handler)
 
 // poll for updates while a thread is open
 function startPolling() {
