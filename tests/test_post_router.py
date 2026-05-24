@@ -39,9 +39,53 @@ def _make_thread(store, content="hello @milk please help"):
 
 
 # ─── enqueue_if_needed quick guards ──────────────────────────────────
-def test_enqueue_ignores_non_scott(router, store):
-    t = _make_thread(store, "hi")
+def test_enqueue_routes_for_any_employee_speaker(router, store, monkeypatch):
+    """V1.1: any non-router speaker can trigger routing."""
+    calls: list[str] = []
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    t = _make_thread(store, "@other ping")
     post = {"speaker": "milk", "post_id": "p1", "mentions": ["other"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["other"]
+
+
+def test_enqueue_ignores_router_speaker(router, store):
+    """__router__ posts must never re-trigger routing (loop guard)."""
+    t = _make_thread(store, "hi")
+    post = {"speaker": "__router__", "post_id": "p1", "mentions": ["milk"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is False
+
+
+def test_enqueue_drops_self_mention(router, store, monkeypatch):
+    """Agent @ing themselves is a no-op."""
+    calls: list[str] = []
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    t = _make_thread(store, "@milk note to self")
+    post = {"speaker": "milk", "post_id": "p1", "mentions": ["milk", "sherry"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["sherry"]
+
+
+def test_enqueue_drops_scott_mention_from_agent(router, store, monkeypatch):
+    """@scott is not a routable endpoint."""
+    calls: list[str] = []
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    t = _make_thread(store, "@scott @sherry fyi")
+    post = {"speaker": "judy", "post_id": "p1", "mentions": ["scott", "sherry"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["sherry"]
+
+
+def test_enqueue_ignores_empty_speaker(router, store):
+    """Empty speaker -> ignore."""
+    t = _make_thread(store, "hi")
+    post = {"speaker": "", "post_id": "p1", "mentions": ["milk"]}
     assert router.enqueue_if_needed(t["thread_id"], post) is False
 
 

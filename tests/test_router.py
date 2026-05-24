@@ -27,10 +27,11 @@ def thread_with_milk_post(store, squad):
     return t["thread_id"], out["post_id"]
 
 
-def test_enqueue_skips_non_scott(router, store, squad):
+def test_enqueue_routes_for_non_scott_employee(router, store, squad):
+    """V1.1: any non-router employee can trigger routing."""
     t = store.create_thread(squad, "scott", "x")
     post = {"speaker": "milk", "mentions": ["sentry"], "post_id": "p_x", "parent_post_id": None}
-    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
 
 
 def test_enqueue_skips_no_mentions_no_parent(router, store, squad):

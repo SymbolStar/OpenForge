@@ -79,7 +79,15 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     """
     if not post:
         return False
-    if (post.get("speaker") or "").strip().lower() != "scott":
+    speaker = (post.get("speaker") or "").strip().lower()
+    # V1.1: any non-router speaker can trigger routing. Was previously
+    # scott-only, which directly contradicted the PRD chair-dispatch
+    # decision tree (Scott 2026-05-24: a chair @ing a member did nothing).
+    # Self-routing is filtered below so an agent can't accidentally @
+    # themselves into a loop; cross-agent loops (A @ B → B @ A) are
+    # still possible — we rely on (1) agents being instructed not to
+    # @ each other ping-pong and (2) Scott closing pathological threads.
+    if not speaker or speaker == ROUTER_SPEAKER_FALLBACK.lower():
         return False
     mentions = list(post.get("mentions") or [])
     # V1.1: resolve the special @chair token to the actual chair of the
@@ -88,25 +96,33 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     # same post collapses to one route, which is what users expect.
     if mentions and any((m or "").strip().lower() == "chair" for m in mentions):
         mentions = _resolve_chair_token(thread_id, mentions)
-    # Implicit mention: if scott replies (parent_post_id set) to an agent
+    # Implicit mention: if SCOTT replies (parent_post_id set) to an agent
     # post without an explicit @, treat it as @<that agent>. Mirrors Slack
-    # / Discord thread-reply semantics. Replies to scott's own or to
-    # __router__ placeholder/error posts are ignored.
-    if not mentions:
+    # / Discord thread-reply semantics. Kept scott-only on purpose —
+    # extending it to agent-replies-to-agent would make pings cascade in
+    # any threaded conversation.
+    if not mentions and speaker == "scott":
         implicit = _implicit_mention_from_parent(thread_id, post.get("parent_post_id"))
         if implicit:
             mentions = [implicit]
     if not mentions:
         return False
 
-    # dedupe mentions while preserving order
+    # dedupe mentions while preserving order; also drop self-mentions
+    # (an agent can't wake themselves up by @ing their own name) and the
+    # reserved 'scott' token (scott is the human, not an agent endpoint).
     seen: set[str] = set()
     ordered: list[str] = []
     for m in mentions:
         key = (m or "").strip().lower()
-        if key and key not in seen:
-            seen.add(key)
-            ordered.append(key)
+        if not key or key in seen:
+            continue
+        if key == speaker:
+            continue  # self-@ no-op
+        if key in _RESERVED_SPEAKERS:
+            continue  # @scott / @__router__ are not routable
+        seen.add(key)
+        ordered.append(key)
     if not ordered:
         return False
 
