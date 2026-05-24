@@ -273,6 +273,33 @@ def test_dispatch_dedupes_inflight(router, monkeypatch):
 
 
 # ─── full _route_to_agent flow ──────────────────────────────────────
+def test_agent_reply_with_mention_re_enqueues(router, store, monkeypatch):
+    """V1.1: an agent's own reply containing @mentions must be re-fed
+    through the router so downstream agents wake up. Without this,
+    chair-style dispatch ('@designer @alice please look') was a dead ping."""
+    monkeypatch.setattr(router, "call_agent",
+                        lambda ag, sid, prompt: "好，拉他们进来。 @sherry @milk")
+    monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
+    monkeypatch.setattr(router, "restore_main", lambda ag, snap: True)
+
+    dispatched: list[str] = []
+
+    def spy_dispatch(tid, ag, trig):
+        dispatched.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", spy_dispatch)
+
+    t = _make_thread(store, "@judy please dispatch")
+    trigger = {"post_id": t["posts"][0]["id"], "speaker": "scott",
+               "content": "@judy please dispatch", "mentions": ["judy"]}
+    router._route_to_agent(t["thread_id"], "judy", trigger)
+
+    # judy's reply mentioned sherry and milk; both should have been
+    # re-routed via the agent-reply re-enqueue path.
+    assert "sherry" in dispatched
+    assert "milk" in dispatched
+
+
 def test_route_to_agent_success(router, store, monkeypatch):
     """call_agent returns text → final post appended, placeholder superseded."""
     monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt: "okay 👍")

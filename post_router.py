@@ -321,6 +321,25 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
             thread_id, agent_id, reply, parent_post_id=trigger_pid,
         )
         final_post_id = added.get("post_id")
+        # V1.1 (Scott 2026-05-24 21:00): re-feed the agent's own reply
+        # through the router so @mentions inside agent→agent dispatch
+        # actually wake their targets. Without this, a chair like judy
+        # writing '@designer @alice please look' got the post added but
+        # no router event fired — dead ping. The HTTP POST /posts path
+        # already does this; we missed mirroring it on the agent-reply
+        # path. Best-effort: any router error here is logged, not raised,
+        # so an in-flight reply still lands cleanly.
+        try:
+            post_router_view = {
+                "post_id": final_post_id,
+                "speaker": agent_id,
+                "content": reply,
+                "mentions": store.extract_mentions(reply),
+                "parent_post_id": trigger_pid,
+            }
+            enqueue_if_needed(thread_id, post_router_view)
+        except Exception as e:
+            print(f"⚠️  agent-reply re-enqueue failed: {e!r}", flush=True)
     finally:
         if snap:
             try:
