@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 import forge_store as store
+import forge_identity
 from agent_runtime import (
     AgentError,
     _find_clean_main,
@@ -90,6 +91,13 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     if not speaker or speaker == ROUTER_SPEAKER_FALLBACK.lower():
         return False
     mentions = list(post.get("mentions") or [])
+    # V1.2 (Scott 2026-05-24 21:22): mentions may be display names
+    # ('Dora', '小巴', 'Buffett') instead of agent ids. Resolve each
+    # token through forge_identity; if it doesn't resolve to a known
+    # employee, pass the raw token through (downstream filtering still
+    # drops the unknowns silently via Unknown-agent-id router errors,
+    # but legit special tokens like 'chair' keep flowing).
+    mentions = [_resolve_name_or_keep(m) for m in mentions]
     # V1.1: resolve the special @chair token to the actual chair of the
     # thread's squad. PRD-v1.0 §2 treats 'chair' as a role, not an agent id.
     # Doing this here (before dedupe) means @chair + @<chair_name> in the
@@ -140,6 +148,24 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
 
 
 _RESERVED_SPEAKERS = {"scott", ROUTER_SPEAKER_FALLBACK.lower()}
+
+
+def _resolve_name_or_keep(raw: str) -> str:
+    """Map an @-mention spelling to its canonical agent id when possible.
+
+    'Dora' → 'designer', 'designer' → 'designer', '小巴' → 'xiaoba',
+    'chair' → 'chair' (special token, _resolve_chair_token handles it),
+    'foo' → 'foo' (unknown; downstream produces an Unknown-agent-id
+    error post so misspellings are visible rather than silently dropped).
+    """
+    if not raw:
+        return raw
+    # Preserve special tokens that are NOT employee names — chair token
+    # has its own resolver below.
+    if raw.strip().lower() == "chair":
+        return raw
+    resolved = forge_identity.name_to_id(raw)
+    return resolved if resolved else raw
 
 
 def _chair_for_thread(thread_id: str) -> str | None:
@@ -247,7 +273,7 @@ def _record_crash(thread_id: str, agent_id: str, e: BaseException) -> None:
     try:
         store.add_thread_post(
             thread_id, ROUTER_SPEAKER_FALLBACK,
-            f"⚠️ post router crashed routing @{agent_id}: {e!r}",
+            f"⚠️ post router crashed routing @{forge_identity.get_identity(agent_id)['name']}: {e!r}",
         )
         store.write_thread_markdown(thread_id)
     except Exception:
@@ -286,7 +312,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
     try:
         ph = store.add_thread_post(
             thread_id, ROUTER_SPEAKER_FALLBACK,
-            f"⏳ @{agent_id} 正在思考中…",
+            f"⏳ @{forge_identity.get_identity(agent_id)['name']} 正在思考中…",
             parent_post_id=trigger_pid,
         )
         placeholder_id = ph.get("post_id")
@@ -303,7 +329,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
         except AgentError as e:
             err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
-                f"⚠️ @{agent_id} 没回复: {e}",
+                f"⚠️ @{forge_identity.get_identity(agent_id)['name']} 没回复: {e}",
                 parent_post_id=trigger_pid,
             )
             final_post_id = err.get("post_id")
@@ -312,7 +338,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
         if is_empty(reply):
             err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
-                f"_(@{agent_id} 返回空回复)_",
+                f"_(@{forge_identity.get_identity(agent_id)['name']} 返回空回复)_",
                 parent_post_id=trigger_pid,
             )
             final_post_id = err.get("post_id")

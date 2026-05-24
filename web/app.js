@@ -102,7 +102,11 @@ function avatarLabel(name) {
     const a = (state.settings.myAvatar || '').trim();
     if (a) return [...a].slice(0, 2).join('');
   }
-  return [...(name || '?')][0].toUpperCase();
+  // V1.2: prefer the IDENTITY.md display name's first char (so 'designer'
+  // shows 'D' for Dora) and fall back to the raw id when no display
+  // name is known.
+  const src = displayName(name) || name || '?';
+  return [...src][0].toUpperCase();
 }
 
 // ─── PR-3 / PRD-v1.0 §4: employee-avatar deep-link to agent webchat ───
@@ -112,6 +116,14 @@ function avatarLabel(name) {
 // (scott / __router__ / unknown ids stay non-interactive).
 let _webchatBase = 'http://127.0.0.1:18789';
 let _employeeSet = new Set();
+// V1.2: agent_id → display name from IDENTITY.md (e.g. 'designer' → 'Dora').
+// Filled by loadEmployeeSet() via /api/employees?with_identity=1. Display
+// helpers consult this map; storage keys (post.speaker, squad.members,
+// avatar colour class) stay on agent_id.
+let _displayNames = new Map();
+// Reverse map for the @-picker / future inline autocomplete:
+// 'dora' → 'designer', 'xiaoba' → 'xiaoba' (back-mapped from display tokens).
+let _displayToId = new Map();
 
 async function loadWebchatBase() {
   try {
@@ -133,16 +145,60 @@ async function loadWebchatBase() {
 
 async function loadEmployeeSet() {
   try {
-    const res = await fetch('/api/employees');
+    // V1.2: ask for the enriched form so we get IDENTITY.md names too.
+    const res = await fetch('/api/employees?with_identity=1');
     if (res.ok) {
       const list = await res.json();
       if (Array.isArray(list)) {
-        _employeeSet = new Set(list.filter(x => typeof x === 'string' && x));
+        _employeeSet = new Set();
+        _displayNames = new Map();
+        _displayToId = new Map();
+        list.forEach(item => {
+          // Back-compat: server may still return bare strings if the
+          // ?with_identity flag is dropped or the endpoint is older.
+          if (typeof item === 'string' && item) {
+            _employeeSet.add(item);
+            return;
+          }
+          if (!item || typeof item !== 'object') return;
+          const id = item.id;
+          if (!id) return;
+          _employeeSet.add(id);
+          const name = (item.name || '').trim();
+          if (name && name !== id) {
+            _displayNames.set(id, name);
+            // Build alias → id reverse map. Compound names like
+            // '小巴 (Xiaoba / Buffett)' produce three aliases; the head
+            // token wins on the conflict (same precedence the backend
+            // uses for resolution).
+            const tokens = name
+              .replace(/[()]/g, ' ')
+              .split(/[\s,/&;]+/)
+              .map(t => t.trim())
+              .filter(Boolean);
+            tokens.forEach(t => {
+              const k = t.toLowerCase();
+              if (!_displayToId.has(k)) _displayToId.set(k, id);
+            });
+          }
+          // Also map id → id so 'designer' still resolves.
+          _displayToId.set(id.toLowerCase(), id);
+        });
       }
     }
   } catch (e) {
-    // Empty set is safe: every avatar will just render as a plain div.
+    // Empty maps are safe: every avatar will just render as a plain div
+    // and display names will fall back to agent ids.
   }
+}
+
+// V1.2: display-friendly name for an agent id.
+// Falls back to the id itself for unknown / non-employee speakers
+// (scott, __router__, runtime profiles), so call-sites never have to
+// special-case 'is this name resolvable?'.
+function displayName(agentId) {
+  if (!agentId) return '';
+  return _displayNames.get(agentId) || agentId;
 }
 
 function isEmployee(name) {
@@ -174,14 +230,15 @@ function webchatLinkFor(agentId, threadId) {
 function renderAvatarTag(name, { extraClass = '', styleAttr = '', threadId = null } = {}) {
   const cls = `avatar ${avatarClass(name)}${extraClass ? ' ' + extraClass : ''}`;
   const label = escapeHtml(avatarLabel(name));
+  const friendly = displayName(name);
   if (isEmployee(name)) {
     const href = webchatLinkFor(name, threadId);
     const title = threadId
-      ? `点击查看 ${name} 在本 thread 的 session`
-      : `点击查看 ${name} 的 main session`;
+      ? `点击查看 ${friendly} 在本 thread 的 session`
+      : `点击查看 ${friendly} 的 main session`;
     return `<a class="${cls} avatar-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"${styleAttr}>${label}</a>`;
   }
-  return `<div class="${cls}"${styleAttr} title="${escapeHtml(name || '')}">${label}</div>`;
+  return `<div class="${cls}"${styleAttr} title="${escapeHtml(friendly || '')}">${label}</div>`;
 }
 
 function avatarClass(name) {
@@ -662,12 +719,12 @@ function renderParticipants(members) {
       el.rel = 'noopener noreferrer';
       el.className = `${cls} avatar-link`;
       el.title = state.currentThreadId
-        ? `点击查看 ${name} 在本 thread 的 session`
-        : `点击查看 ${name} 的 main session`;
+        ? `点击查看 ${displayName(name)} 在本 thread 的 session`
+        : `点击查看 ${displayName(name)} 的 main session`;
     } else {
       el = document.createElement('div');
       el.className = cls;
-      el.title = name;
+      el.title = displayName(name);
     }
     if (name.toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
       el.style.background = state.settings.myAvatarColor.trim();
@@ -727,7 +784,7 @@ function quotePreview(text, n = 140) {
 function renderQuoteCard(parent, opts = {}) {
   const card = document.createElement('div');
   card.className = 'quote-card';
-  const author = parent.speaker || '?';
+  const author = displayName(parent.speaker) || '?';
   // Prefer the ISO ts (locale-formatted) for the quote header — matches
   // the visual reference Scott showed ("2026/5/23 14:52").
   let timeLabel = parent.time || '';
@@ -789,7 +846,7 @@ function renderPostNode(post, _unused) {
     ${renderAvatarTag(post.speaker, { styleAttr: avatarStyle(post.speaker), threadId: state.currentThreadId || null })}
     <div class="post-content">
       <div class="post-head">
-        <span class="post-name">${escapeHtml(post.speaker)}</span>
+        <span class="post-name" title="${escapeHtml(post.speaker)}">${escapeHtml(displayName(post.speaker))}</span>
         <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
       </div>
       <div class="post-quote-slot"></div>

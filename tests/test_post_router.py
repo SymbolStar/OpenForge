@@ -89,6 +89,33 @@ def test_enqueue_ignores_empty_speaker(router, store):
     assert router.enqueue_if_needed(t["thread_id"], post) is False
 
 
+def test_enqueue_resolves_display_name_to_agent_id(router, store, monkeypatch, fake_home):
+    """V1.2: @<DisplayName> resolves to the canonical agent id before dispatch.
+    Users can write @Dora and the router wakes up `designer`."""
+    # Set up a real employee whose display name doesn't match its id.
+    ws = fake_home / ".openclaw" / "workspace-designer"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "SOUL.md").write_text("x", encoding="utf-8")
+    (ws / "IDENTITY.md").write_text("- **Name:** Dora\n", encoding="utf-8")
+    (fake_home / ".openclaw" / "agents" / "designer").mkdir(parents=True, exist_ok=True)
+    # Reload identity module so it sees the new workspace.
+    import importlib, forge_employees, forge_identity
+    importlib.reload(forge_employees)
+    importlib.reload(forge_identity)
+    # Re-bind the module reference on the router we already loaded.
+    router.forge_identity = forge_identity
+
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    t = _make_thread(store, "hi @Dora")
+    post = {"speaker": "scott", "post_id": "p1", "mentions": ["Dora"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["designer"]
+
+
 def test_enqueue_default_chair_when_scott_omits_mention(router, store, monkeypatch):
     """V1.1 (Scott 2026-05-24): scott posts with no @ → default route
     to the thread's squad chair."""

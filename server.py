@@ -51,6 +51,7 @@ import forge_config
 import forge_context
 import forge_employees
 import forge_files
+import forge_identity
 import forge_refs
 import forge_session_search
 import forge_store as store
@@ -310,12 +311,19 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/employees":
-            # Curated employee roster: agents with workspace-<id>/SOUL.md.
-            # Drives the squad member-picker; excludes runtime LLM profiles
-            # (codex, claude-code, ...) that live in agents/ but aren't
-            # real employees. Single source of truth — no hardcoded
-            # blocklist anywhere in the codebase.
-            self._json(forge_employees.list_employees())
+            # Curated employee roster. Returns list[str] of agent ids
+            # (back-compat) OR list[{id,name,emoji}] when ?with_identity=1.
+            # V1.2 (Scott 2026-05-24 21:22): the enriched form drives
+            # display-name rendering in the UI; the bare-string form is
+            # still consumed by older code paths (squad member picker
+            # validation, isEmployee() lookups). Keeping both behind one
+            # endpoint instead of forking the URL keeps the auth /
+            # caching surface area unchanged.
+            qs = parse_qs(url.query or "")
+            if (qs.get("with_identity") or ["0"])[0] in ("1", "true", "yes"):
+                self._json(forge_identity.list_identities())
+            else:
+                self._json(forge_employees.list_employees())
             return
 
         if path == "/api/config":
