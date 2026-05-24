@@ -89,6 +89,57 @@ def test_enqueue_ignores_empty_speaker(router, store):
     assert router.enqueue_if_needed(t["thread_id"], post) is False
 
 
+def test_enqueue_default_chair_when_scott_omits_mention(router, store, monkeypatch):
+    """V1.1 (Scott 2026-05-24): scott posts with no @ → default route
+    to the thread's squad chair."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqd", "name": "sqd",
+                        "members": ["sherry", "scott"], "chair": "sherry"})
+    t = store.create_thread("sqd", "scott", "naked message no @")
+    post = {"speaker": "scott", "post_id": "p1", "mentions": []}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["sherry"]
+
+
+def test_enqueue_default_chair_does_not_fire_for_agent(router, store, monkeypatch):
+    """Default-to-chair fallback is scott-only; agent posts without @ stay quiet."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqd2", "name": "sqd2",
+                        "members": ["sherry", "judy", "scott"], "chair": "sherry"})
+    t = store.create_thread("sqd2", "scott", "hi")
+    post = {"speaker": "judy", "post_id": "p1", "mentions": []}
+    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert calls == []
+
+
+def test_enqueue_default_chair_yields_to_explicit_reply(router, store, monkeypatch):
+    """Scott reply to agent post → still routes to that agent, not chair."""
+    calls: list[str] = []
+
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag); return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    store.ensure_default_squads()
+    store.create_squad({"id": "sqd3", "name": "sqd3",
+                        "members": ["sherry", "judy", "scott"], "chair": "sherry"})
+    t = store.create_thread("sqd3", "scott", "@judy hi")
+    judy_post = store.add_thread_post(t["thread_id"], "judy", "hello")
+    post = {"speaker": "scott", "post_id": "p1", "mentions": [],
+            "parent_post_id": judy_post["post_id"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["judy"]  # parent wins over chair
+
+
 def test_enqueue_ignores_empty_post(router, store):
     assert router.enqueue_if_needed("th_x_x", {}) is False
     assert router.enqueue_if_needed("th_x_x", None) is False

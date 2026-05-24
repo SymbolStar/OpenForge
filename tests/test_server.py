@@ -64,9 +64,11 @@ def test_full_thread_lifecycle(server):
         "speaker": "scott",
     })
 
-    # 4. fetch thread, expect 2 live posts
+    # 4. fetch thread, expect 2 live human/agent posts (filter out the
+    # router placeholders V1.1 default-to-chair adds for naked scott posts).
     detail = _get(f"{server}/api/threads/{tid}")
-    live = [p for p in detail["posts"] if not p["superseded"]]
+    live = [p for p in detail["posts"]
+            if not p["superseded"] and p["speaker"] != "__router__"]
     assert len(live) == 2
 
     # 5. add a reaction; expect projection to surface it

@@ -96,15 +96,20 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     # same post collapses to one route, which is what users expect.
     if mentions and any((m or "").strip().lower() == "chair" for m in mentions):
         mentions = _resolve_chair_token(thread_id, mentions)
-    # Implicit mention: if SCOTT replies (parent_post_id set) to an agent
-    # post without an explicit @, treat it as @<that agent>. Mirrors Slack
-    # / Discord thread-reply semantics. Kept scott-only on purpose —
-    # extending it to agent-replies-to-agent would make pings cascade in
-    # any threaded conversation.
+    # Implicit-mention chain (scott only, in order):
+    #   1. parent_post_id → author of parent post (Slack-style reply)
+    #   2. no parent either → thread's squad chair (V1.1, Scott 2026-05-24:
+    #      "no @mention → default @chair")
+    # Both stay scott-only on purpose; extending implicit-routing to agent
+    # speakers would cascade pings in any reply chain.
     if not mentions and speaker == "scott":
         implicit = _implicit_mention_from_parent(thread_id, post.get("parent_post_id"))
         if implicit:
             mentions = [implicit]
+        else:
+            chair = _chair_for_thread(thread_id)
+            if chair:
+                mentions = [chair]
     if not mentions:
         return False
 
@@ -135,6 +140,26 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
 
 
 _RESERVED_SPEAKERS = {"scott", ROUTER_SPEAKER_FALLBACK.lower()}
+
+
+def _chair_for_thread(thread_id: str) -> str | None:
+    """Resolve the chair agent id of `thread_id`'s squad, or None if it
+    can't be determined (thread/squad missing, chair unset, or chair is
+    the literal string 'chair' — same recursion guard as the @chair
+    token resolver).
+    """
+    try:
+        thread = store.project_thread(thread_id)
+        squad_id = (thread or {}).get("squad_id")
+        if not squad_id:
+            return None
+        squad = store.get_squad(squad_id)
+        ch = ((squad or {}).get("chair") or "").strip().lower()
+        if ch and ch != "chair":
+            return ch
+    except Exception:
+        return None
+    return None
 
 
 def _resolve_chair_token(thread_id: str, mentions: list[str]) -> list[str]:

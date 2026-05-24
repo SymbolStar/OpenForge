@@ -34,10 +34,15 @@ def test_enqueue_routes_for_non_scott_employee(router, store, squad):
     assert router.enqueue_if_needed(t["thread_id"], post) is True
 
 
-def test_enqueue_skips_no_mentions_no_parent(router, store, squad):
+def test_enqueue_scott_no_mentions_defaults_to_chair(router, store, squad, monkeypatch):
+    """V1.1: scott posts with no @ and no parent → routes to squad chair."""
+    seen = []
+    monkeypatch.setattr(router, "_dispatch", lambda t, a, p: seen.append(a) or True)
     t = store.create_thread(squad, "scott", "x")
     post = {"speaker": "scott", "mentions": [], "post_id": "p_x", "parent_post_id": None}
-    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    # squad fixture sets chair=milk
+    assert seen == ["milk"]
 
 
 def test_implicit_mention_from_reply_to_agent(router, store, thread_with_milk_post, monkeypatch):
@@ -53,30 +58,32 @@ def test_implicit_mention_from_reply_to_agent(router, store, thread_with_milk_po
     assert seen == [(tid, "milk", "p_reply")]
 
 
-def test_implicit_mention_ignores_reply_to_scott(router, store, squad, monkeypatch):
+def test_reply_to_scott_falls_back_to_chair(router, store, squad, monkeypatch):
+    """V1.1: scott replies to scott's own post (parent yields nothing) → chair."""
     t = store.create_thread(squad, "scott", "root")
     root_pid = t["posts"][0]["id"]
     seen = []
-    monkeypatch.setattr(router, "_dispatch", lambda *a: seen.append(a) or True)
+    monkeypatch.setattr(router, "_dispatch", lambda *a: seen.append(a[1]) or True)
     post = {
         "speaker": "scott", "mentions": [],
         "post_id": "p_self", "parent_post_id": root_pid,
     }
-    assert router.enqueue_if_needed(t["thread_id"], post) is False
-    assert seen == []
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert seen == ["milk"]
 
 
-def test_implicit_mention_ignores_reply_to_router(router, store, squad, monkeypatch):
+def test_reply_to_router_placeholder_falls_back_to_chair(router, store, squad, monkeypatch):
+    """V1.1: scott replies to a router placeholder (parent yields nothing) → chair."""
     t = store.create_thread(squad, "scott", "root")
-    # router placeholder post
     ph = store.add_thread_post(t["thread_id"], "__router__", "⏳ thinking…")
     seen = []
-    monkeypatch.setattr(router, "_dispatch", lambda *a: seen.append(a) or True)
+    monkeypatch.setattr(router, "_dispatch", lambda *a: seen.append(a[1]) or True)
     post = {
         "speaker": "scott", "mentions": [],
         "post_id": "p_x", "parent_post_id": ph["post_id"],
     }
-    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert seen == ["milk"]
 
 
 def test_explicit_mention_overrides_implicit(router, store, thread_with_milk_post, monkeypatch):
