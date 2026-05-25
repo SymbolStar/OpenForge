@@ -24,7 +24,7 @@ def _post(url: str, body: dict) -> dict:
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
         method="POST",
     )
     try:
@@ -152,3 +152,120 @@ def test_session_search_endpoint(server, fake_home):
             body_text = e.read().decode("utf-8", errors="replace")
             raise AssertionError(f"GET -> {e.code}: {body_text}") from None
     _ = _os  # silence linter
+
+
+# ─── speaker spoofing guard (2026-05-25 incident regression) ──────────
+def _raw_post(url: str, body: dict, headers: dict | None = None):
+    """POST without any test-rig defaults; returns (status, json|err)."""
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.status, json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(body_text)
+        except json.JSONDecodeError:
+            return e.code, {"_raw": body_text}
+
+
+def _bootstrap_squad_and_thread(server):
+    """Create a squad + thread we can post into; uses UI header so allowed."""
+    _post(f"{server}/api/squads", {
+        "id": "spoof-test", "name": "spoof-test",
+        "members": ["scott", "designer"], "chair": "scott",
+    })
+    thread = _post(f"{server}/api/squads/spoof-test/threads", {
+        "content": "opener", "created_by": "scott",
+    })
+    return thread["thread_id"]
+
+
+def test_post_rejects_missing_speaker(server):
+    tid = _bootstrap_squad_and_thread(server)
+    code, body = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "no speaker"},
+    )
+    assert code == 400
+    assert "speaker" in (body.get("error") or "")
+
+
+def test_post_rejects_empty_speaker(server):
+    tid = _bootstrap_squad_and_thread(server)
+    code, body = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "blank", "speaker": "   "},
+    )
+    assert code == 400
+
+
+def test_post_rejects_scott_without_ui_header(server):
+    """Agent curling loopback cannot impersonate scott — the 2026-05-25 bug."""
+    tid = _bootstrap_squad_and_thread(server)
+    code, body = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "fake CEO post", "speaker": "scott"},
+    )
+    assert code == 403
+    assert "scott" in (body.get("error") or "").lower()
+    # Even mixed case shouldn't slip through.
+    code2, _ = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "still fake", "speaker": "ScOtT"},
+    )
+    assert code2 == 403
+
+
+def test_post_allows_scott_with_ui_header(server):
+    tid = _bootstrap_squad_and_thread(server)
+    code, body = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "real CEO post", "speaker": "scott"},
+        headers={"X-OpenForge-UI": "1"},
+    )
+    assert code == 201
+    posts = body.get("posts") or []
+    assert any(
+        p["speaker"] == "scott" and p["content"] == "real CEO post"
+        for p in posts
+    )
+
+
+def test_post_allows_agent_speaker_without_ui_header(server):
+    """Agents post as themselves over loopback — that's the normal path."""
+    tid = _bootstrap_squad_and_thread(server)
+    code, body = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "designer reply", "speaker": "designer"},
+    )
+    assert code == 201
+    posts = body.get("posts") or []
+    assert any(p["speaker"] == "designer" for p in posts)
+
+
+def test_post_rejects_router_speaker(server):
+    tid = _bootstrap_squad_and_thread(server)
+    code, _ = _raw_post(
+        f"{server}/api/threads/{tid}/posts",
+        {"content": "spoof router", "speaker": "__router__"},
+    )
+    assert code == 400
+
+
+def test_create_thread_rejects_scott_without_ui_header(server):
+    """Same guard applies to thread creation's `created_by`."""
+    _post(f"{server}/api/squads", {
+        "id": "spoof-create", "name": "spoof-create",
+        "members": ["scott"], "chair": "scott",
+    })
+    code, body = _raw_post(
+        f"{server}/api/squads/spoof-create/threads",
+        {"content": "fake opener", "created_by": "scott"},
+    )
+    assert code == 403

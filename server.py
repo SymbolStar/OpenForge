@@ -253,6 +253,48 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     # ─── routes ───────────────────────────────────────────────────
+    # ─── speaker spoofing guard ────────────────────────────────────
+    # The browser cockpit is the only trusted caller allowed to post as
+    # scott. Agents and stray scripts can hit the loopback API too, so we
+    # require an explicit speaker on every post and refuse `scott` unless
+    # the caller proves it's the UI (sends `X-OpenForge-UI: 1`, which
+    # web/app.js adds to every POST and which no agent prompt teaches).
+    #
+    # Before this guard a missing/empty speaker silently defaulted to
+    # "scott", which let any sub-agent that curled the loopback API
+    # impersonate the CEO in a thread (real incident 2026-05-25: designer
+    # posted a "forge pipeline" summary as scott). See AGENT-THREAD-
+    # COLLABORATION.md §4.1 for the envelope-vs-content discussion.
+    def _resolve_speaker(self, opts: dict, *, field: str = "speaker"):
+        """Validate and return the caller-claimed speaker, or None on error.
+
+        On error the JSON response is already written.
+        """
+        raw = opts.get(field)
+        speaker = (raw or "").strip() if isinstance(raw, str) else ""
+        if not speaker:
+            self._json(
+                {"error": f"{field} required (no default; UI sends 'scott',"
+                          f" agents must send their own agent id)"},
+                400,
+            )
+            return None
+        low = speaker.lower()
+        if low == "__router__":
+            self._json({"error": f"{field}='{speaker}' is reserved"}, 400)
+            return None
+        if low == "scott":
+            ui_marker = (self.headers.get("X-OpenForge-UI") or "").strip()
+            if ui_marker != "1":
+                self._json(
+                    {"error": "posting as 'scott' is reserved for the"
+                              " OpenForge UI; agents must use their own"
+                              " agent id as speaker"},
+                    403,
+                )
+                return None
+        return speaker
+
     def _read_json(self, default=None):
         """Parse JSON body; on parse error, write a 400 response and return None.
 
@@ -599,7 +641,9 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             if not content:
                 self._json({"error": "content required"}, 400)
                 return
-            created_by = (opts.get("created_by") or "scott").strip() or "scott"
+            created_by = self._resolve_speaker(opts, field="created_by")
+            if created_by is None:
+                return
             try:
                 thread = store.create_thread(squad_id, created_by, content)
             except ValueError as e:
@@ -630,7 +674,9 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             if not content:
                 self._json({"error": "content required"}, 400)
                 return
-            speaker = (opts.get("speaker") or "scott").strip() or "scott"
+            speaker = self._resolve_speaker(opts)
+            if speaker is None:
+                return
             parent_post_id = opts.get("parent_post_id") or None
             if parent_post_id is not None and not isinstance(parent_post_id, str):
                 self._json({"error": "parent_post_id must be string"}, 400)
@@ -671,7 +717,9 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             if opts is None:
                 return
             emoji = (opts.get("emoji") or "").strip()
-            actor = (opts.get("actor") or "scott").strip() or "scott"
+            actor = self._resolve_speaker(opts, field="actor")
+            if actor is None:
+                return
             if not emoji:
                 self._json({"error": "emoji required"}, 400)
                 return

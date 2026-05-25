@@ -433,7 +433,16 @@ function autosize(el) {
 }
 
 async function apiJson(url, options) {
-  const res = await fetch(url, options);
+  // Mark every mutating request from the UI so the server's speaker
+  // spoofing guard can tell scott-from-UI apart from scott-from-curl.
+  // (Agents talking to the loopback API never set this header, which is
+  // exactly the point — server refuses speaker="scott" without it.)
+  const opts = { ...(options || {}) };
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    opts.headers = { ...(opts.headers || {}), 'X-OpenForge-UI': '1' };
+  }
+  const res = await fetch(url, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;

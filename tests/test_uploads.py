@@ -35,7 +35,7 @@ def _post(url: str, body: dict) -> tuple[int, dict]:
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
         method="POST",
     )
     try:
