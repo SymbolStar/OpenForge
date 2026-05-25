@@ -405,10 +405,29 @@ def _find_trigger_post(thread: dict, post_id: str) -> dict | None:
 def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
     """Render the thread as a transcript and ask the agent for one reply."""
     md = store.render_thread_markdown(thread_id) or "(空 thread)"
-    md_for_prompt = "\n".join(
-        l for l in md.splitlines() if not l.startswith("<!--")
-    )
+    # Filter out HTML comments AND rewrite each post header from
+    #   "#### <speaker> · <time>"
+    # to
+    #   "#### [from: <speaker>] · <time>"
+    # The structured `from:` tag is a much stronger attention cue than a
+    # bare display name when there are look-alike agent ids in play
+    # (milk/miki, alice/alex, sherry/cherry, …). Without it LLMs have been
+    # caught addressing the wrong teammate in their reply (real incident,
+    # 2026-05-25).
+    md_lines = []
+    for l in md.splitlines():
+        if l.startswith("<!--"):
+            continue
+        if l.startswith("#### ") and " · " in l:
+            try:
+                head, rest = l[5:].split(" · ", 1)
+                l = f"#### [from: {head.strip()}] · {rest}"
+            except Exception:
+                pass
+        md_lines.append(l)
+    md_for_prompt = "\n".join(md_lines)
     trigger_preview = (trigger.get("content") or "").strip()
+    trigger_speaker = (trigger.get("speaker") or "").strip() or "unknown"
 
     # v0.9: prepend OpenForge-collected context bundle so the spawned
     # subprocess starts with situational awareness (STATUS + main session
@@ -417,16 +436,19 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
 
     return (
         f"{bundle_preamble}"
-        f"你正在参加 OpenForge 一个 thread 的讨论，scott 在最新一条 post "
+        f"你正在参加 OpenForge 一个 thread 的讨论，**{trigger_speaker}** 在最新一条 post "
         f"里 @ 了你（{agent_id}）。下面是 thread 当前的完整内容：\n\n"
         f"━━━ Thread ━━━\n{md_for_prompt}\n━━━ 结束 ━━━\n\n"
         f"[你的身份]: {agent_id}\n"
-        f"[scott 刚刚 @ 你的那条 post]:\n{trigger_preview}\n\n"
+        f"[触发这次 turn 的 post — from: {trigger_speaker}]:\n{trigger_preview}\n\n"
         f"要求：\n"
         f"- 用中文，简洁段落（不要 markdown 标题）\n"
         f"- 你的回复会被独立保存为这条 thread 的一条新 post\n"
-        f"- 直接针对 scott 的最新 post 回应，不要复述之前的内容\n"
-        f"- 如果 scott 的问题已经被回答过或不需要你回答，回复 `completed`\n"
+        f"- 直接针对 **{trigger_speaker}** 的最新 post 回应，不要复述之前的内容\n"
+        f"- **引用任何 teammate 时必须用 thread 里出现的 `[from: <id>]` 字段为准**，"
+        f"不要靠记忆/语感拼名字。milk/miki、alice/alex、sherry/cherry 这类相似名字"
+        f"必须 double-check 当前 post header；写错名字会污染 thread 信任。\n"
+        f"- 如果问题已经被回答过或不需要你回答，回复 `completed`\n"
         f"\n"
         f"[文件引用语法 v0.8]\n"
         f"方案 A（推荐）— 你在自己 workspace 生成了文件，希望 scott 能点开看：\n"
