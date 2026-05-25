@@ -360,11 +360,28 @@ function renderBody(text) {
     chips.push({ kind: 'workspace', root, name, display, target });
     return `\u0001CHIP${chips.length - 1}\u0001`;
   });
-  let html = escapeHtml(piped);
+  // Render markdown (bold/italic/lists/headings/links/code…) via marked when
+  // available; marked does its own HTML-escaping so we don't pre-escape. The
+  // \u0001 sentinels above are control chars and survive untouched as text.
+  let html;
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try {
+      html = marked.parse(piped, {
+        breaks: true,    // single \n -> <br>, matches old pre-wrap feel
+        gfm: true,
+        mangle: false,
+        headerIds: false,
+      });
+    } catch (_e) {
+      html = escapeHtml(piped);
+    }
+  } else {
+    html = escapeHtml(piped).replace(/`([^`\n]+)`/g,
+      (_, code) => `<code>${escapeHtml(code)}</code>`);
+  }
+  // mentions: run AFTER marked so we match plain text occurrences of @name.
   html = html.replace(MENTION_RE,
     (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
-  html = html.replace(/`([^`\n]+)`/g,
-    (_, code) => `<code>${escapeHtml(code)}</code>`);
   html = html.replace(/\u0001CHIP(\d+)\u0001/g, (_, idx) => {
     const c = chips[Number(idx)];
     if (!c) return '';
