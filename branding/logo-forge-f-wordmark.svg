@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 256" width="880" height="256">
+  <title>OpenForge — Wordmark (horizontal)</title>
+  <rect width="880" height="256" rx="40" fill="#0E0F11"/>
+
+  <!-- Forge F icon, padded -->
+  <g transform="translate(24 0)">
+    <rect x="64" y="48" width="26" height="160" rx="5" fill="#FF6B35"/>
+    <rect x="64" y="48" width="120" height="26" rx="5" fill="#F5F5F4"/>
+    <rect x="178" y="42" width="38" height="38" rx="7" fill="#F5F5F4"/>
+    <rect x="64" y="118" width="84" height="22" rx="5" fill="#F5F5F4"/>
+    <rect x="142" y="113" width="32" height="32" rx="6" fill="#F5F5F4"/>
+    <circle cx="77" cy="208" r="14" fill="#FFD8B0" opacity="0.55"/>
+  </g>
+
+  <!-- Wordmark -->
+  <g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-weight="700" font-size="92" letter-spacing="-2">
+    <text x="320" y="158" fill="#F5F5F4">Open</text>
+    <text x="540" y="158" fill="#FF6B35">Forge</text>
+  </g>
+</svg>

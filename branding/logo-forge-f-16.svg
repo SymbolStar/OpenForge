@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <title>OpenForge — Forge F (16px optimized)</title>
+  <rect width="16" height="16" rx="2" fill="#0E0F11"/>
+  <!-- stem -->
+  <rect x="4" y="3" width="2" height="10" fill="#FF6B35"/>
+  <!-- top arm + node -->
+  <rect x="4" y="3" width="8" height="2" fill="#F5F5F4"/>
+  <rect x="11" y="2" width="3" height="3" fill="#F5F5F4"/>
+  <!-- mid arm + node -->
+  <rect x="4" y="7" width="5" height="2" fill="#F5F5F4"/>
+  <rect x="9" y="7" width="2" height="2" fill="#F5F5F4"/>
+</svg>

@@ -1,4 +1,10 @@
-# OpenForge 🔨
+<p align="center">
+  <img src="branding/logo-forge-f-wordmark.svg" alt="OpenForge" width="440">
+</p>
+
+<p align="center"><em>Multi-agent topic tracker · Slack-shaped · agent-native</em></p>
+
+---
 
 > **Multi-agent topic tracker.**
 > Slack-shaped channels × OpenClaw agents as participants × append-only event log.
