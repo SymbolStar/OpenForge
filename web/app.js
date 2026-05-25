@@ -615,7 +615,7 @@ function renderThreadList(threads) {
       <button type="button">
         <div class="thread-line-1">
           ${liveDot}
-          <span class="thread-preview">${escapeHtml(t.preview || '(empty)')}</span>
+          <span class="thread-preview">${escapeHtml(t.title || t.preview || '(empty)')}</span>
           ${closedChip}
         </div>
         <div class="thread-line-2">
@@ -707,7 +707,7 @@ function renderDetail({ keepScroll = false } = {}) {
     els.postList.innerHTML = '<div class="empty">从中栏选择一个 thread，或在中栏底部输入开始一个新 thread。</div>';
     return;
   }
-  els.detailTitle.textContent = t.preview || '(empty)';
+  els.detailTitle.textContent = t.title || t.preview || '(empty)';
   const startedRel = formatRelative(t.started_at);
   els.detailSub.textContent =
     `${t.created_by} started · ${startedRel} · ${t.post_count} posts`;
@@ -1765,6 +1765,532 @@ buildMemberControls();
 Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   loadSquads().then(() => { refreshAgentList(); startPolling(); });
 });
+
+/* ─── v0.10: Thread create modal (➕ in thread list header + ⌘N) ─────── */
+(function () {
+  const TITLE_MAX = 80;
+  const IMG_MAX = 9;
+  const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+  const modal = document.getElementById('thread-create-modal');
+  if (!modal) return; // modal markup missing — bail
+
+  const els = {
+    backdrop: modal,
+    titleInput: document.getElementById('tc-title'),
+    titleCount: document.getElementById('tc-title-count'),
+    titleErr: document.getElementById('tc-title-err'),
+    contentInput: document.getElementById('tc-content'),
+    chipsBox: document.getElementById('tc-chips'),
+    helperStatus: document.getElementById('tc-helper-status'),
+    alert: document.getElementById('tc-alert'),
+    form: document.getElementById('tc-form'),
+    btnSubmit: document.getElementById('tc-btn-submit'),
+    btnCancel: document.getElementById('tc-btn-cancel'),
+    btnClose: document.getElementById('tc-btn-close'),
+    btnNew: document.getElementById('btn-new-thread'),
+    toast: document.getElementById('toast'),
+  };
+
+  // ── lightweight toast (independent of the IIFE-scoped one) ──
+  function toast(msg) {
+    const t = els.toast;
+    if (!t) return;
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { t.hidden = true; }, 2000);
+  }
+
+  // ── state ──
+  // chip: {id, name, status: 'uploading'|'ok'|'failed', url?, refId?, blob?, mime?, err?}
+  let chips = [];
+  let chipSeq = 0;
+  let submitting = false;
+  let lastFocusedEl = null;
+  let titleTouched = false;
+
+  function isOpen() { return modal.classList.contains('open'); }
+
+  function hasAnyInput() {
+    return (els.titleInput.value || '').trim() !== ''
+      || (els.contentInput.value || '').trim() !== ''
+      || chips.length > 0;
+  }
+
+  function anyUploading() { return chips.some(c => c.status === 'uploading'); }
+  function anyFailed() { return chips.some(c => c.status === 'failed'); }
+
+  function escapeHtmlLocal(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ── title validation ──
+  function validateTitle() {
+    const raw = els.titleInput.value || '';
+    const trimmed = raw.trim();
+    let err = '';
+    if (trimmed.length === 0) {
+      err = '请输入 title';
+    } else if (trimmed.length > TITLE_MAX) {
+      err = `title 最多 ${TITLE_MAX} 字`;
+    }
+    return { ok: !err, trimmed, err };
+  }
+
+  function refreshTitleUI() {
+    const raw = els.titleInput.value || '';
+    // Hard cap on raw length too — A-3 says "超 80 截断不允许输入".
+    if (raw.length > TITLE_MAX) {
+      els.titleInput.value = raw.slice(0, TITLE_MAX);
+    }
+    const v = els.titleInput.value;
+    els.titleCount.textContent = `${v.length} / ${TITLE_MAX}`;
+    const { ok, err } = validateTitle();
+    if (titleTouched && !ok) {
+      els.titleInput.classList.add('error');
+      els.titleErr.textContent = `⚠ ${err}`;
+    } else {
+      els.titleInput.classList.remove('error');
+      els.titleErr.textContent = '';
+    }
+    refreshSubmitState();
+  }
+
+  function refreshSubmitState() {
+    const { ok } = validateTitle();
+    const block = !ok || anyUploading() || submitting;
+    els.btnSubmit.disabled = block;
+    if (submitting) {
+      els.helperStatus.textContent = '创建中…';
+    } else if (anyUploading()) {
+      els.helperStatus.textContent = '图片上传中…';
+    } else if (anyFailed()) {
+      els.helperStatus.textContent = '⚠ 有图片上传失败';
+    } else {
+      els.helperStatus.textContent = '';
+    }
+  }
+
+  // ── auto-grow textarea ──
+  function autosizeContent() {
+    const ta = els.contentInput;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 280) + 'px';
+  }
+
+  // ── chips ──
+  function renderChips() {
+    if (chips.length === 0) {
+      els.chipsBox.hidden = true;
+      els.chipsBox.innerHTML = '';
+      return;
+    }
+    els.chipsBox.hidden = false;
+    els.chipsBox.innerHTML = chips.map(c => {
+      if (c.status === 'uploading') {
+        return `<div class="tc-chip uploading" data-id="${c.id}">`
+          + `<div class="tc-spinner"></div>`
+          + `<span class="tc-chip-label">${escapeHtmlLocal(c.name)}</span>`
+          + `</div>`;
+      }
+      if (c.status === 'failed') {
+        return `<div class="tc-chip failed" data-id="${c.id}">`
+          + `<span class="tc-chip-label">⚠ ${escapeHtmlLocal(c.err || '上传失败')}</span>`
+          + `<div class="tc-chip-retry">`
+          +   `<button type="button" class="tc-mini-btn" data-action="retry" data-id="${c.id}">重试</button>`
+          +   `<button type="button" class="tc-mini-btn" data-action="remove" data-id="${c.id}">删除</button>`
+          + `</div>`
+          + `</div>`;
+      }
+      return `<div class="tc-chip" data-id="${c.id}">`
+        + `<img src="${escapeHtmlLocal(c.url)}" alt="${escapeHtmlLocal(c.name)}" />`
+        + `<button type="button" class="tc-chip-x" data-action="remove" data-id="${c.id}" title="移除" aria-label="移除图片">×</button>`
+        + `</div>`;
+    }).join('');
+  }
+
+  els.chipsBox.addEventListener('click', e => {
+    if (submitting) return;
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const action = btn.dataset.action;
+    const chip = chips.find(c => c.id === id);
+    if (!chip) return;
+    if (action === 'remove') {
+      removeChip(id);
+    } else if (action === 'retry') {
+      retryChip(chip);
+    }
+  });
+
+  function removeChip(id) {
+    const chip = chips.find(c => c.id === id);
+    if (!chip) return;
+    // Remove [[ref:<id>]] token from content if present
+    if (chip.refId) {
+      const token = `[[ref:${chip.refId}]]`;
+      els.contentInput.value = els.contentInput.value.split(token).join('').replace(/\n{3,}/g, '\n\n');
+      autosizeContent();
+    }
+    chips = chips.filter(c => c.id !== id);
+    renderChips();
+    refreshSubmitState();
+  }
+
+  async function retryChip(chip) {
+    if (!chip.blob) {
+      chip.err = '图片数据已丢失';
+      chip.status = 'failed';
+      renderChips();
+      refreshSubmitState();
+      return;
+    }
+    chip.status = 'uploading';
+    chip.err = '';
+    renderChips();
+    refreshSubmitState();
+    try {
+      const meta = await uploadAndRegister(chip.blob, chip.mime, chip.name);
+      chip.status = 'ok';
+      chip.url = meta.url;
+      chip.refId = meta.refId;
+      insertRefToken(chip.refId);
+      renderChips();
+      refreshSubmitState();
+    } catch (err) {
+      chip.status = 'failed';
+      chip.err = (err && err.message) || '上传失败';
+      renderChips();
+      refreshSubmitState();
+    }
+  }
+
+  function insertRefToken(refId) {
+    // Insert at the current caret position; if textarea isn't focused,
+    // append.
+    const ta = els.contentInput;
+    const token = `[[ref:${refId}]]`;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (document.activeElement === ta && start != null && end != null) {
+      const before = ta.value.slice(0, start);
+      const after = ta.value.slice(end);
+      const needLead = before.length > 0 && !before.endsWith('\n') ? ' ' : '';
+      const insert = needLead + token + ' ';
+      ta.value = before + insert + after;
+      const caret = (before + insert).length;
+      ta.selectionStart = ta.selectionEnd = caret;
+    } else {
+      const pad = ta.value && !ta.value.endsWith('\n') ? '\n' : '';
+      ta.value = ta.value + pad + token + ' ';
+    }
+    autosizeContent();
+  }
+
+  // ── upload pipeline: bytes → POST /api/uploads/refs (writes to operator workspace + registers ref) ──
+  async function uploadAndRegister(blob, mime, label) {
+    const buf = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    const b64 = btoa(bin);
+    const body = {
+      content_base64: b64,
+      content_type: mime,
+      label: label || 'paste.png',
+      source_agent: 'scott',
+    };
+    if (state.currentSquadId) body.squad_id = state.currentSquadId;
+    const res = await fetch('/api/uploads/refs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-OpenForge-UI': '1' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    // data: { id, label, abs_path, ..., upload: { url?, filename, ... } }
+    // /api/uploads/refs writes outside the openforge uploads dir, so there's
+    // no /api/uploads/<filename> URL. We resolve content through the refs
+    // pipeline: /api/refs/<id>/content serves the bytes.
+    const refId = data.id;
+    const url = `/api/refs/${encodeURIComponent(refId)}/content`;
+    return { url, refId, filename: data.upload && data.upload.filename };
+  }
+
+  // ── paste handler ──
+  els.contentInput.addEventListener('paste', async event => {
+    if (submitting) return;
+    const items = Array.from(event.clipboardData?.items || []);
+    const imageItems = items.filter(it => it.kind === 'file' && /^image\//.test(it.type));
+    if (imageItems.length === 0) return;
+    event.preventDefault();
+    for (const item of imageItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (!ALLOWED_MIME.has(file.type)) {
+        toast('不支持的图片格式');
+        continue;
+      }
+      if (chips.length >= IMG_MAX) {
+        toast(`最多 ${IMG_MAX} 张图片`);
+        break;
+      }
+      const id = 'c' + (++chipSeq);
+      const chip = {
+        id,
+        name: file.name || `paste-${chipSeq}.png`,
+        status: 'uploading',
+        blob: file,
+        mime: file.type,
+      };
+      chips.push(chip);
+      renderChips();
+      refreshSubmitState();
+      try {
+        const meta = await uploadAndRegister(file, file.type, chip.name);
+        chip.status = 'ok';
+        chip.url = meta.url;
+        chip.refId = meta.refId;
+        insertRefToken(chip.refId);
+      } catch (err) {
+        chip.status = 'failed';
+        chip.err = (err && err.message) || '上传失败';
+      } finally {
+        renderChips();
+        refreshSubmitState();
+      }
+    }
+  });
+
+  // ── inputs ──
+  els.titleInput.addEventListener('input', () => {
+    titleTouched = true;
+    refreshTitleUI();
+  });
+  els.titleInput.addEventListener('blur', () => {
+    titleTouched = true;
+    refreshTitleUI();
+  });
+  els.contentInput.addEventListener('input', autosizeContent);
+
+  // ── focus trap ──
+  function focusableInModal() {
+    const sel = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    return Array.from(modal.querySelectorAll(sel)).filter(el => el.offsetParent !== null);
+  }
+
+  modal.addEventListener('keydown', e => {
+    if (e.key === 'Tab') {
+      const f = focusableInModal();
+      if (f.length === 0) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      requestClose();
+    }
+  });
+
+  modal.addEventListener('mousedown', e => {
+    // click on backdrop (modal === backdrop wrapper, .tc-modal is the inner)
+    if (e.target === modal) {
+      requestClose();
+    }
+  });
+
+  function requestClose() {
+    if (submitting) return; // A-12: submitting 期间忽略
+    if (hasAnyInput()) {
+      if (!confirm('放弃这条 thread？')) return;
+    }
+    closeModal();
+  }
+
+  function openModal() {
+    if (isOpen()) return;
+    lastFocusedEl = document.activeElement;
+    // reset state
+    chips = [];
+    chipSeq = 0;
+    submitting = false;
+    titleTouched = false;
+    els.titleInput.value = '';
+    els.contentInput.value = '';
+    els.titleInput.classList.remove('error');
+    els.titleErr.textContent = '';
+    els.alert.hidden = true;
+    els.alert.textContent = '';
+    els.btnSubmit.innerHTML = '创建 thread';
+    els.btnCancel.disabled = false;
+    els.btnClose.disabled = false;
+    els.titleInput.disabled = false;
+    els.contentInput.disabled = false;
+    renderChips();
+    refreshTitleUI();
+    autosizeContent();
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    // focus title after the modal becomes visible
+    setTimeout(() => els.titleInput.focus(), 30);
+  }
+
+  function closeModal() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    // return focus to ➕
+    setTimeout(() => {
+      const target = els.btnNew || lastFocusedEl;
+      if (target && typeof target.focus === 'function') target.focus();
+    }, 0);
+  }
+
+  els.btnCancel.addEventListener('click', e => { e.preventDefault(); requestClose(); });
+  els.btnClose.addEventListener('click', e => { e.preventDefault(); requestClose(); });
+
+  // ── submit ──
+  els.form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (submitting) return;
+    titleTouched = true;
+    refreshTitleUI();
+    const { ok, trimmed: title } = validateTitle();
+    if (!ok) {
+      els.titleInput.focus();
+      return;
+    }
+    if (anyUploading()) {
+      toast('图片还在上传…');
+      return;
+    }
+    if (anyFailed()) {
+      els.alert.hidden = false;
+      els.alert.textContent = '⚠ 请先处理失败的图片（重试或删除）';
+      return;
+    }
+    if (!state.currentSquadId) {
+      els.alert.hidden = false;
+      els.alert.textContent = '⚠ 请先选择一个 squad';
+      return;
+    }
+
+    const contentRaw = (els.contentInput.value || '').trim();
+    // Keep `[[ref:<id>]]` tokens in the post body — the existing renderer
+    // (FILE_LINK_RE → resolveChipFromRefs → ref chip) already turns them into
+    // image chips when the ref's content_type starts with `image/`.
+    let contentForPost = contentRaw;
+    // If user has chips that are uploaded but somehow not represented in the
+    // text (e.g. user deleted the token but didn't remove the chip),
+    // append their tokens at the end so the image still ships with the post.
+    const okChips = chips.filter(c => c.status === 'ok' && c.refId);
+    const orphanRefs = okChips
+      .filter(c => !contentForPost.includes(`[[ref:${c.refId}]]`))
+      .map(c => `[[ref:${c.refId}]]`);
+    if (orphanRefs.length) {
+      contentForPost = (contentForPost ? contentForPost + '\n\n' : '') + orphanRefs.join('\n');
+    }
+
+    submitting = true;
+    els.btnSubmit.disabled = true;
+    els.btnCancel.disabled = true;
+    els.btnClose.disabled = true;
+    els.titleInput.disabled = true;
+    els.contentInput.disabled = true;
+    els.btnSubmit.innerHTML = '<span class="tc-spinner"></span>创建中…';
+    els.alert.hidden = true;
+    refreshSubmitState();
+
+    let thread = null;
+    try {
+      thread = await apiJson(
+        `/api/squads/${encodeURIComponent(state.currentSquadId)}/threads`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, created_by: 'scott' }),
+        }
+      );
+    } catch (err) {
+      submitting = false;
+      els.btnSubmit.disabled = false;
+      els.btnCancel.disabled = false;
+      els.btnClose.disabled = false;
+      els.titleInput.disabled = false;
+      els.contentInput.disabled = false;
+      els.btnSubmit.innerHTML = '创建 thread';
+      els.alert.hidden = false;
+      els.alert.textContent = `⚠ 创建 thread 失败：${err.message || err}`;
+      refreshSubmitState();
+      return;
+    }
+
+    // step 2: post content (only if non-empty)
+    if (contentForPost) {
+      try {
+        await apiJson(
+          `/api/threads/${encodeURIComponent(thread.thread_id)}/posts`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: contentForPost, speaker: 'scott' }),
+          }
+        );
+      } catch (err) {
+        // A-11: thread exists, post failed. Jump in + show red banner.
+        try { await refreshThreadsForCurrentSquad(); } catch (_) {}
+        try { await selectThread(thread.thread_id); } catch (_) {}
+        closeModal();
+        setStatus(`⚠ thread 已创建，但首条 post 发送失败：${err.message || err}`, false);
+        toast('首条内容发送失败，请进入 thread 重发');
+        return;
+      }
+    }
+
+    // success
+    try { await refreshThreadsForCurrentSquad(); } catch (_) {}
+    try { await selectThread(thread.thread_id); } catch (_) {}
+    submitting = false;
+    closeModal();
+  });
+
+  // ── wire ➕ + ⌘N ──
+  if (els.btnNew) {
+    els.btnNew.addEventListener('click', e => {
+      e.preventDefault();
+      openModal();
+    });
+  }
+
+  document.addEventListener('keydown', e => {
+    // ⌘N / Ctrl+N — preventDefault (R-3) to override browser "new window".
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'n' || e.key === 'N')) {
+      // only when home view is visible
+      const home = document.getElementById('home-view');
+      if (home && !home.hidden) {
+        e.preventDefault();
+        if (!isOpen()) openModal();
+      }
+    }
+  });
+
+  // expose for debugging
+  window.__threadCreateModal = { open: openModal, close: closeModal };
+})();
 
 /* ─── v0.6: icon-rail routing + Files view ─────────────────────────────── */
 (function () {

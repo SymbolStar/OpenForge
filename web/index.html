@@ -68,7 +68,10 @@
     </header>
     <div class="rail-list-head">
       <span>THREADS</span>
-      <button id="btn-refresh-threads" type="button" title="刷新">↻</button>
+      <div class="rail-list-head-actions">
+        <button id="btn-new-thread" type="button" title="新建 thread (⌘N)" aria-label="新建 thread" class="rail-head-btn primary">+</button>
+        <button id="btn-refresh-threads" type="button" title="刷新" class="rail-head-btn">↻</button>
+      </div>
     </div>
     <ul id="thread-list"></ul>
     <footer id="thread-composer">
@@ -245,6 +248,43 @@
         <small class="version-tag" id="settings-version" title="OpenForge build">v?</small>
         <span class="flex-spacer"></span>
         <button type="button" id="btn-close-settings-2">关闭</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="thread-create-modal" class="modal-backdrop tc-modal-backdrop" aria-hidden="true">
+  <div class="modal tc-modal" role="dialog" aria-modal="true" aria-labelledby="tc-modal-title">
+    <div class="modal-header tc-modal-head">
+      <h2 id="tc-modal-title">新建 Thread</h2>
+      <button id="tc-btn-close" type="button" class="tc-icon-btn" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div id="tc-alert" class="tc-alert" hidden role="alert"></div>
+    <form id="tc-form" autocomplete="off">
+      <div class="tc-field">
+        <label for="tc-title">Title <span class="tc-req" aria-hidden="true">*</span></label>
+        <input id="tc-title" name="title" type="text" class="tc-input" maxlength="80" required
+               placeholder="一句话描述这个 thread…" aria-describedby="tc-title-meta" />
+        <div class="tc-field-meta" id="tc-title-meta">
+          <span id="tc-title-err" class="tc-err" aria-live="polite"></span>
+          <span id="tc-title-count" class="tc-count">0 / 80</span>
+        </div>
+      </div>
+      <div class="tc-field">
+        <label for="tc-content">Content <span class="tc-muted">（可选）</span></label>
+        <textarea id="tc-content" name="content" class="tc-textarea" rows="4"
+                  placeholder="详细内容，可粘贴图片…"></textarea>
+        <div id="tc-chips" class="tc-chips" hidden></div>
+        <div class="tc-helper">
+          <span>💡 Ctrl/⌘+V 粘贴图片</span>
+          <span class="tc-helper-dot"></span>
+          <span>最多 9 张</span>
+          <span id="tc-helper-status" class="tc-helper-status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div class="tc-actions">
+        <button type="button" id="tc-btn-cancel" class="tc-btn">取消</button>
+        <button type="submit" id="tc-btn-submit" class="tc-btn tc-btn-primary" disabled>创建 thread</button>
       </div>
     </form>
   </div>

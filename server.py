@@ -95,6 +95,7 @@ def _serializable_thread(m: dict) -> dict:
     return {
         "thread_id": m["thread_id"],
         "squad_id": m["squad_id"],
+        "title": m.get("title", ""),
         "created_by": m["created_by"],
         "started_at": m["started_at"],
         "last_post_at": m["last_post_at"],
@@ -610,6 +611,66 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(meta, 201)
             return
 
+        # v0.10 paste-as-ref: POST /api/uploads/refs
+        # Body: {"content_base64":"...","content_type":"image/png",
+        #        "label":"paste.png","source_agent":"scott",
+        #        "squad_id":"..."?, "thread_id":"..."?}
+        # Writes the bytes into the operator's workspace upload dir, then
+        # registers the file via forge_refs.register() and returns the ref.
+        if url.path == "/api/uploads/refs":
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            b64 = opts.get("content_base64")
+            mime = opts.get("content_type")
+            if not isinstance(b64, str) or not b64:
+                self._json({"error": "content_base64 required"}, 400)
+                return
+            try:
+                raw = base64.b64decode(b64, validate=True)
+            except (binascii.Error, ValueError):
+                self._json({"error": "content_base64 is not valid base64"}, 400)
+                return
+            if len(raw) > forge_uploads.MAX_BYTES:
+                self._json({"error": f"file too large: max {forge_uploads.MAX_BYTES} bytes"}, 413)
+                return
+            source_agent = self._resolve_speaker(opts, field="source_agent")
+            if source_agent is None:
+                return
+            try:
+                meta = forge_uploads.save_upload_to_workspace(
+                    raw, mime, source_agent
+                )
+            except forge_uploads.UploadError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            label = (opts.get("label") or meta["filename"]).strip() or meta["filename"]
+            try:
+                ref = forge_refs.register(
+                    label=label,
+                    abs_path=meta["abs_path"],
+                    source_agent=source_agent,
+                    thread_id=opts.get("thread_id"),
+                    squad_id=opts.get("squad_id"),
+                    writable=False,
+                    content_type=meta["content_type"],
+                )
+            except forge_refs.RefBlockedError as e:
+                self._json({"error": str(e) or "blocked"}, 403)
+                return
+            except forge_refs.RefTooLargeError as e:
+                self._json({"error": str(e) or "too large"}, 413)
+                return
+            except forge_refs.RefValidationError as e:
+                self._json({"error": str(e) or "invalid"}, 400)
+                return
+            payload = {**ref, "upload": meta}
+            self._json(payload, 201)
+            return
+
         if url.path == "/api/squads":
             length = int(self.headers.get("Content-Length") or 0)
             payload = self.rfile.read(length).decode("utf-8") if length else ""
@@ -637,21 +698,32 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             opts = self._read_json()
             if opts is None:
                 return
+            # v0.10: prefer explicit `title` + optional `content`.
+            # Legacy callers passing only `content` still work (title derived).
+            raw_title = opts.get("title")
             content = (opts.get("content") or "").strip()
-            if not content:
-                self._json({"error": "content required"}, 400)
+            if raw_title is None and not content:
+                self._json({"error": "title or content required"}, 400)
                 return
             created_by = self._resolve_speaker(opts, field="created_by")
             if created_by is None:
                 return
             try:
-                thread = store.create_thread(squad_id, created_by, content)
+                if raw_title is not None:
+                    thread = store.create_thread(
+                        squad_id, created_by,
+                        title=raw_title,
+                        opening_content=content or None,
+                    )
+                else:
+                    thread = store.create_thread(squad_id, created_by, content)
             except ValueError as e:
                 self._json({"error": str(e)}, 400)
                 return
             # P0 post routing: if the opening post mentions agents and
             # speaker is scott, queue async fan-out.
-            opening = (thread.get("posts") or [None])[0]
+            posts = thread.get("posts") or []
+            opening = posts[0] if posts else None
             if opening:
                 try:
                     opening.setdefault("post_id", opening.get("id"))

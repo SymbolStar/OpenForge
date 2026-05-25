@@ -689,23 +689,75 @@ def list_thread_ids() -> list[str]:
     return out
 
 
-def create_thread(squad_id: str, created_by: str, opening_content: str) -> dict:
-    """Create a new thread and append its opening post atomically."""
-    if not isinstance(opening_content, str) or not opening_content.strip():
-        raise ValueError("opening content must be a non-empty string")
+# Title is a v0.10 addition for the "new thread" modal entry point. It is
+# optional for back-compat — legacy create_thread(squad, by, content) calls
+# (passing opening post as 3rd arg) still work and auto-derive the title.
+THREAD_TITLE_MAX = 80
+
+
+def _normalize_thread_title(title: str | None) -> str:
+    if title is None:
+        return ""
+    if not isinstance(title, str):
+        raise ValueError("title must be a string")
+    t = title.strip()
+    if len(t) > THREAD_TITLE_MAX:
+        raise ValueError(f"title too long (>{THREAD_TITLE_MAX} chars)")
+    return t
+
+
+def create_thread(squad_id: str,
+                  created_by: str,
+                  title_or_content: str | None = None,
+                  *,
+                  title: str | None = None,
+                  opening_content: str | None = None) -> dict:
+    """Create a new thread.
+
+    Two call shapes are supported:
+
+    1. v0.10 keyword form (preferred):
+           create_thread(squad, by, title="…", opening_content="…" or None)
+       The thread always gets an explicit title; opening_content is optional.
+
+    2. Legacy positional form (for back-compat with existing tests/callers):
+           create_thread(squad, by, opening_content_str)
+       The 3rd positional arg is treated as the opening post; title is
+       derived from the opening line (truncated to 80 chars).
+    """
+    if title is None and opening_content is None:
+        # legacy form: third arg is opening content
+        if not isinstance(title_or_content, str) or not title_or_content.strip():
+            raise ValueError("opening content must be a non-empty string")
+        opening_content = title_or_content
+        # derive title from first line, truncated
+        first_line = opening_content.strip().splitlines()[0]
+        title = first_line[:THREAD_TITLE_MAX]
+    else:
+        if title is None:
+            title = title_or_content
+        title = _normalize_thread_title(title)
+        if opening_content is not None and not isinstance(opening_content, str):
+            raise ValueError("opening_content must be a string or None")
+        if opening_content is not None and not opening_content.strip():
+            opening_content = None
     if not get_squad(squad_id):
         raise ValueError(f"unknown squad: {squad_id!r}")
     speaker = (created_by or "scott").strip() or "scott"
     tid = new_thread_id()
     # bootstrap dir + first events
     thread_dir(tid)
-    append_thread_event(tid, {
+    started_event = {
         "kind": "thread_started",
         "thread_id": tid,
         "squad_id": squad_id,
         "created_by": speaker,
-    })
-    add_thread_post(tid, speaker, opening_content)
+    }
+    if title:
+        started_event["title"] = title
+    append_thread_event(tid, started_event)
+    if opening_content is not None:
+        add_thread_post(tid, speaker, opening_content)
     return project_thread(tid)
 
 
@@ -739,6 +791,16 @@ def close_thread(thread_id: str, closed_by: str = "scott") -> dict:
         "kind": "thread_closed",
         "thread_id": thread_id,
         "closed_by": closed_by or "scott",
+    })
+
+
+def set_thread_title(thread_id: str, title: str) -> dict:
+    """Append a thread_titled event to rename a thread. v0.10."""
+    t = _normalize_thread_title(title)
+    return append_thread_event(thread_id, {
+        "kind": "thread_titled",
+        "thread_id": thread_id,
+        "title": t,
     })
 
 
@@ -813,6 +875,7 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
     model: dict[str, Any] = {
         "thread_id": thread_id,
         "squad_id": None,
+        "title": "",
         "created_by": "scott",
         "started_at": None,
         "closed_at": None,
@@ -831,6 +894,13 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
             model["squad_id"] = ev.get("squad_id")
             model["created_by"] = ev.get("created_by") or model["created_by"]
             model["started_at"] = ev.get("ts")
+            t = ev.get("title")
+            if isinstance(t, str) and t.strip():
+                model["title"] = t.strip()
+        elif kind == "thread_titled":
+            t = ev.get("title")
+            if isinstance(t, str):
+                model["title"] = t.strip()
         elif kind == "post_added":
             post = {
                 "id": ev.get("post_id") or ev["id"],
@@ -898,6 +968,7 @@ def summarize_thread(thread_id: str) -> dict | None:
     return {
         "thread_id": m["thread_id"],
         "squad_id": m["squad_id"],
+        "title": m.get("title", ""),
         "created_by": m["created_by"],
         "started_at": m["started_at"],
         "last_post_at": m["last_post_at"],
@@ -925,10 +996,12 @@ def render_thread_markdown(thread_id: str) -> str:
     if m is None:
         return ""
     squad_id = m["squad_id"] or "?"
+    title = m.get("title") or ""
+    heading = f"Thread {thread_id}" if not title else f"{title}"
     head = [
-        f"# Thread {thread_id}",
+        f"# {heading}",
         "",
-        f"**Squad**: {squad_id} · **Started by**: {m['created_by']} · "
+        f"**Thread**: `{thread_id}` · **Squad**: {squad_id} · **Started by**: {m['created_by']} · "
         f"**Started**: {m['started_at']}",
         "",
         "<!-- generated from events.jsonl; edits here will be overwritten -->",

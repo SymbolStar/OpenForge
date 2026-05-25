@@ -23,6 +23,22 @@ from pathlib import Path
 UPLOADS_DIR = Path.home() / ".openclaw" / "openforge" / "uploads"
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
+# v0.10: per-operator workspace upload dir (for ref-based thread-create paste).
+# Files are written here (not into the openforge git repo) and then registered
+# via forge_refs.register(), so multi-agent ref resolution works.
+WORKSPACE_BASE = Path.home() / ".openclaw"
+
+
+def workspace_uploads_dir(operator: str) -> Path:
+    """Return ``~/.openclaw/workspace-<operator>/openforge-uploads`` (mkdir-p)."""
+    op = (operator or "scott").strip() or "scott"
+    # be paranoid: forbid path traversal in the operator id
+    if "/" in op or "\\" in op or ".." in op:
+        raise UploadError(f"invalid operator id: {op!r}")
+    p = WORKSPACE_BASE / f"workspace-{op}" / "openforge-uploads"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
 # Map: declared mime -> file extension. Also serves as MIME allowlist.
 # We content-sniff magic bytes to confirm; this dict drives both checks.
 _MIME_EXT: dict[str, str] = {
@@ -132,6 +148,47 @@ def save_upload(content: bytes, mime: str | None) -> dict:
     return {
         "filename": filename,
         "url": f"/api/uploads/{filename}",
+        "size": len(content),
+        "content_type": _EXT_TO_MIME[ext],
+        "sha256": digest,
+    }
+
+
+def save_upload_to_workspace(content: bytes, mime: str | None,
+                              operator: str) -> dict:
+    """Variant of save_upload that lands the file in the operator's workspace.
+
+    Layout: ``~/.openclaw/workspace-<operator>/openforge-uploads/<ts>-<sha8>.<ext>``
+
+    Returns a dict with ``abs_path``, ``filename``, ``size``, ``content_type``,
+    ``sha256``. Caller is responsible for forge_refs.register() if a ref is
+    desired.
+    """
+    if not isinstance(content, (bytes, bytearray)):
+        raise UploadError("content must be bytes")
+    if len(content) == 0:
+        raise UploadError("content is empty")
+    if len(content) > MAX_BYTES:
+        raise UploadError(
+            f"file too large: {len(content)} bytes (max {MAX_BYTES})"
+        )
+    m = _normalize_mime(mime)
+    ext = _MIME_EXT[m]
+    _verify_magic(bytes(content[:32]), ext)
+
+    digest = hashlib.sha256(content).hexdigest()
+    import time as _time
+    ts = int(_time.time() * 1000)
+    filename = f"{ts}-{digest[:12]}.{ext}"
+    target_dir = workspace_uploads_dir(operator)
+    path = target_dir / filename
+    if not path.exists():
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_bytes(content)
+        tmp.replace(path)
+    return {
+        "abs_path": str(path),
+        "filename": filename,
         "size": len(content),
         "content_type": _EXT_TO_MIME[ext],
         "sha256": digest,
