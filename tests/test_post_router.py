@@ -742,3 +742,131 @@ def test_handoff_detector_silent_without_handoff_verb(fake_home, store):  # noqa
     )
     # No "可以动" / "交给" / "请你" verb near alice → not a handoff miss.
     assert "alice" not in misses
+
+
+# ─── orphan placeholder recovery (2026-05-26 PR #15) ─────────────────
+def test_recover_orphan_placeholders_supersedes_and_redispatches(
+    fake_home, store, monkeypatch  # noqa: F811
+):
+    """A dangling `__router__` placeholder should be superseded with an
+    interrupt note AND the trigger should be re-dispatched.
+    """
+    import post_router
+
+    # Make sure designer is a known employee so name_to_id can resolve.
+    (fake_home / ".openclaw" / "workspace-designer").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-designer" / "SOUL.md").write_text("# designer")
+    (fake_home / ".openclaw" / "workspace-designer" / "IDENTITY.md").write_text(
+        "- **Name:** Dora\n- **Emoji:** 🎨\n"
+    )
+    (fake_home / ".openclaw" / "agents" / "designer").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "agents" / "designer" / "sessions").mkdir(
+        parents=True, exist_ok=True
+    )
+
+    # Create a thread with a scott @-mention of designer (the trigger), then
+    # manually write a __router__ placeholder under it — simulating the
+    # state that exists in events.jsonl right when a restart kills the
+    # in-flight worker.
+    store.ensure_default_squads()
+    sq = store.create_squad({
+        "id": "rcv", "name": "rcv",
+        "members": ["scott", "designer"], "chair": "scott",
+    })
+    t = store.create_thread(sq["id"], "scott", "@dora design 好了吗")
+    trigger = t["posts"][-1]
+    trigger_pid = trigger.get("post_id") or trigger["id"]
+    # Inject the dangling placeholder directly (skip the normal _dispatch
+    # path so no worker actually runs).
+    ph = store.add_thread_post(
+        t["thread_id"], post_router.ROUTER_SPEAKER_FALLBACK,
+        "⏳ @Dora 正在思考中…", parent_post_id=trigger_pid,
+    )
+    placeholder_id = (ph.get("post_id") or ph["id"])
+
+    # Sanity: projection has the placeholder live and not superseded.
+    proj = store.project_thread(t["thread_id"])
+    live = [p for p in proj["posts"] if (p.get("post_id") or p.get("id")) == placeholder_id]
+    assert live and not live[0]["superseded"]
+
+    # Recover (redispatch=True so the worker actually picks the trigger up).
+    with post_router._inflight_lock:
+        post_router._inflight.clear()
+    results = post_router.recover_orphan_placeholders(redispatch=True)
+
+    # We should have recovered exactly the one placeholder for designer.
+    assert any(r["agent_id"] == "designer" for r in results)
+    rec = next(r for r in results if r["agent_id"] == "designer")
+    assert rec["redispatched"] is True
+    assert rec["trigger_pid"] == trigger_pid
+
+    # Projection now shows the placeholder superseded by a note from __router__.
+    proj2 = store.project_thread(t["thread_id"])
+    live2 = [p for p in proj2["posts"] if (p.get("post_id") or p.get("id")) == placeholder_id]
+    assert live2 and live2[0]["superseded"]
+    notes = [
+        p for p in proj2["posts"]
+        if p["speaker"] == post_router.ROUTER_SPEAKER_FALLBACK
+        and "重启" in (p.get("content") or "")
+    ]
+    assert notes, "expected an interrupt note from __router__"
+
+    # Let the re-dispatched worker run to completion so we don't leak it
+    # across the test boundary.
+    _wait_for(lambda: not post_router._inflight, timeout=6.0)
+
+
+def test_recover_orphan_placeholders_no_op_when_already_superseded(
+    fake_home, store, monkeypatch  # noqa: F811
+):
+    """Already-resolved placeholders are left alone (no double-recovery)."""
+    import post_router
+
+    store.ensure_default_squads()
+    sq = store.create_squad({
+        "id": "done", "name": "done",
+        "members": ["scott", "designer"], "chair": "scott",
+    })
+    t = store.create_thread(sq["id"], "scott", "@dora ping")
+    trigger_pid = (t["posts"][-1].get("post_id") or t["posts"][-1]["id"])
+    ph = store.add_thread_post(
+        t["thread_id"], post_router.ROUTER_SPEAKER_FALLBACK,
+        "⏳ @Dora 正在思考中…", parent_post_id=trigger_pid,
+    )
+    final = store.add_thread_post(
+        t["thread_id"], "designer", "已完成", parent_post_id=trigger_pid,
+    )
+    store.supersede_thread_post(
+        t["thread_id"], (ph.get("post_id") or ph["id"]), by_post_id=(final.get("post_id") or final["id"]),
+    )
+
+    results = post_router.recover_orphan_placeholders(redispatch=True)
+    assert results == [], "should not touch already-superseded placeholders"
+
+
+def test_recover_orphan_placeholders_supersedes_unknown_name(
+    fake_home, store, monkeypatch  # noqa: F811
+):
+    """If the placeholder names an unknown agent, still supersede so the
+    UI clears — just don't redispatch (we don't know who to dispatch to).
+    """
+    import post_router
+
+    store.ensure_default_squads()
+    sq = store.create_squad({
+        "id": "uk", "name": "uk",
+        "members": ["scott"], "chair": "scott",
+    })
+    t = store.create_thread(sq["id"], "scott", "ping")
+    trigger_pid = (t["posts"][-1].get("post_id") or t["posts"][-1]["id"])
+    ph = store.add_thread_post(
+        t["thread_id"], post_router.ROUTER_SPEAKER_FALLBACK,
+        "⏳ @NoSuchAgent 正在思考中…", parent_post_id=trigger_pid,
+    )
+    results = post_router.recover_orphan_placeholders(redispatch=True)
+    assert results and results[0]["agent_id"] is None
+    assert results[0]["redispatched"] is False
+
+    proj = store.project_thread(t["thread_id"])
+    live = [p for p in proj["posts"] if (p.get("post_id") or p.get("id")) == (ph.get("post_id") or ph["id"])]
+    assert live and live[0]["superseded"]

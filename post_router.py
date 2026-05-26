@@ -759,3 +759,128 @@ def heal_polluted_mains(agent_ids: list[str]) -> list[str]:
         os.replace(tmp, p)
         healed.append(ag)
     return healed
+
+
+# ─── orphan placeholder recovery ─────────────────────────────────────
+# Placeholder content shape produced by _route_to_agent's step 1
+# announce. We match the prefix only; the agent display-name varies.
+_PLACEHOLDER_PREFIX = "⏳ @"
+_PLACEHOLDER_SUFFIX = "正在思考中…"
+
+
+def _looks_like_placeholder(content: str) -> bool:
+    s = (content or "").strip()
+    return s.startswith(_PLACEHOLDER_PREFIX) and _PLACEHOLDER_SUFFIX in s
+
+
+def _placeholder_target_id(content: str) -> str | None:
+    """Recover the canonical agent id from `⏳ @<DisplayName> 正在思考中…`.
+
+    Returns None if the name doesn't resolve to a known employee.
+    """
+    s = (content or "").strip()
+    if not _looks_like_placeholder(s):
+        return None
+    # strip prefix '⏳ @' and the trailing suffix
+    body = s[len(_PLACEHOLDER_PREFIX):]
+    name = body.split("正在思考中")[0].strip()
+    if not name:
+        return None
+    return forge_identity.name_to_id(name)
+
+
+def recover_orphan_placeholders(redispatch: bool = True) -> list[dict]:
+    """Sweep all open threads for `__router__` placeholders left dangling.
+
+    A placeholder is "orphan" if the projection shows it as still NOT
+    superseded — meaning the worker that posted it never finished (most
+    commonly because the server was restarted mid-turn and the in-flight
+    set is process-local memory that doesn't survive restart).
+
+    For each orphan we do TWO things:
+      1. Append a `__router__` post explaining the turn was interrupted,
+         and supersede the original placeholder by it. This unblocks the
+         UI's `⏳ @X 正在思考中…` indicator.
+      2. If `redispatch` and the trigger post still exists, schedule a
+         fresh `_dispatch(thread, agent, trigger_pid)` so the agent
+         actually gets another shot. The normal in-flight dedupe applies.
+
+    Returns a list of {thread_id, agent_id, trigger_pid, redispatched}
+    records, suitable for printing on the boot banner.
+
+    Safe to call from server startup before serve_forever(); failures on
+    individual threads are isolated and never raised.
+    """
+    out: list[dict] = []
+    try:
+        thread_ids = store.list_thread_ids()
+    except Exception:
+        return out
+    for tid in thread_ids:
+        try:
+            t = store.project_thread(tid)
+        except Exception:
+            continue
+        if not t:
+            continue
+        if t.get("closed_at"):
+            continue
+        for post in t.get("posts") or []:
+            if post.get("superseded"):
+                continue
+            if (post.get("speaker") or "").strip() != ROUTER_SPEAKER_FALLBACK:
+                continue
+            content = post.get("content") or ""
+            if not _looks_like_placeholder(content):
+                continue
+            placeholder_id = post.get("post_id") or post.get("id")
+            trigger_pid = post.get("parent_post_id")
+            agent_id = _placeholder_target_id(content)
+            if not agent_id:
+                # Name didn't resolve — supersede anyway so the UI clears.
+                try:
+                    note = store.add_thread_post(
+                        tid, ROUTER_SPEAKER_FALLBACK,
+                        f"⚠️ 上一条 turn 在 server 重启时被中断（无法识别 agent 名字「{content}」，"
+                        "请人工 @ 一次重试）。",
+                        parent_post_id=trigger_pid,
+                    )
+                    store.supersede_thread_post(
+                        tid, placeholder_id, by_post_id=note.get("post_id"),
+                    )
+                    store.write_thread_markdown(tid)
+                except Exception:
+                    pass
+                out.append({
+                    "thread_id": tid, "agent_id": None,
+                    "trigger_pid": trigger_pid, "redispatched": False,
+                })
+                continue
+            # Compose the replacement note + supersede the placeholder.
+            try:
+                display = (forge_identity.get_identity(agent_id) or {}).get(
+                    "name"
+                ) or agent_id
+                note = store.add_thread_post(
+                    tid, ROUTER_SPEAKER_FALLBACK,
+                    f"⚠️ @{display} 上一条 turn 在 server 重启时被中断，正在重新触发…",
+                    parent_post_id=trigger_pid,
+                )
+                store.supersede_thread_post(
+                    tid, placeholder_id, by_post_id=note.get("post_id"),
+                )
+                store.write_thread_markdown(tid)
+            except Exception:
+                pass
+            # Re-dispatch only if we still have the original trigger.
+            did_redispatch = False
+            if redispatch and trigger_pid:
+                try:
+                    did_redispatch = _dispatch(tid, agent_id, trigger_pid)
+                except Exception:
+                    did_redispatch = False
+            out.append({
+                "thread_id": tid, "agent_id": agent_id,
+                "trigger_pid": trigger_pid, "redispatched": did_redispatch,
+            })
+    return out
