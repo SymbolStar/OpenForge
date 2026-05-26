@@ -29,6 +29,8 @@
 - [ ] **Disk usage watcher**: warn if `events.jsonl` for a single thread exceeds 5 MB (tail rendering will get slow).
 - [ ] **Failure replay**: a CLI to re-run only the failed `post_added` calls of a given thread (subprocess timeouts, agent errors).
 - [ ] **Bearer token persistence**: when `--host 0.0.0.0`, store/load token from `~/.openclaw/openforge/server-token` so restarts don't break the bookmarked URL.
+- [ ] **`bin/forge dev` self-background option** (post-#5 follow-up): add `forge dev --detach` that writes a pidfile and returns immediately, so humans who want fire-and-forget don't have to remember `nohup`. Pure UX — the router‑side hang was already fixed in #5 by killpg-on-timeout. Agents still must not call this, per [Dev service policy](README.md#dev-service-policy).
+- [ ] **Router visibility for killed-on-timeout turns**: when `call_agent` raises with the new "process group killed" suffix, the `__router__` failure post should include a hint ("likely cause: agent spawned a long-lived process; see Dev service policy") instead of the raw error.
 
 ## 🧪 P2 — DX / tests
 
@@ -38,6 +40,7 @@
 - [x] **Ruff config** wired into pyproject.toml (2026-05-21).
 - [ ] Property tests for the projection (event log → meeting model is monotone).
 - [ ] Widen pytest coverage (web/app.js via playwright in CI; agent_runtime snapshot/restore).
+- [ ] **Playwright UI smoke harness** (post-#5 follow-up): headless, start→assert→exit within agent timeout. The only sanctioned way for a routed agent to verify UI behaviour end-to-end. Replaces the temptation to call `forge dev` from inside an agent turn.
 - [ ] mypy minimal config (the codebase is small enough that this stays cheap).
 
 ## 🎨 P2 — UX polish
@@ -67,6 +70,7 @@
 
 ## ✅ Recently shipped
 
+- 2026-05-26 — `fix(router): kill grandchildren on agent timeout to prevent in-flight deadlock` (#5)
 - 2026-05-21 — `feat(ci): pytest + ruff + shellcheck + smoke + auto-release pipeline + CONTRIBUTING.md`
 - 2026-05-21 — `feat(cli): forge service CLI + launchd integration` (`37b25e8`)
 - 2026-05-21 — `polish(settings): redesign avatar editor` (`5614764`)
