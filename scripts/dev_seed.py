@@ -11,7 +11,6 @@ is missing or `--force` is given.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -87,7 +86,7 @@ def main() -> int:
 
     print(f"[dev-seed] seeded {target_dir}")
     print(f"[dev-seed]   - dev_native (project_dir={dev_repo})")
-    print(f"[dev-seed]   - dev_chat   (no project_dir)")
+    print("[dev-seed]   - dev_chat   (no project_dir)")
     return 0
 
 
