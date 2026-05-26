@@ -138,6 +138,25 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
     chair = payload.get("chair") or clean_members[0]
     if not isinstance(chair, str) or chair not in clean_members:
         return None, "chair must be one of members"
+    # v0.5 PR-A: project_dir is optional. Empty string / None / missing all
+    # collapse to None ("discussion squad"). If provided, must be a string
+    # AND an absolute path. Existence / git-repo checks are runtime concerns
+    # (see /api/fs/validate); we do NOT block writes on them.
+    project_dir: str | None = None
+    if "project_dir" in payload:
+        raw_pd = payload.get("project_dir")
+        if raw_pd is None or raw_pd == "":
+            project_dir = None
+        elif not isinstance(raw_pd, str):
+            return None, "project_dir must be a string or null"
+        else:
+            pd = raw_pd.strip()
+            if not pd:
+                project_dir = None
+            elif not pd.startswith("/"):
+                return None, "project_dir must be an absolute path"
+            else:
+                project_dir = pd
     clean = {
         "id": squad_id,
         "name": str(payload.get("name") or squad_id).strip(),
@@ -145,8 +164,74 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
         "emoji": str(payload.get("emoji") or "#").strip()[:8] or "#",
         "members": clean_members,
         "chair": chair,
+        "project_dir": project_dir,
     }
     return clean, None
+
+
+# ─── /api/fs/validate cache (PR-A) ────────────────────────────────────
+# project_dir validation hits the filesystem (stat + .git lookup). Squads
+# list views and individual squad GETs need the `project_dir_valid` derived
+# field on every render — without a cache, each render does N stats. 60s
+# TTL is well below "someone fixed the disk and refreshed" timescales and
+# we invalidate explicitly on writes (create/update/delete).
+_FS_VALIDATE_TTL = 60.0
+_fs_validate_cache: dict[str, tuple[float, dict]] = {}
+_fs_validate_lock = __import__("threading").Lock()
+
+
+def _fs_validate_path(path: str) -> dict:
+    """Return {exists, is_git_repo, error} for an absolute path. Cached 60s."""
+    now = time.time()
+    with _fs_validate_lock:
+        hit = _fs_validate_cache.get(path)
+        if hit and (now - hit[0]) < _FS_VALIDATE_TTL:
+            return hit[1]
+    try:
+        p = Path(path)
+        # Defensive: resolve symlinks so traversal tricks (//, /./, …) get
+        # normalized to a real path; do NOT require the target to exist.
+        try:
+            resolved = p.resolve(strict=False)
+        except (OSError, RuntimeError):
+            resolved = p
+        exists = resolved.exists() and resolved.is_dir()
+        is_git = exists and (resolved / ".git").exists()
+        result = {"exists": exists, "is_git_repo": is_git, "error": None}
+    except Exception as e:  # noqa: BLE001 — final safety net
+        result = {"exists": False, "is_git_repo": False, "error": str(e)}
+    with _fs_validate_lock:
+        _fs_validate_cache[path] = (now, result)
+    return result
+
+
+def _fs_validate_invalidate(*paths: str | None) -> None:
+    with _fs_validate_lock:
+        if not paths:
+            _fs_validate_cache.clear()
+            return
+        for p in paths:
+            if p:
+                _fs_validate_cache.pop(p, None)
+
+
+def _squad_with_validity(squad: dict | None) -> dict | None:
+    """Add derived project_dir_valid: bool | None to a squad dict.
+
+    - None  → field not configured
+    - True  → path exists AND is a git repo
+    - False → configured but exists/git check failed
+    """
+    if squad is None:
+        return None
+    out = dict(squad)
+    pd = out.get("project_dir")
+    if not pd:
+        out["project_dir_valid"] = None
+    else:
+        v = _fs_validate_path(pd)
+        out["project_dir_valid"] = bool(v.get("exists") and v.get("is_git_repo"))
+    return out
 
 
 # ─── HTTP handler ─────────────────────────────────────────────────────
@@ -334,7 +419,9 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         if path == "/api/squads":
             qs = parse_qs(url.query or "")
             include_archived = (qs.get("include_archived") or ["0"])[0] in ("1", "true", "yes")
-            self._json(store.list_squads(include_archived=include_archived))
+            squads = store.list_squads(include_archived=include_archived)
+            squads = [_squad_with_validity(s) for s in squads]
+            self._json(squads)
             return
 
         if path == "/api/agents":
@@ -377,6 +464,21 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(forge_config.get_config())
             return
 
+        if path == "/api/fs/validate":
+            # PR-A: cheap fs check used by the squad-editor blur handler.
+            # Returns 200 with {exists, is_git_repo, error} for any absolute
+            # path; 400 only for malformed input. Cached 60s server-side.
+            qs = parse_qs(url.query or "")
+            raw = (qs.get("path") or [""])[0]
+            if not raw:
+                self._json({"error": "path is required"}, 400)
+                return
+            if not raw.startswith("/"):
+                self._json({"error": "path must be absolute"}, 400)
+                return
+            self._json(_fs_validate_path(raw))
+            return
+
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", path)
         if m:
             squad_id = m.group(1)
@@ -385,7 +487,7 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404)
                 return
             self._json({
-                "squad": squad,
+                "squad": _squad_with_validity(squad),
                 "threads": store.list_threads_for_squad(squad_id),
             })
             return
@@ -684,7 +786,7 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json({"error": error}, 400)
                 return
             try:
-                self._json(store.create_squad(data), 201)
+                self._json(_squad_with_validity(store.create_squad(data)), 201)
             except ValueError as e:
                 self._json({"error": str(e)}, 409)
             return
@@ -1060,7 +1162,27 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         opts = self._read_json()
         if opts is None:
             return
+        # PR-A: pre-validate project_dir before letting it reach the store.
+        # The store only checks the type; the absolute-path rule lives at
+        # the API layer (same as POST / _validate_squad_payload).
+        if isinstance(opts, dict) and "project_dir" in opts:
+            raw_pd = opts.get("project_dir")
+            if raw_pd is None or raw_pd == "":
+                opts["project_dir"] = None
+            elif not isinstance(raw_pd, str):
+                self._json({"error": "project_dir must be a string or null"}, 400)
+                return
+            else:
+                pd = raw_pd.strip()
+                if not pd:
+                    opts["project_dir"] = None
+                elif not pd.startswith("/"):
+                    self._json({"error": "project_dir must be an absolute path"}, 400)
+                    return
+                else:
+                    opts["project_dir"] = pd
         try:
+            old = store.get_squad(squad_id)
             updated = store.update_squad(squad_id, opts)
         except ValueError as e:
             self._json({"error": str(e)}, 400)
@@ -1068,7 +1190,13 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         if updated is None:
             self._json({"error": "not found"}, 404)
             return
-        self._json(updated)
+        # PR-A: any change to project_dir invalidates the fs-validate cache
+        # for both the old and the new path (catches typo-fix + clear).
+        old_pd = (old or {}).get("project_dir")
+        new_pd = updated.get("project_dir")
+        if old_pd != new_pd:
+            _fs_validate_invalidate(old_pd, new_pd)
+        self._json(_squad_with_validity(updated))
 
     def do_DELETE(self):
         url = urlparse(self.path)
@@ -1091,9 +1219,12 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         squad_id = m.group(1)
+        # Snapshot before delete so we can drop the fs-validate cache entry.
+        prev_pd = (store.get_squad(squad_id) or {}).get("project_dir")
         if not store.delete_squad(squad_id):
             self._json({"error": "not found"}, 404)
             return
+        _fs_validate_invalidate(prev_pd)
         self._json({"deleted": True, "id": squad_id})
 
 

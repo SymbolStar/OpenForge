@@ -84,3 +84,44 @@ def test_squad_archive_filter(store):
     assert all(s["id"] != "ephemeral" for s in visible)
     full = store.list_squads(include_archived=True)
     assert any(s["id"] == "ephemeral" for s in full)
+
+
+# ─── PR-A: squad.project_dir round-trip + legacy migration ─────────────
+
+def test_squad_project_dir_round_trip(fake_home):
+    import forge_store as fs
+    sq = fs.create_squad({
+        "id": "rt", "name": "rt", "members": ["scott"], "chair": "scott",
+        "project_dir": "/tmp/foo",
+    })
+    assert sq["project_dir"] == "/tmp/foo"
+    got = fs.get_squad("rt")
+    assert got["project_dir"] == "/tmp/foo"
+    # Update / clear.
+    fs.update_squad("rt", {"project_dir": ""})
+    assert fs.get_squad("rt")["project_dir"] is None
+    fs.update_squad("rt", {"project_dir": "/tmp/bar"})
+    assert fs.get_squad("rt")["project_dir"] == "/tmp/bar"
+    fs.update_squad("rt", {"project_dir": None})
+    assert fs.get_squad("rt")["project_dir"] is None
+
+
+def test_squad_legacy_json_without_project_dir_migrates_gracefully(fake_home):
+    """A squads.json written before PR-A should still load (project_dir → None)."""
+    import json
+
+    import forge_store as fs
+    fs.FORGE_DIR.mkdir(parents=True, exist_ok=True)
+    fs.SQUADS_PATH.write_text(json.dumps({
+        "version": 1,
+        "squads": {
+            "legacy": {
+                "id": "legacy", "name": "legacy", "members": ["scott"],
+                "chair": "scott", "emoji": "#", "description": "",
+                # Note: no project_dir key at all.
+            }
+        },
+    }), encoding="utf-8")
+    sq = fs.get_squad("legacy")
+    assert sq is not None
+    assert sq["project_dir"] is None
