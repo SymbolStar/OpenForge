@@ -162,11 +162,44 @@ python3 server.py                              # 127.0.0.1:7878
 python3 server.py --port 8080
 python3 server.py --host 0.0.0.0               # auto bearer token
 
+# Local dev service (manual review only — see policy below)
+bin/forge dev                                  # 127.0.0.1:7879, seeded fixtures, isolated data dir
+bin/forge dev-reset                            # wipe + reseed
+bin/forge dev-stop                             # stop running dev server
+
 # Inspect data
 ls ~/.openclaw/openforge/threads/
 cat ~/.openclaw/openforge/threads/<thread-id>/events.jsonl | jq -c
 cat ~/.openclaw/openforge/squads.json | jq
 ```
+
+## Dev service policy
+
+`bin/forge dev` is a **human-only manual-review tool**. It is **not** part of
+any agent's workflow.
+
+**Why this rule exists** — real incident 2026-05-26: a routed agent (judy)
+ran `bin/forge dev` from inside her exec tool to "verify her own PR in a
+browser." `forge dev` is a foreground daemon, so the agent subprocess never
+returned, the router's in-flight slot stayed pinned for ~11 minutes, and
+every subsequent @mention to judy in that thread was silently dropped. Two
+human kills + a process-group fix later (#5), we agreed on the policy below.
+
+**Allowed**
+- Scott (or any human reviewer) running `bin/forge dev` to eyeball a UI PR.
+- Stop with `Ctrl-C` or `bin/forge dev-stop`.
+
+**Not allowed for agents**
+- Spawning `bin/forge dev` (or any other long-lived service) from inside a
+  routed agent turn. Routed agent turns are bounded subprocesses; they must
+  exit cleanly.
+- Verifying UI behavior by "just starting the dev server". Agents verify
+  via `pytest`, `curl` against an already-running service, or by attaching
+  screenshots a human captured separately.
+
+**Future** — a headless Playwright smoke harness that **starts → asserts →
+exits** within the agent turn timeout is acceptable (it's not a long-lived
+service). Tracked in TODO under "DX / tests".
 
 ## Roadmap
 
