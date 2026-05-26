@@ -48,6 +48,7 @@ WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
 import forge_config
+import forge_avatar
 import forge_context
 import forge_employees
 import forge_files
@@ -573,6 +574,24 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return
 
         # v0.9: GET /api/agents/<id>/status
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", path)
+        if m:
+            try:
+                info = forge_avatar.avatar_info(m.group(1))
+            except FileNotFoundError:
+                self._json({"error": "not found"}, 404)
+                return
+            except forge_avatar.AvatarError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            qs = parse_qs(url.query or "")
+            if (qs.get("meta") or [""])[0] in ("1", "true", "yes"):
+                self._json(info)
+            else:
+                self._file(Path(info["abs_path"]), info.get("content_type") or "image/png")
+            return
+
+        # v0.9: GET /api/agents/<id>/status
         m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/status$", path)
         if m:
             try:
@@ -746,6 +765,28 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 return
             payload = {**ref, "upload": meta}
             self._json(payload, 201)
+            return
+
+        # Agent avatar upload: frontend sends already-cropped 256x256 PNG.
+        # Server still sniffs magic bytes before trusting content type / ext.
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", url.path)
+        if m:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0:
+                self._json({"error": "avatar body required"}, 400)
+                return
+            if length > forge_avatar.MAX_BYTES:
+                self._json({"error": f"avatar too large: max {forge_avatar.MAX_BYTES} bytes"}, 413)
+                return
+            raw = self.rfile.read(length)
+            try:
+                self._json(forge_avatar.save_avatar(m.group(1), raw), 201)
+            except forge_avatar.UnsupportedAvatarError as e:
+                self._json({"error": str(e)}, 415)
+            except forge_avatar.AvatarError as e:
+                self._json({"error": str(e)}, 400)
+            except Exception as e:
+                self._json({"error": f"avatar write failed: {e}"}, 500)
             return
 
         if url.path == "/api/squads":
@@ -1187,6 +1228,16 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(204)
             self.end_headers()
+            return
+
+        m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", url.path)
+        if m:
+            try:
+                self._json(forge_avatar.delete_avatar(m.group(1)))
+            except forge_avatar.AvatarError as e:
+                self._json({"error": str(e)}, 400)
+            except Exception as e:
+                self._json({"error": f"avatar delete failed: {e}"}, 500)
             return
 
         m = re.match(rf"^/api/squads/{SQUAD_ROUTE_RE}$", url.path)

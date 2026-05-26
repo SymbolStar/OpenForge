@@ -3137,6 +3137,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     if (avatarBtn) avatarBtn.disabled = !current;
     renderAgentHeaderAvatar();
     if (!current) return;
+    await loadAgentAvatarMeta(current);
     // 1) STATUS — render as markdown (mirrors Files view's preview).
     try {
       const r = await fetch('/api/agents/' + encodeURIComponent(current) + '/status');
@@ -3175,6 +3176,18 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         '\nsources: ' + Object.keys(d.sources || {}).join(', ') +
         '\n\n─── rendered ───\n' + (d.rendered || '(empty)');
     } catch (e) { /* graceful */ }
+  }
+
+  async function loadAgentAvatarMeta(agentId) {
+    try {
+      const r = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/avatar?meta=1');
+      if (r.ok) {
+        const d = await r.json();
+        window.__refreshAgentAvatar?.(agentId, d.url || ('/api/agents/' + encodeURIComponent(agentId) + '/avatar?v=' + Date.now()));
+      } else if (r.status === 404) {
+        window.__refreshAgentAvatar?.(agentId, null);
+      }
+    } catch (e) { /* keep current/default */ }
   }
 
   input?.addEventListener('keydown', (e) => {
