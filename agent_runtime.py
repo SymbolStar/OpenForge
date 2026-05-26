@@ -206,7 +206,7 @@ def _killpg_safe(pgid: int, sig: int) -> None:
         pass
 
 
-def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
+def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str, str] | None = None) -> str:
     """Invoke `openclaw agent --local --json`. Raises AgentError on failure.
 
     --local keeps the run fully sandboxed in a subprocess so
@@ -223,6 +223,12 @@ def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
     read loop indefinitely — pinning the router's in-flight slot and
     silently dropping every subsequent @mention to that agent in the
     thread. Real incident: 2026-05-26, judy hung 11 min on `forge dev`.
+
+    PR-B2: extra_env (default None) is merged on top of os.environ for the
+    subprocess. Used by the post router to inject OPENFORGE_PROJECT_DIR
+    when the squad has a valid project_dir configured, so the worktree
+    helper script (PR-C1) can locate the target repo without the agent
+    needing to know the path. Keys with None values are dropped.
     """
     argv = [
         OPENCLAW_BIN, "agent",
@@ -233,11 +239,17 @@ def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
         "--message", prompt,
     ]
     try:
+        spawn_env = None
+        if extra_env:
+            cleaned = {k: v for k, v in extra_env.items() if v is not None}
+            if cleaned:
+                spawn_env = {**os.environ, **cleaned}
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=spawn_env,
             start_new_session=True,  # new process group so killpg() reaches grandchildren
         )
     except FileNotFoundError:

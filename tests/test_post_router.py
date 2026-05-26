@@ -315,7 +315,7 @@ def test_agent_reply_with_mention_re_enqueues(router, store, monkeypatch):
     through the router so downstream agents wake up. Without this,
     chair-style dispatch ('@designer @alice please look') was a dead ping."""
     monkeypatch.setattr(router, "call_agent",
-                        lambda ag, sid, prompt: "好，拉他们进来。 @sherry @milk")
+                        lambda ag, sid, prompt, **_kw: "好，拉他们进来。 @sherry @milk")
     monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
     monkeypatch.setattr(router, "restore_main", lambda ag, snap: True)
 
@@ -339,7 +339,7 @@ def test_agent_reply_with_mention_re_enqueues(router, store, monkeypatch):
 
 def test_route_to_agent_success(router, store, monkeypatch):
     """call_agent returns text → final post appended, placeholder superseded."""
-    monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt: "okay 👍")
+    monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt, **_kw: "okay 👍")
     monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
     monkeypatch.setattr(router, "restore_main", lambda ag, snap: True)
 
@@ -359,7 +359,7 @@ def test_route_to_agent_success(router, store, monkeypatch):
 
 
 def test_route_to_agent_error(router, store, monkeypatch):
-    def boom(ag, sid, prompt):
+    def boom(ag, sid, prompt, **_kw):
         from agent_runtime import AgentError
         raise AgentError("kaboom")
     monkeypatch.setattr(router, "call_agent", boom)
@@ -375,7 +375,7 @@ def test_route_to_agent_error(router, store, monkeypatch):
 
 
 def test_route_to_agent_empty_reply(router, store, monkeypatch):
-    monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt: "completed")
+    monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt, **_kw: "completed")
     monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
     t = _make_thread(store, "@milk help")
     trigger = {"post_id": t["posts"][0]["id"], "speaker": "scott",
@@ -505,7 +505,7 @@ def test_record_crash_swallows_store_failure(router, store, monkeypatch):
 # ─── full enqueue → background thread → reply integration ────────
 def test_enqueue_full_flow(router, store, monkeypatch):
     monkeypatch.setattr(router, "call_agent",
-                        lambda ag, sid, prompt: f"[reply from {ag}]")
+                        lambda ag, sid, prompt, **_kw: f"[reply from {ag}]")
     monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
     monkeypatch.setattr(router, "restore_main", lambda ag, snap: True)
 
@@ -572,3 +572,60 @@ def test_project_section_warning_when_path_invalid(fake_home, store, tmp_path): 
     assert "worktree 规则本轮已禁用" in out
     # Path IS shown in the warning, so scott can spot the typo.
     assert str(bare) in out
+
+
+# ─── PR-B2: spawn env (OPENFORGE_PROJECT_DIR) ──────────────────────
+
+def test_spawn_env_none_when_no_project_dir(fake_home, store):  # noqa: F811
+    import post_router
+    sq = store.create_squad({"id": "noprj", "name": "noprj", "members": ["scott"], "chair": "scott"})
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    assert post_router._spawn_env_for_thread(t["thread_id"]) is None
+
+
+def test_spawn_env_none_when_path_invalid(fake_home, store, tmp_path):  # noqa: F811
+    import forge_project
+    import post_router
+    bare = tmp_path / "no-git"
+    bare.mkdir()  # exists but no .git → invalid
+    forge_project.invalidate()
+    sq = store.create_squad({
+        "id": "bad", "name": "bad", "members": ["scott"], "chair": "scott",
+        "project_dir": str(bare),
+    })
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    # Invariant: never inject env when path is invalid — script would silently
+    # operate on the wrong dir if we did.
+    assert post_router._spawn_env_for_thread(t["thread_id"]) is None
+
+
+def test_spawn_env_injects_path_when_valid(fake_home, store, tmp_path):  # noqa: F811
+    import forge_project
+    import post_router
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    forge_project.invalidate()
+    sq = store.create_squad({
+        "id": "ok", "name": "ok", "members": ["scott"], "chair": "scott",
+        "project_dir": str(repo),
+    })
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    env = post_router._spawn_env_for_thread(t["thread_id"])
+    assert env == {"OPENFORGE_PROJECT_DIR": str(repo)}
+
+
+def test_call_agent_propagates_extra_env(fake_home, tmp_path, monkeypatch):  # noqa: F811
+    """End-to-end: call_agent should pass extra_env into the subprocess env."""
+    import agent_runtime as ar
+    # Fake openclaw that echoes one env var as the JSON result.
+    fake = tmp_path / "fake_openclaw.sh"
+    fake.write_text(
+        '#!/bin/sh\n'
+        'printf \'{"payloads":[{"text":"got=%s"}]}\' "${OPENFORGE_PROJECT_DIR:-MISSING}"\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setattr(ar, "OPENCLAW_BIN", str(fake))
+    monkeypatch.setattr(ar, "AGENT_TIMEOUT", 5)
+    out = ar.call_agent("milk", "sid", "hi", extra_env={"OPENFORGE_PROJECT_DIR": "/tmp/foo"})
+    assert out == "got=/tmp/foo"

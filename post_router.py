@@ -326,8 +326,14 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
     final_post_id: str | None = None
     try:
         prompt = _build_prompt(thread_id, agent_id, trigger)
+        # PR-B2: inject OPENFORGE_PROJECT_DIR into the spawned agent's env
+        # iff the current squad has a configured AND valid project_dir.
+        # The script in PR-C1 (openforge-worktree) reads this env var to
+        # locate the target repo without the agent needing to know the path.
+        # Encapsulation principle (PRD §5.3): agent never sees the value.
+        spawn_env = _spawn_env_for_thread(thread_id)
         try:
-            reply = call_agent(agent_id, session_id, prompt)
+            reply = call_agent(agent_id, session_id, prompt, extra_env=spawn_env)
         except AgentError as e:
             err = store.add_thread_post(
                 thread_id, ROUTER_SPEAKER_FALLBACK,
@@ -519,6 +525,34 @@ def _render_bundle_preamble(thread_id: str, agent_id: str, trigger_preview: str)
     if rendered:
         body_parts.append(rendered)
     return head + "\n\n".join(body_parts) + "\n\n---\n\n"
+
+
+def _spawn_env_for_thread(thread_id: str) -> dict[str, str] | None:
+    """Return env vars to inject into the spawned agent subprocess.
+
+    Currently returns ``{'OPENFORGE_PROJECT_DIR': <path>}`` when the
+    thread's squad has a configured project_dir that passes fs validation,
+    or ``None`` otherwise. PR-B2; consumed by PR-C1's openforge-worktree.
+
+    Invariant: only inject when the value is *currently valid*, so the
+    worktree helper never sees a stale/typo'd path. If config drifts after
+    spawn the agent's [project] preamble warning (PR-B1) is the user-facing
+    signal; the env var is for the script, not the human.
+    """
+    try:
+        thread = store.project_thread(thread_id) or {}
+        squad_id = thread.get("squad_id")
+        if not squad_id:
+            return None
+        squad = store.get_squad(squad_id) or {}
+        project_dir = squad.get("project_dir")
+    except Exception:
+        return None
+    if not project_dir:
+        return None
+    if not forge_project.derive_validity(project_dir):
+        return None
+    return {"OPENFORGE_PROJECT_DIR": project_dir}
 
 
 def _render_project_section(thread_id: str) -> str:
