@@ -47,7 +47,15 @@ from typing import Any
 #     │     ├── .lock
 #     │     └── thread.md
 #     └── (legacy) ../standups/  ← still readable for old standup runs
-FORGE_DIR = Path.home() / ".openclaw" / "openforge"
+#
+# v0.5: OPENFORGE_DIR env var overrides the default location so `forge dev`
+# (or any other isolated invocation) can run against a throw-away fixture
+# tree without touching real user state.
+_env_forge_dir = os.environ.get("OPENFORGE_DIR")
+if _env_forge_dir:
+    FORGE_DIR = Path(_env_forge_dir).expanduser()
+else:
+    FORGE_DIR = Path.home() / ".openclaw" / "openforge"
 THREADS_DIR = FORGE_DIR / "threads"
 
 # Legacy standup layout (read-only; kept for projection back-compat).

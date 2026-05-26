@@ -132,9 +132,16 @@ Usage:
   forge selfupdate   like update, but silent when nothing changed (cron-friendly)
   forge version      Print version
 
+Dev / testing (isolated from production, default port :7879):
+  forge dev          Start an isolated dev service (foreground, Ctrl-C to stop)
+  forge dev-reset    Wipe + reseed the dev fixture
+  forge dev-stop     Stop a running dev service
+
 Environment:
-  OPENFORGE_PORT     Listen port (default: 7878)
-  OPENFORGE_PYTHON   Python binary to use (default: first python3 on PATH)
+  OPENFORGE_PORT       Production listen port (default: 7878)
+  OPENFORGE_DEV_PORT   Dev listen port (default: 7879)
+  OPENFORGE_DEV_DIR    Dev data dir (default: ~/.openclaw/openforge-dev)
+  OPENFORGE_PYTHON     Python binary to use (default: first python3 on PATH)
 
 Repo: ${REPO_DIR}
 Log:  ${LOG_PATH}
@@ -221,6 +228,71 @@ cmd_logs() {
 
 cmd_open() { open "$SERVE_URL"; }
 
+# ─── dev service ──────────────────────────────────────────────────────
+# `forge dev` launches a foreground, isolated OpenForge instance on :7879
+# backed by ~/.openclaw/openforge-dev/. Used for testing PRs without
+# touching the production tree on :7878. Press Ctrl-C to stop.
+DEV_PORT="${OPENFORGE_DEV_PORT:-7879}"
+DEV_DIR="${OPENFORGE_DEV_DIR:-$HOME/.openclaw/openforge-dev}"
+DEV_LOG="$HOME/Library/Logs/openforge-dev.log"
+DEV_PID_FILE="$HOME/Library/Logs/openforge-dev.pid"
+
+cmd_dev() {
+  require_repo
+  mkdir -p "$DEV_DIR" "$(dirname "$DEV_LOG")"
+  if [ -f "$DEV_PID_FILE" ] && kill -0 "$(cat "$DEV_PID_FILE" 2>/dev/null)" 2>/dev/null; then
+    die "dev service already running (pid $(cat "$DEV_PID_FILE"), :${DEV_PORT}). Use 'forge dev-stop' first."
+  fi
+  if lsof -ti ":${DEV_PORT}" >/dev/null 2>&1; then
+    die "port :${DEV_PORT} already in use by another process (not ours). Pick a different OPENFORGE_DEV_PORT."
+  fi
+
+  # Seed if empty.
+  if [ ! -f "$DEV_DIR/squads.json" ]; then
+    log "seeding fresh dev fixture in $DEV_DIR"
+    OPENFORGE_DIR="$DEV_DIR" python3 "$REPO_DIR/scripts/dev_seed.py" || die "seed failed"
+  fi
+
+  log "starting dev service on http://127.0.0.1:${DEV_PORT}/  (dir: $DEV_DIR)"
+  log "logs tail: tail -f $DEV_LOG    |    stop: forge dev-stop"
+  log "Production service on :${PORT} is untouched."
+  echo
+
+  # Foreground run so Ctrl-C kills it. We also write PID for dev-stop.
+  (
+    OPENFORGE_DIR="$DEV_DIR" python3 "$SERVER_PY" --port "$DEV_PORT" >>"$DEV_LOG" 2>&1 &
+    echo $! > "$DEV_PID_FILE"
+    wait $!
+  )
+  rm -f "$DEV_PID_FILE"
+}
+
+cmd_dev_reset() {
+  log "resetting dev fixture at $DEV_DIR"
+  cmd_dev_stop quiet
+  rm -rf "$DEV_DIR"
+  mkdir -p "$DEV_DIR"
+  OPENFORGE_DIR="$DEV_DIR" python3 "$REPO_DIR/scripts/dev_seed.py" --force || die "reseed failed"
+  log "done. Run 'forge dev' to start the service."
+}
+
+cmd_dev_stop() {
+  local quiet="${1:-}"
+  if [ -f "$DEV_PID_FILE" ]; then
+    local pid; pid="$(cat "$DEV_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      [ "$quiet" != "quiet" ] && log "stopped dev pid $pid"
+    fi
+    rm -f "$DEV_PID_FILE"
+  fi
+  # Also kill anything still bound to the dev port (defensive).
+  local stragglers; stragglers="$(lsof -ti ":${DEV_PORT}" 2>/dev/null || true)"
+  if [ -n "$stragglers" ]; then
+    echo "$stragglers" | xargs kill -9 2>/dev/null || true
+  fi
+}
+
 cmd_update() {
   require_repo
   log "git pull in $REPO_DIR"
@@ -299,6 +371,9 @@ case "${1:-help}" in
   status)          shift; cmd_status    "$@" ;;
   logs)            shift; cmd_logs      "$@" ;;
   open)            shift; cmd_open      "$@" ;;
+  dev)             shift; cmd_dev       "$@" ;;
+  dev-reset)       shift; cmd_dev_reset "$@" ;;
+  dev-stop)        shift; cmd_dev_stop  "$@" ;;
   update)          shift; cmd_update     "$@" ;;
   selfupdate)      shift; cmd_selfupdate "$@" ;;
   version|-v|--version) cmd_version ;;

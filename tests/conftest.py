@@ -32,6 +32,9 @@ def fake_home(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    # Clear PR-A OPENFORGE_DIR override if the test environment inherited it
+    # (e.g. dev shell). Tests must always resolve to fake $HOME.
+    monkeypatch.delenv("OPENFORGE_DIR", raising=False)
     monkeypatch.setenv("OPENFORGE_OPENCLAW_BIN", str(REPO_ROOT / "tests" / "fixtures" / "fake_openclaw.sh"))
     # Force reload so module-level Path.home() captures the new HOME.
     for name in [
