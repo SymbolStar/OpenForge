@@ -34,6 +34,7 @@ def _make_employee(home: Path, agent_id: str, name: str = "",
 def identity(fake_home, monkeypatch):
     """Reload forge_identity so its Path.home() points at the fake home."""
     import importlib
+
     import forge_employees
     import forge_identity
     importlib.reload(forge_employees)

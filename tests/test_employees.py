@@ -15,7 +15,6 @@ import pytest
 
 from tests.conftest import server  # noqa: F401, E402
 
-
 # ─── module-level unit tests ────────────────────────────────────────
 
 def _make_workspace(home: Path, agent_id: str, *, with_soul: bool = True, with_agent: bool = True) -> None:

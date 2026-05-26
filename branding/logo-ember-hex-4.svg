@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenForge — Ember Forge (Hexagon, 4 agents)</title>
+  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
+  <!-- hex container (forge crucible) -->
+  <polygon points="128,36 214,84 214,172 128,220 42,172 42,84"
+           fill="none" stroke="#F5F5F4" stroke-width="10" stroke-linejoin="round"/>
+  <!-- 4 agent blocks at NE / SE / SW / NW pulling into center -->
+  <g fill="#F5F5F4">
+    <rect x="158" y="62"  width="30" height="30" rx="6" transform="rotate(20 173 77)"/>
+    <rect x="158" y="164" width="30" height="30" rx="6" transform="rotate(-20 173 179)"/>
+    <rect x="68"  y="164" width="30" height="30" rx="6" transform="rotate(20 83 179)"/>
+    <rect x="68"  y="62"  width="30" height="30" rx="6" transform="rotate(-20 83 77)"/>
+  </g>
+  <!-- ember core -->
+  <circle cx="128" cy="128" r="26" fill="#FF6B35" opacity="0.20"/>
+  <circle cx="128" cy="128" r="14" fill="#FF6B35"/>
+  <circle cx="128" cy="128" r="6"  fill="#FFD8B0"/>
+</svg>

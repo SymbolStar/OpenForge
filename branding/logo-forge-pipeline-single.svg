@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Forge Pipeline — single track variant -->
+  <rect width="256" height="256" fill="#0E0F11"/>
+
+  <defs>
+    <radialGradient id="emberS" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6B35" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#FF6B35" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#FF6B35" stop-opacity="0"/>
+    </radialGradient>
+
+    <symbol id="forgePipelineSingle" viewBox="0 0 256 256">
+      <!-- left entry hint -->
+      <path d="M16 128 L40 128" stroke="#F5F5F4" stroke-width="1.5" stroke-dasharray="2 4" opacity="0.55"/>
+
+      <!-- single track -->
+      <line x1="40" y1="128" x2="208" y2="128" stroke="#F5F5F4" stroke-width="1.75" stroke-linecap="round"/>
+
+      <!-- 3 agent stations -->
+      <rect x="64"  y="120" width="16" height="16" fill="#F5F5F4"/>
+      <rect x="120" y="120" width="16" height="16" fill="#F5F5F4"/>
+      <rect x="176" y="120" width="16" height="16" fill="#F5F5F4"/>
+
+      <!-- ember glow + core -->
+      <circle cx="220" cy="128" r="28" fill="url(#emberS)"/>
+      <circle cx="220" cy="128" r="11" fill="#FF6B35"/>
+    </symbol>
+  </defs>
+
+  <use href="#forgePipelineSingle" x="0" y="0" width="256" height="256"/>
+
+  <!-- 16x16 mini preview -->
+  <g transform="translate(232 232)">
+    <rect x="-0.5" y="-0.5" width="17" height="17" fill="none" stroke="#F5F5F4" stroke-width="1" opacity="0.7"/>
+    <use href="#forgePipelineSingle" x="0" y="0" width="16" height="16"/>
+  </g>
+</svg>

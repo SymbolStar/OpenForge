@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenForge — OF Monogram (Forge Mark)</title>
+  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
+  <!-- 'O' container as forge ring -->
+  <circle cx="128" cy="128" r="78" fill="none" stroke="#F5F5F4" stroke-width="14"/>
+  <!-- 'F' crossbar — a forged steel rod piercing the O, hot at the right end -->
+  <!-- vertical stem of F (left side of O) -->
+  <rect x="86" y="74" width="14" height="108" rx="3" fill="#F5F5F4"/>
+  <!-- top arm of F crossing all the way through the O (the 'rod') -->
+  <rect x="86" y="74" width="120" height="14" rx="3" fill="#F5F5F4"/>
+  <!-- mid arm of F (shorter, classic F shape) -->
+  <rect x="86" y="120" width="64" height="12" rx="3" fill="#F5F5F4"/>
+  <!-- hot tip of the rod — copper/ember glow at exit point -->
+  <circle cx="208" cy="81" r="18" fill="#B8531C" opacity="0.35"/>
+  <rect x="196" y="74" width="14" height="14" rx="3" fill="#FF6B35"/>
+  <!-- forge mark stamp dots (bottom corners of the seal) -->
+  <circle cx="64"  cy="208" r="4" fill="#F5F5F4" opacity="0.5"/>
+  <circle cx="192" cy="208" r="4" fill="#F5F5F4" opacity="0.5"/>
+</svg>

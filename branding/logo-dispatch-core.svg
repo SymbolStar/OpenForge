@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenForge — Dispatch Core</title>
+  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
+  <!-- three dispatch lines from center to agent nodes -->
+  <g stroke="#F5F5F4" stroke-width="9" stroke-linecap="round">
+    <!-- top -->
+    <line x1="128" y1="128" x2="128" y2="58"/>
+    <!-- bottom-left -->
+    <line x1="128" y1="128" x2="68" y2="190"/>
+    <!-- bottom-right -->
+    <line x1="128" y1="128" x2="188" y2="190"/>
+  </g>
+  <!-- agent nodes (small white squares) -->
+  <g fill="#F5F5F4">
+    <rect x="112" y="36"  width="32" height="32" rx="6"/>
+    <rect x="44"  y="172" width="32" height="32" rx="6" transform="rotate(-30 60 188)"/>
+    <rect x="180" y="172" width="32" height="32" rx="6" transform="rotate(30 196 188)"/>
+  </g>
+  <!-- core: dispatcher -->
+  <circle cx="128" cy="128" r="28" fill="#FF6B35" opacity="0.22"/>
+  <circle cx="128" cy="128" r="18" fill="#FF6B35"/>
+  <circle cx="128" cy="128" r="6" fill="#FFD8B0"/>
+</svg>

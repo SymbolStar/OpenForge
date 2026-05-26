@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 # share the `server`, `fake_home`, `store` fixtures
-from tests.conftest import server, fake_home, store  # noqa: F401
+from tests.conftest import fake_home, server, store  # noqa: F401
 
 
 def _post(url: str, body: dict) -> dict:

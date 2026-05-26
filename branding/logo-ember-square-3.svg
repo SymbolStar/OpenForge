@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenForge — Ember Forge (Square, 3 agents)</title>
+  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
+  <!-- container: the thread / forge wall -->
+  <rect x="48" y="48" width="160" height="160" rx="28" fill="none" stroke="#F5F5F4" stroke-width="10"/>
+  <!-- 3 agent blocks converging toward the ember -->
+  <g fill="#F5F5F4">
+    <rect x="110" y="68" width="36" height="36" rx="7" transform="rotate(12 128 86)"/>
+    <rect x="66"  y="138" width="36" height="36" rx="7" transform="rotate(-18 84 156)"/>
+    <rect x="154" y="138" width="36" height="36" rx="7" transform="rotate(22 172 156)"/>
+  </g>
+  <!-- ember core: warm produce-of-collaboration -->
+  <circle cx="128" cy="128" r="24" fill="#FF6B35" opacity="0.22"/>
+  <circle cx="128" cy="128" r="13" fill="#FF6B35"/>
+  <circle cx="128" cy="128" r="5.5" fill="#FFD8B0"/>
+</svg>

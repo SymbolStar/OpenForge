@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenForge — Pulse</title>
+  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
+  <!-- subtle pulse rings -->
+  <circle cx="128" cy="128" r="60" fill="none" stroke="#FF6B35" stroke-width="1.5" opacity="0.18"/>
+  <circle cx="128" cy="128" r="84" fill="none" stroke="#FF6B35" stroke-width="1.5" opacity="0.10"/>
+  <!-- 3 agent dots equidistant on outer ring -->
+  <g fill="#F5F5F4">
+    <circle cx="128" cy="60"  r="13"/>
+    <circle cx="69"  cy="162" r="13"/>
+    <circle cx="187" cy="162" r="13"/>
+  </g>
+  <!-- center: dispatcher -->
+  <circle cx="128" cy="128" r="22" fill="#FF6B35" opacity="0.25"/>
+  <circle cx="128" cy="128" r="14" fill="#FF6B35"/>
+</svg>

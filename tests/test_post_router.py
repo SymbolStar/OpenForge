@@ -43,7 +43,8 @@ def test_enqueue_routes_for_any_employee_speaker(router, store, monkeypatch):
     """V1.1: any non-router speaker can trigger routing."""
     calls: list[str] = []
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     t = _make_thread(store, "@other ping")
     post = {"speaker": "milk", "post_id": "p1", "mentions": ["other"]}
@@ -62,7 +63,8 @@ def test_enqueue_drops_self_mention(router, store, monkeypatch):
     """Agent @ing themselves is a no-op."""
     calls: list[str] = []
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     t = _make_thread(store, "@milk note to self")
     post = {"speaker": "milk", "post_id": "p1", "mentions": ["milk", "sherry"]}
@@ -74,7 +76,8 @@ def test_enqueue_drops_scott_mention_from_agent(router, store, monkeypatch):
     """@scott is not a routable endpoint."""
     calls: list[str] = []
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     t = _make_thread(store, "@scott @sherry fyi")
     post = {"speaker": "judy", "post_id": "p1", "mentions": ["scott", "sherry"]}
@@ -99,7 +102,10 @@ def test_enqueue_resolves_display_name_to_agent_id(router, store, monkeypatch, f
     (ws / "IDENTITY.md").write_text("- **Name:** Dora\n", encoding="utf-8")
     (fake_home / ".openclaw" / "agents" / "designer").mkdir(parents=True, exist_ok=True)
     # Reload identity module so it sees the new workspace.
-    import importlib, forge_employees, forge_identity
+    import importlib
+
+    import forge_employees
+    import forge_identity
     importlib.reload(forge_employees)
     importlib.reload(forge_identity)
     # Re-bind the module reference on the router we already loaded.
@@ -108,7 +114,8 @@ def test_enqueue_resolves_display_name_to_agent_id(router, store, monkeypatch, f
     calls: list[str] = []
 
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     t = _make_thread(store, "hi @Dora")
     post = {"speaker": "scott", "post_id": "p1", "mentions": ["Dora"]}
@@ -122,7 +129,8 @@ def test_enqueue_default_chair_when_scott_omits_mention(router, store, monkeypat
     calls: list[str] = []
 
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     store.ensure_default_squads()
     store.create_squad({"id": "sqd", "name": "sqd",
@@ -138,7 +146,8 @@ def test_enqueue_default_chair_does_not_fire_for_agent(router, store, monkeypatc
     calls: list[str] = []
 
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     store.ensure_default_squads()
     store.create_squad({"id": "sqd2", "name": "sqd2",
@@ -154,7 +163,8 @@ def test_enqueue_default_chair_yields_to_explicit_reply(router, store, monkeypat
     calls: list[str] = []
 
     def fake_dispatch(tid, ag, trig):
-        calls.append(ag); return True
+        calls.append(ag)
+        return True
     monkeypatch.setattr(router, "_dispatch", fake_dispatch)
     store.ensure_default_squads()
     store.create_squad({"id": "sqd3", "name": "sqd3",

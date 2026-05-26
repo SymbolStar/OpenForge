@@ -11,7 +11,6 @@ import pytest
 
 from tests.conftest import server  # noqa: F401, E402
 
-
 # ─── tiny valid image fixtures ───────────────────────────────────────
 
 # 1x1 PNG
