@@ -859,7 +859,7 @@ def _placeholder_target_id(content: str) -> str | None:
     return forge_identity.name_to_id(name)
 
 
-def recover_orphan_placeholders(redispatch: bool = True) -> list[dict]:
+def recover_orphan_placeholders(redispatch: bool = False) -> list[dict]:
     """Sweep all open threads for `__router__` placeholders left dangling.
 
     A placeholder is "orphan" if the projection shows it as still NOT
@@ -867,13 +867,22 @@ def recover_orphan_placeholders(redispatch: bool = True) -> list[dict]:
     commonly because the server was restarted mid-turn and the in-flight
     set is process-local memory that doesn't survive restart).
 
-    For each orphan we do TWO things:
-      1. Append a `__router__` post explaining the turn was interrupted,
-         and supersede the original placeholder by it. This unblocks the
-         UI's `⏳ @X 正在思考中…` indicator.
-      2. If `redispatch` and the trigger post still exists, schedule a
-         fresh `_dispatch(thread, agent, trigger_pid)` so the agent
-         actually gets another shot. The normal in-flight dedupe applies.
+    For each orphan we **always** supersede the placeholder with a
+    `__router__` interrupt note so the UI's `⏳ @X 正在思考中…` indicator
+    clears.
+
+    `redispatch` defaults to **False** as of 2026-05-26 PR-17-followup.
+    Auto-redispatch caused EmbeddedAttemptSessionTakeoverError because
+    the previous worker held an advisory lock on the agent's session
+    JSONL that wasn't released by the time the new worker re-opened it.
+    Beyond the race, blindly re-firing an old trigger after a restart
+    is often the wrong thing — the world may have changed (code, deps,
+    Scott's intent). Pass `redispatch=True` to opt back in for tests
+    or controlled tooling.
+
+    When `redispatch=False`, the interrupt note tells Scott to re-@
+    manually if the work still matters. One human keystroke, zero
+    correctness risk.
 
     Returns a list of {thread_id, agent_id, trigger_pid, redispatched}
     records, suitable for printing on the boot banner.
@@ -931,9 +940,20 @@ def recover_orphan_placeholders(redispatch: bool = True) -> list[dict]:
                 display = (forge_identity.get_identity(agent_id) or {}).get(
                     "name"
                 ) or agent_id
+                if redispatch:
+                    note_text = (
+                        f"⚠️ @{display} 上一条 turn 在 server 重启时被中断，"
+                        "正在重新触发…"
+                    )
+                else:
+                    note_text = (
+                        f"⚠️ @{display} 上一条 turn 在 server 重启时被中断。"
+                        "如果还需要这件事，请人工 @ 一次重新触发；"
+                        "router 不会自动重发以避免 session 文件竞态。"
+                    )
                 note = store.add_thread_post(
                     tid, ROUTER_SPEAKER_FALLBACK,
-                    f"⚠️ @{display} 上一条 turn 在 server 重启时被中断，正在重新触发…",
+                    note_text,
                     parent_post_id=trigger_pid,
                 )
                 store.supersede_thread_post(

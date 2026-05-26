@@ -1238,7 +1238,12 @@ def main():
     # leaves a `⏳ @X 正在思考中…` post that nothing will ever
     # supersede, silently freezing that thread. Sweep once at boot.
     try:
-        recovered = post_router.recover_orphan_placeholders(redispatch=True)
+        # 2026-05-26 PR-17-followup: do NOT auto-redispatch at boot.
+        # The previous worker may still hold an OS-level lock on the
+        # agent's session JSONL, and re-firing immediately triggers
+        # EmbeddedAttemptSessionTakeoverError. The interrupt note tells
+        # Scott to re-@ manually if the work still matters.
+        recovered = post_router.recover_orphan_placeholders(redispatch=False)
         if recovered:
             redisp = sum(1 for r in recovered if r.get("redispatched"))
             print(
