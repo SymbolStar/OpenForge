@@ -62,6 +62,7 @@
     <header class="rail-header">
       <div class="rail-header-text">
         <h1 id="squad-title">—</h1>
+        <span id="squad-project-chip" class="squad-project-chip" hidden title=""></span>
         <p id="squad-description"></p>
       </div>
       <button id="btn-edit-squad" class="icon-btn" type="button" title="编辑 squad" hidden>✎</button>
@@ -190,6 +191,24 @@
       <label>ID<input name="id" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,31}" placeholder="frontend / ai-research" title="字母/数字开头，允许 字母、数字、下划线(_)、连字符(-)，最长 32 字符" /><small class="field-hint">字母/数字开头，可包含 <code>_</code> 和 <code>-</code>，最长 32 字符</small></label>
       <label>Name<input name="name" required placeholder="Frontend Team" /></label>
       <label>Description<textarea name="description" rows="3" placeholder="Focus, scope, or rituals"></textarea></label>
+      <label class="project-dir-field" id="project-dir-field">
+        <span class="project-dir-label">Project directory</span>
+        <span class="project-dir-input-wrap" data-state="idle">
+          <input id="project-dir-input" name="project_dir" type="text"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="/Volumes/DevDisk/symbol/openforge"
+                 aria-describedby="project-dir-helper" />
+          <span class="project-dir-suffix" id="project-dir-suffix" aria-hidden="true"></span>
+        </span>
+        <small class="project-dir-helper" id="project-dir-helper" aria-live="polite"
+               data-default="这个 squad 的 agent 接到开发任务时会在此目录下创建 worktree。留空 = 纯讨论型 squad。">
+          这个 squad 的 agent 接到开发任务时会在此目录下创建 worktree。留空 = 纯讨论型 squad。
+        </small>
+      </label>
+      <label>Project directory
+        <input name="project_dir" id="squad-project-dir" autocomplete="off" spellcheck="false" class="mono" placeholder="/Volumes/DevDisk/symbol/openforge" />
+        <small class="field-hint" id="squad-project-dir-helper" aria-live="polite">这个 squad 的 agent 接到开发任务时会在此目录下创建 worktree。留空 = 纯讨论型 squad。</small>
+      </label>
       <label>Emoji<input name="emoji" maxlength="8" placeholder="✨" /></label>
       <fieldset>
         <legend>Members</legend>

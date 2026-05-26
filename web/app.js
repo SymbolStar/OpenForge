@@ -18,6 +18,7 @@ const els = {
   // thread rail
   squadTitle: document.getElementById('squad-title'),
   squadDescription: document.getElementById('squad-description'),
+  squadProjectChip: document.getElementById('squad-project-chip'),
   threadList: document.getElementById('thread-list'),
   btnRefreshThreads: document.getElementById('btn-refresh-threads'),
   threadComposerInput: document.getElementById('thread-composer-input'),
@@ -565,6 +566,21 @@ function renderThreadRail() {
   els.squadDescription.textContent = squad.description
     || `${squad.chair} chairs · ${squad.members.length} members`;
   els.btnEditSquad.hidden = false;
+  // PR-A: header 📁 chip — only when project_dir is configured AND validated.
+  if (els.squadProjectChip) {
+    const pd = squad.project_dir;
+    const valid = squad.project_dir_valid === true;
+    if (pd && valid) {
+      const basename = pd.split('/').filter(Boolean).pop() || pd;
+      els.squadProjectChip.textContent = `📁 ${basename}`;
+      els.squadProjectChip.title = pd;
+      els.squadProjectChip.hidden = false;
+    } else {
+      els.squadProjectChip.hidden = true;
+      els.squadProjectChip.textContent = '';
+      els.squadProjectChip.title = '';
+    }
+  }
   renderThreadList(detail?.threads || []);
 }
 
@@ -1134,6 +1150,11 @@ async function openModal() {
   els.btnDeleteSquad.hidden = true;
   const archiveRow = document.getElementById('squad-archive-row');
   if (archiveRow) archiveRow.hidden = true;
+  // PR-A: reset project_dir field for fresh squad creation.
+  if (els.form.elements.project_dir) {
+    els.form.elements.project_dir.value = '';
+  }
+  projectDirSetState('idle', null);
   await buildMemberControls();
   [...els.memberCheckboxes.querySelectorAll('input')].forEach((input, idx) => {
     input.checked = idx === 0;
@@ -1156,6 +1177,10 @@ async function openEditModal(squad) {
   }
   if (els.form.elements.name) els.form.elements.name.value = squad.name || '';
   if (els.form.elements.description) els.form.elements.description.value = squad.description || '';
+  if (els.form.elements.project_dir) {
+    els.form.elements.project_dir.value = squad.project_dir || '';
+    projectDirSetState(els.form.elements.project_dir.value ? (squad.project_dir_valid === true ? 'valid' : 'idle') : 'idle', squad.project_dir_valid === true ? squad.project_dir : null);
+  }
   if (els.form.elements.emoji) els.form.elements.emoji.value = squad.emoji || '';
   await buildMemberControls();
   // Make sure existing members are present as checkboxes even if /api/employees
@@ -1518,6 +1543,137 @@ els.modal.onclick = event => {
   if (event.target === els.modal) closeModal();
 };
 
+// PR-A: Project directory field — 6-state machine (S0..S6) per design §2.4.
+// State lives on the wrap span via data-state (consumed by CSS). The helper
+// text is replaced, not stacked. /api/fs/validate is called once per blur,
+// 200ms-debounced on identical path; in-flight requests abort on next blur.
+const PROJECT_DIR_HELPER_DEFAULT = '这个 squad 的 agent 接到开发任务时会在此目录下创建 worktree。留空 = 纯讨论型 squad。';
+let _projectDirAbort = null;
+let _projectDirLastPath = null;
+let _projectDirLastResult = null;
+let _projectDirLastValidatedAt = 0;
+
+function projectDirGetEls() {
+  const input = document.getElementById('project-dir-input');
+  const wrap = input ? input.closest('.project-dir-input-wrap') : null;
+  const suffix = document.getElementById('project-dir-suffix');
+  const helper = document.getElementById('project-dir-helper');
+  return { input, wrap, suffix, helper };
+}
+
+function projectDirSetState(state, info) {
+  const { input, wrap, suffix, helper } = projectDirGetEls();
+  if (!input || !wrap || !helper) return;
+  wrap.dataset.state = state;
+  let text = helper.dataset.default || PROJECT_DIR_HELPER_DEFAULT;
+  helper.classList.remove('is-ok', 'is-bad', 'is-warn');
+  let icon = '';
+  if (state === 'validating') {
+    icon = '↻'; // CSS spins it
+    text = '校验中…';
+  } else if (state === 'valid') {
+    icon = '✓';
+    const base = ((info || '').split('/').filter(Boolean).pop()) || info || '';
+    text = `已连接：${base}`;
+    helper.classList.add('is-ok');
+  } else if (state === 'not_exist') {
+    icon = '✕';
+    text = '❌ 路径不存在：检查盘是否挂载或路径是否拼错';
+    helper.classList.add('is-bad');
+  } else if (state === 'not_git') {
+    icon = '✕';
+    text = '❌ 不是 git 仓库（缺少 .git 目录）：请确认这是 git 项目的根目录';
+    helper.classList.add('is-bad');
+  } else if (state === 'warn') {
+    icon = '⚠';
+    text = '⚠️ 暂时无法校验路径，提交时会重新检查';
+    helper.classList.add('is-warn');
+  }
+  if (suffix) suffix.textContent = icon;
+  helper.textContent = text;
+}
+
+async function projectDirValidate(rawPath) {
+  const { input } = projectDirGetEls();
+  if (!input) return;
+  const path = (rawPath || '').trim();
+  if (!path) {
+    projectDirSetState('idle', null);
+    _projectDirLastPath = null;
+    _projectDirLastResult = null;
+    return;
+  }
+  // 200ms debounce on identical path — don't re-fetch what we already have.
+  const now = Date.now();
+  if (path === _projectDirLastPath
+      && _projectDirLastResult
+      && (now - _projectDirLastValidatedAt) < 200) {
+    const r = _projectDirLastResult;
+    if (r.exists && r.is_git_repo) projectDirSetState('valid', path);
+    else if (!r.exists) projectDirSetState('not_exist', null);
+    else projectDirSetState('not_git', null);
+    return;
+  }
+  if (_projectDirAbort) {
+    try { _projectDirAbort.abort(); } catch (_) { /* noop */ }
+  }
+  _projectDirAbort = new AbortController();
+  projectDirSetState('validating', null);
+  try {
+    const r = await fetch(`/api/fs/validate?path=${encodeURIComponent(path)}`, {
+      signal: _projectDirAbort.signal,
+    });
+    let data = {};
+    try { data = await r.json(); } catch (_) { /* empty body */ }
+    if (r.status === 400) {
+      // not absolute / malformed — surface as a path error.
+      projectDirSetState('not_exist', null);
+      return;
+    }
+    if (!r.ok) {
+      projectDirSetState('warn', null);
+      return;
+    }
+    _projectDirLastPath = path;
+    _projectDirLastResult = data;
+    _projectDirLastValidatedAt = Date.now();
+    if (data.exists && data.is_git_repo) projectDirSetState('valid', path);
+    else if (!data.exists) projectDirSetState('not_exist', null);
+    else projectDirSetState('not_git', null);
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    projectDirSetState('warn', null);
+  }
+}
+
+function projectDirBindBlur() {
+  const { input } = projectDirGetEls();
+  if (!input || input.dataset.pdBound) return;
+  input.dataset.pdBound = '1';
+  input.addEventListener('blur', () => projectDirValidate(input.value));
+  input.addEventListener('input', () => {
+    // Per design §2.4: while typing, return to idle (no per-keystroke fetch).
+    if (!input.value.trim()) {
+      projectDirSetState('idle', null);
+      _projectDirLastPath = null;
+      _projectDirLastResult = null;
+      return;
+    }
+    const { wrap } = projectDirGetEls();
+    if (wrap && wrap.dataset.state !== 'idle' && wrap.dataset.state !== 'focused') {
+      projectDirSetState('idle', null);
+    }
+  });
+  input.addEventListener('focus', () => {
+    const { wrap } = projectDirGetEls();
+    if (wrap && (wrap.dataset.state === 'idle' || !wrap.dataset.state)) {
+      wrap.dataset.state = 'focused';
+    }
+  });
+}
+projectDirBindBlur();
+
+
 els.form.onsubmit = async event => {
   event.preventDefault();
   const members = [...els.memberCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
@@ -1531,6 +1687,7 @@ els.form.onsubmit = async event => {
     emoji: els.form.elements.emoji.value.trim(),
     members,
     chair: els.chairSelect.value,
+    project_dir: (els.form.elements.project_dir?.value || '').trim() || null,
   };
   const archivedCb = document.getElementById('squad-archived-cb');
   if (modalMode === 'edit' && archivedCb) {

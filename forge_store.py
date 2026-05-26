@@ -587,6 +587,13 @@ def _read_squads_doc() -> dict[str, Any]:
         doc = json.load(f)
     if doc.get("version") != 1 or not isinstance(doc.get("squads"), dict):
         raise ValueError("invalid squads.json schema")
+    # Graceful migration: existing squads.json may pre-date PR-A and lack
+    # `project_dir`. Inject the default lazily on read so legacy docs round-
+    # trip without manual migration. We *do not* persist here; the field is
+    # written back on the next update_squad/create_squad. v0.5 PR-A.
+    for squad in doc["squads"].values():
+        if isinstance(squad, dict) and "project_dir" not in squad:
+            squad["project_dir"] = None
     return doc
 
 
@@ -609,6 +616,11 @@ def create_squad(data: dict[str, Any]) -> dict[str, Any]:
     squad_id = data["id"]
     if squad_id in doc["squads"]:
         raise ValueError("squad already exists")
+    pd = data.get("project_dir")
+    if pd is not None and not isinstance(pd, str):
+        raise ValueError("project_dir must be a string or null")
+    if isinstance(pd, str):
+        pd = pd.strip() or None
     squad = {
         "id": squad_id,
         "chair": data.get("chair") or data["members"][0],
@@ -616,6 +628,9 @@ def create_squad(data: dict[str, Any]) -> dict[str, Any]:
         "emoji": data.get("emoji") or "#",
         "name": data.get("name") or squad_id,
         "description": data.get("description") or "",
+        # v0.5 PR-A: optional absolute filesystem path that pins this squad to
+        # a target git repo. None / empty means "discussion-only squad".
+        "project_dir": pd,
     }
     doc["squads"][squad_id] = squad
     _write_squads_doc(doc)
@@ -638,6 +653,21 @@ def update_squad(squad_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
         cur["members"] = [str(m) for m in patch["members"]]
     if "archived" in patch:
         cur["archived"] = bool(patch["archived"])
+    if "project_dir" in patch:
+        # PR-A: accept None / empty string (clears) or a non-empty string
+        # (must be absolute). Existence + git-repo check is NOT enforced at
+        # write time per PRD §5.1; that’s a derived runtime concern.
+        raw_pd = patch["project_dir"]
+        if raw_pd is None:
+            cur["project_dir"] = None
+        elif isinstance(raw_pd, str):
+            v = raw_pd.strip()
+            if not v:
+                cur["project_dir"] = None
+            else:
+                cur["project_dir"] = v
+        else:
+            raise ValueError("project_dir must be a string or null")
     if "chair" in patch and patch["chair"]:
         if patch["chair"] not in cur["members"]:
             raise ValueError("chair must be a member")
@@ -884,6 +914,9 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
         "posts": [],
         "posts_by_id": {},
         "superseded": set(),
+        # v0.5 PR-A: store-only field. Not exposed via API/UI in this PR;
+        # router will start reading it in PR-B.
+        "extra_projects": [],
         "raw_events": len(events),
     }
     seen_participants: list[str] = []
@@ -945,6 +978,10 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                     actors.remove(actor)
                 if not actors:
                     p["reactions"].pop(emoji, None)
+        elif kind == "thread_extra_projects_set":
+            ep = ev.get("extra_projects")
+            if isinstance(ep, list):
+                model["extra_projects"] = [str(p) for p in ep if isinstance(p, str)]
         elif kind == "thread_closed":
             model["closed_at"] = ev.get("ts")
             model["closed_by"] = ev.get("closed_by")

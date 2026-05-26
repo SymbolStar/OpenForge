@@ -175,3 +175,85 @@ def test_route_regex_and_create_regex_agree_on_hyphen(server):
     code, got = _get(f"{server}/api/squads/{sid}")
     assert code == 200, "URL route must accept any id the create endpoint accepted"
     assert got["squad"]["id"] == sid
+
+
+# ─── PR-A: project_dir round-trip + fs/validate ────────────────────────
+
+def test_squad_project_dir_round_trip_and_validity(server, tmp_path):
+    """POST + PATCH project_dir, then GET should return project_dir_valid."""
+    sid = "pd_rt"
+    # Create with no project_dir → list/get should return project_dir_valid=None.
+    code, _ = _post(f"{server}/api/squads", {
+        "id": sid, "name": sid, "members": ["scott"], "chair": "scott",
+    })
+    assert code == 201
+    code, got = _get(f"{server}/api/squads/{sid}")
+    assert code == 200
+    assert got["squad"]["project_dir"] is None
+    assert got["squad"]["project_dir_valid"] is None
+
+    # PATCH a real git-like dir (tmp + .git subdir).
+    repo = tmp_path / "fake-repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    code, patched = _patch(f"{server}/api/squads/{sid}", {"project_dir": str(repo)})
+    assert code == 200, patched
+    assert patched["project_dir"] == str(repo)
+    assert patched["project_dir_valid"] is True
+
+    # GET should reflect it.
+    code, got = _get(f"{server}/api/squads/{sid}")
+    assert got["squad"]["project_dir"] == str(repo)
+    assert got["squad"]["project_dir_valid"] is True
+
+    # PATCH to a non-git dir.
+    bare = tmp_path / "not-a-repo"
+    bare.mkdir()
+    code, patched2 = _patch(f"{server}/api/squads/{sid}", {"project_dir": str(bare)})
+    assert code == 200
+    assert patched2["project_dir_valid"] is False
+
+    # Clear by sending null.
+    code, cleared = _patch(f"{server}/api/squads/{sid}", {"project_dir": None})
+    assert code == 200
+    assert cleared["project_dir"] is None
+    assert cleared["project_dir_valid"] is None
+
+
+def test_squad_project_dir_must_be_absolute(server):
+    sid = "pd_abs"
+    code, _ = _post(f"{server}/api/squads", {
+        "id": sid, "name": sid, "members": ["scott"], "chair": "scott",
+    })
+    assert code == 201
+    code, err = _patch(f"{server}/api/squads/{sid}", {"project_dir": "relative/path"})
+    assert code == 400, err
+
+
+def test_fs_validate_endpoint(server, tmp_path):
+    # Missing path → 400.
+    code, _ = _request("GET", f"{server}/api/fs/validate")
+    assert code == 400
+    # Non-absolute → 400.
+    code, _ = _request("GET", f"{server}/api/fs/validate?path=foo")
+    assert code == 400
+    # Nonexistent absolute path → 200 with exists=false.
+    code, body = _request("GET", f"{server}/api/fs/validate?path=/nope/does/not/exist/xyz")
+    assert code == 200, body
+    assert body["exists"] is False
+    assert body["is_git_repo"] is False
+    # Real dir without .git.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    code, body = _request("GET", f"{server}/api/fs/validate?path={bare}")
+    assert code == 200
+    assert body["exists"] is True
+    assert body["is_git_repo"] is False
+    # Real dir with .git.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    code, body = _request("GET", f"{server}/api/fs/validate?path={repo}")
+    assert code == 200
+    assert body["exists"] is True
+    assert body["is_git_repo"] is True
