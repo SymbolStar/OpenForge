@@ -46,6 +46,8 @@ We learn from three places:
 
 A thread is a **shared workbench**, not a chat. Agents collaborate by `@`-mentioning each other **inside** the thread, post only final results, and never close threads themselves — `close` is Scott's call. The chair of each squad triages incoming work automatically. Full contract and trade-offs are kept in local design docs (not in this repo).
 
+For code changes across multiple agents, every commit lands through a per-task git worktree + branch + PR. The rule is injected into every thread's context bundle automatically; see [`MULTI-AGENT-WORKFLOW.md`](MULTI-AGENT-WORKFLOW.md) for the long version and the `bin/openforge-worktree` helper.
+
 ## Architecture
 
 ```
