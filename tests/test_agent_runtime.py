@@ -214,11 +214,80 @@ def test_call_agent_timeout(ar, monkeypatch, tmp_path):
     slow.chmod(0o755)
     monkeypatch.setattr(ar, "OPENCLAW_BIN", str(slow))
     monkeypatch.setattr(ar, "AGENT_TIMEOUT", 0)
-    real_run = subprocess.run
 
-    def _fast_run(*a, **kw):
-        kw["timeout"] = 0.2
-        return real_run(*a, **kw)
-    monkeypatch.setattr(ar.subprocess, "run", _fast_run)
+    real_popen = subprocess.Popen
+
+    class FastPopen(real_popen):
+        def communicate(self, input=None, timeout=None):  # noqa: A002
+            return super().communicate(input=input, timeout=0.2)
+
+    monkeypatch.setattr(ar.subprocess, "Popen", FastPopen)
     with pytest.raises(ar.AgentError, match="timeout"):
         ar.call_agent("milk", "sid", "hi")
+
+
+def test_call_agent_kills_orphan_grandchild_on_timeout(ar, monkeypatch, tmp_path):
+    """Regression: 2026-05-26 judy hung 11min because `forge dev` was a
+    long-running grandchild that kept the agent's stdout pipe open after the
+    direct child exited. The router's in-flight slot stayed pinned forever.
+
+    With start_new_session=True + killpg on timeout, the whole descendant tree
+    dies and call_agent raises promptly.
+    """
+    import os as _os
+    import time as _t
+
+    pidfile = tmp_path / "grandchild.pid"
+    # Shell that forks a long-running sleep into the background and keeps
+    # its own stdout open (the sleep inherits stdout, so pipes don't close
+    # when the bash itself exits). This is the same shape as `forge dev`
+    # (or any nohup'd daemon) being launched from an agent's exec tool.
+    spawner = tmp_path / "spawn_grandchild.sh"
+    spawner.write_text(
+        "#!/bin/sh\n"
+        f"sleep 30 &\n"
+        f"echo $! > {pidfile}\n"
+        "sleep 30\n"  # parent blocks too so communicate() doesn't get EOF
+    )
+    spawner.chmod(0o755)
+    monkeypatch.setattr(ar, "OPENCLAW_BIN", str(spawner))
+    monkeypatch.setattr(ar, "AGENT_TIMEOUT", 0)
+    monkeypatch.setattr(ar, "_GROUP_KILL_GRACE_SECONDS", 0.3)
+
+    real_popen = subprocess.Popen
+
+    class FastPopen(real_popen):
+        def communicate(self, input=None, timeout=None):  # noqa: A002
+            return super().communicate(input=input, timeout=0.5)
+
+    monkeypatch.setattr(ar.subprocess, "Popen", FastPopen)
+
+    with pytest.raises(ar.AgentError, match="timeout"):
+        ar.call_agent("milk", "sid", "hi")
+
+    # Wait for grandchild pid to appear (race-safe), then verify it was killed.
+    deadline = _t.time() + 2.0
+    while _t.time() < deadline and not pidfile.exists():
+        _t.sleep(0.05)
+    assert pidfile.exists(), "grandchild never recorded its PID"
+    gc_pid = int(pidfile.read_text().strip())
+
+    # The grandchild should be dead (or in the middle of dying) within the
+    # grace window. Poll a few times to avoid flakiness on slow CI.
+    deadline = _t.time() + 2.0
+    while _t.time() < deadline:
+        try:
+            _os.kill(gc_pid, 0)
+            _t.sleep(0.05)
+        except ProcessLookupError:
+            break
+    else:
+        # Grandchild outlived the test — the fix is broken.
+        try:
+            _os.kill(gc_pid, 9)  # cleanup so we don't leak across tests
+        except ProcessLookupError:
+            pass
+        raise AssertionError(
+            f"grandchild pid {gc_pid} survived call_agent timeout — killpg "
+            "did not reach the descendant tree"
+        )
