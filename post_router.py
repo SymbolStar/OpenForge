@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from typing import Any
 
+import forge_employees
 import forge_identity
 import forge_store as store
 from agent_runtime import (
@@ -70,6 +72,86 @@ _slots = threading.BoundedSemaphore(MAX_PARALLEL_ROUTES)
 
 # How many prior posts to feed the agent. Bounds the prompt size.
 MAX_CONTEXT_POSTS = 50
+
+# Handoff verbs / phrases that look like "X is the next person to act".
+# Used by _detect_missing_handoff_mentions to flag prose like
+# "alice 可以动了" / "交给 milk" / "等 dora review" — prose that names a
+# teammate as the next actor but lacks the @<id> the router needs.
+# Conservative on purpose: false positives are visible as a hint post,
+# so we'd rather under-detect than spam threads.
+_HANDOFF_VERB_RE = re.compile(
+    r"可以动|可以接力|接力|交给|交接|接下来|轮到你|请你|需要你|等你|靠你|由你|你接手|你 review|你看|你拍|review 一下|一下"
+)
+
+# Max characters between teammate-name token and a handoff verb for the
+# pair to count as a handoff. Tight to avoid "alice did X. Separately, foo
+# needs review" false positives.
+_HANDOFF_WINDOW = 25
+
+
+def _detect_missing_handoff_mentions(
+    reply: str, mentions: list[str], speaker: str
+) -> list[str]:
+    """Return employee ids the agent named as a handoff target without @-ing.
+
+    A miss requires ALL of:
+      - the reply contains a known employee's id or display name,
+      - within ±{_HANDOFF_WINDOW} chars there's a handoff verb,
+      - that employee is NOT in the parsed `mentions` list,
+      - that employee is not the speaker themselves.
+
+    Returns a stable, deduped list in detection order. Failures inside
+    are swallowed (returns []) so the router never raises on a hint.
+    """
+    try:
+        if not reply:
+            return []
+        # Normalise already-parsed mentions to canonical agent ids.
+        mentioned_ids: set[str] = set()
+        for m in mentions or []:
+            resolved = forge_identity.name_to_id(m) or (m or "").strip().lower()
+            if resolved:
+                mentioned_ids.add(resolved)
+        spk = (speaker or "").strip().lower()
+        lower_reply = reply.lower()
+        employee_ids = forge_employees.list_employees()
+
+        misses: list[str] = []
+        seen: set[str] = set()
+        for aid in employee_ids:
+            if aid == spk or aid in mentioned_ids or aid in seen:
+                continue
+            # Build the set of spellings that resolve to this aid.
+            tokens = {aid.lower()}
+            name = (forge_identity.get_identity(aid).get("name") or "").strip()
+            if name:
+                tokens.add(name.lower())
+            for tok in list(tokens):
+                if not tok or len(tok) < 2:
+                    continue
+                hit = False
+                for m in re.finditer(re.escape(tok), lower_reply):
+                    # Skip occurrences that are part of an @-mention
+                    # (extract_mentions already saw those and they'd be
+                    # in mentioned_ids if valid; if invalid like
+                    # "@ [from: alice]" we don't want to double-warn).
+                    prefix_idx = m.start() - 1
+                    while prefix_idx >= 0 and reply[prefix_idx] in " \t":
+                        prefix_idx -= 1
+                    if prefix_idx >= 0 and reply[prefix_idx] == "@":
+                        continue
+                    start = max(0, m.start() - _HANDOFF_WINDOW)
+                    end = min(len(reply), m.end() + _HANDOFF_WINDOW)
+                    if _HANDOFF_VERB_RE.search(reply[start:end]):
+                        hit = True
+                        break
+                if hit:
+                    seen.add(aid)
+                    misses.append(aid)
+                    break
+        return misses
+    except Exception:
+        return []
 
 
 # ─── public api ──────────────────────────────────────────────────────
@@ -355,6 +437,29 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
             thread_id, agent_id, reply, parent_post_id=trigger_pid,
         )
         final_post_id = added.get("post_id")
+        # 2026-05-26: defensive handoff-mention check. If the agent
+        # wrote prose like "alice 可以动了" / "交给 milk" but did NOT
+        # @ them, the named teammate will not be woken by the router
+        # and the thread silently stalls. Post a __router__ hint so
+        # the human (and the next agent reading the thread) can see
+        # exactly which handoff was dropped and how to fix it.
+        try:
+            extracted = store.extract_mentions(reply)
+            misses = _detect_missing_handoff_mentions(reply, extracted, agent_id)
+            for missed_id in misses:
+                display = forge_identity.get_identity(missed_id).get(
+                    "name"
+                ) or missed_id
+                store.add_thread_post(
+                    thread_id, ROUTER_SPEAKER_FALLBACK,
+                    f"💡 检测到 @{forge_identity.get_identity(agent_id)['name']} "
+                    f"点名了 **{display}** 作为下一步的人，但没有 @{missed_id}。"
+                    f"{display} 不会收到通知，thread 会在这里冻住。"
+                    f"如需 {display} 接力，请回复 `@{missed_id} <内容>`。",
+                    parent_post_id=final_post_id,
+                )
+        except Exception as e:
+            print(f"⚠️  handoff-mention hint failed: {e!r}", flush=True)
         # V1.1 (Scott 2026-05-24 21:00): re-feed the agent's own reply
         # through the router so @mentions inside agent→agent dispatch
         # actually wake their targets. Without this, a chair like judy
@@ -460,6 +565,12 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"- **@ mention 的正确写法是 `@<id>`**（例如 `@alice`、`@milk`）。"
         f"`[from: <id>]` 只是 thread 给你看的标记，**不要**写成 `@ [from: alice]` "
         f"或 `@[from:alice]` —— router 解析不了这种语法，被你 @ 的人收不到通知。\n"
+        f"- **交接必须 @**：如果你的回复里点名某个 teammate 是“下一步的人”—— 要她接力、"
+        f"看东西、决定、干活——必须在名字前面写 `@<id>` 才能唤醒 router。"
+        f"只在散文里写「alice 可以动了」或「交给 milk」**不会**让对方收到通知，"
+        f"thread 会完全冻在那里。例子：\n"
+        f"  ❌  “alice review 完了可以动了” — alice 不会被唤醒\n"
+        f"  ✅  “@alice 你 review 完了就可以动” — alice 会收到 trigger\n"
         f"- 如果问题已经被回答过或不需要你回答，回复 `completed`\n"
         f"\n"
         f"[文件引用语法 v0.8]\n"

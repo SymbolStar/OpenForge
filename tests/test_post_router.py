@@ -680,3 +680,65 @@ def test_project_section_rule_absent_when_unset(fake_home, store):  # noqa: F811
     t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
     out = post_router._render_project_section(t["thread_id"])
     assert out == ""
+
+
+# ─── handoff-mention detection (2026-05-26 PR #13) ───────────────────
+def test_handoff_detector_flags_prose_only_handoff(fake_home, store):  # noqa: F811
+    """`alice 可以动了` without @alice → must be flagged."""
+    import post_router
+    # alice must exist as an employee for the detector to consider her.
+    (fake_home / ".openclaw" / "workspace-alice").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-alice" / "SOUL.md").write_text("# alice")
+    (fake_home / ".openclaw" / "workspace-alice" / "IDENTITY.md").write_text(
+        "- **Name:** Alice\n- **Emoji:** 🅰️\n"
+    )
+    (fake_home / ".openclaw" / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+
+    reply = "PR-C2 文案改完了，alice review 完了可以动了。"
+    misses = post_router._detect_missing_handoff_mentions(
+        reply, mentions=[], speaker="judy",
+    )
+    assert "alice" in misses
+
+
+def test_handoff_detector_silent_when_at_mentioned(fake_home, store):  # noqa: F811
+    """Same prose but with @alice present → no false positive."""
+    import post_router
+    (fake_home / ".openclaw" / "workspace-alice").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-alice" / "SOUL.md").write_text("# alice")
+    (fake_home / ".openclaw" / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+
+    reply = "@alice review 完了可以动了"
+    misses = post_router._detect_missing_handoff_mentions(
+        reply, mentions=["alice"], speaker="judy",
+    )
+    assert misses == []
+
+
+def test_handoff_detector_silent_for_speaker_self(fake_home, store):  # noqa: F811
+    """Speaker talking about themselves in handoff phrasing isn't a miss."""
+    import post_router
+    (fake_home / ".openclaw" / "workspace-judy").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-judy" / "SOUL.md").write_text("# judy")
+    (fake_home / ".openclaw" / "agents" / "judy").mkdir(parents=True, exist_ok=True)
+
+    reply = "judy 接下来去写测试"
+    misses = post_router._detect_missing_handoff_mentions(
+        reply, mentions=[], speaker="judy",
+    )
+    assert "judy" not in misses
+
+
+def test_handoff_detector_silent_without_handoff_verb(fake_home, store):  # noqa: F811
+    """Naming a teammate without a handoff verb shouldn't trigger."""
+    import post_router
+    (fake_home / ".openclaw" / "workspace-alice").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-alice" / "SOUL.md").write_text("# alice")
+    (fake_home / ".openclaw" / "agents" / "alice").mkdir(parents=True, exist_ok=True)
+
+    reply = "之前 alice 已经把方案过了一遍。"
+    misses = post_router._detect_missing_handoff_mentions(
+        reply, mentions=[], speaker="judy",
+    )
+    # No "可以动" / "交给" / "请你" verb near alice → not a handoff miss.
+    assert "alice" not in misses
