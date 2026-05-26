@@ -918,3 +918,59 @@ def test_plan_detector_silent_for_listener_response():
     )
     # Pure consultation / answer — no promise to act, no plan-intent verb.
     assert post_router._detect_plan_without_action(reply) is None
+
+
+# ─── recovery default = no auto-redispatch (PR-17-followup) ──────────
+def test_recover_default_supersedes_but_does_not_redispatch(fake_home, store):  # noqa: F811
+    """Default recovery (redispatch=False) must clear the UI but NOT
+    auto-fire the trigger again. Real incident 2026-05-26 19:37:58:
+    auto-redispatch raced with the previous worker's session-file lock
+    and produced EmbeddedAttemptSessionTakeoverError."""
+    import post_router
+
+    (fake_home / ".openclaw" / "workspace-designer").mkdir(parents=True, exist_ok=True)
+    (fake_home / ".openclaw" / "workspace-designer" / "SOUL.md").write_text("# designer")
+    (fake_home / ".openclaw" / "workspace-designer" / "IDENTITY.md").write_text(
+        "- **Name:** Dora\n- **Emoji:** 🎨\n"
+    )
+    (fake_home / ".openclaw" / "agents" / "designer").mkdir(parents=True, exist_ok=True)
+
+    store.ensure_default_squads()
+    sq = store.create_squad({
+        "id": "rcv2", "name": "rcv2",
+        "members": ["scott", "designer"], "chair": "scott",
+    })
+    t = store.create_thread(sq["id"], "scott", "@dora ping again")
+    trigger_pid = t["posts"][-1].get("post_id") or t["posts"][-1]["id"]
+    ph = store.add_thread_post(
+        t["thread_id"], post_router.ROUTER_SPEAKER_FALLBACK,
+        "⏳ @Dora 正在思考中…", parent_post_id=trigger_pid,
+    )
+    placeholder_id = ph.get("post_id") or ph["id"]
+
+    with post_router._inflight_lock:
+        post_router._inflight.clear()
+    # DEFAULT call — redispatch should be False.
+    results = post_router.recover_orphan_placeholders()
+
+    rec = next(r for r in results if r["agent_id"] == "designer")
+    assert rec["redispatched"] is False, "default must NOT redispatch"
+
+    # Placeholder is superseded (UI clears).
+    proj = store.project_thread(t["thread_id"])
+    live = [
+        p for p in proj["posts"]
+        if (p.get("post_id") or p.get("id")) == placeholder_id
+    ]
+    assert live and live[0]["superseded"]
+
+    # The interrupt note mentions the manual-@ guidance.
+    notes = [
+        p for p in proj["posts"]
+        if p["speaker"] == post_router.ROUTER_SPEAKER_FALLBACK
+        and "人工 @" in (p.get("content") or "")
+    ]
+    assert notes, "expected the manual-@ guidance note"
+
+    # No worker should be in flight (because we did not redispatch).
+    assert not post_router._inflight, "default recovery must not spawn a worker"
