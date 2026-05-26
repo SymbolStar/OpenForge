@@ -629,3 +629,54 @@ def test_call_agent_propagates_extra_env(fake_home, tmp_path, monkeypatch):  # n
     monkeypatch.setattr(ar, "AGENT_TIMEOUT", 5)
     out = ar.call_agent("milk", "sid", "hi", extra_env={"OPENFORGE_PROJECT_DIR": "/tmp/foo"})
     assert out == "got=/tmp/foo"
+
+
+# ─── PR-C2: worktree rule preamble (only on valid project_dir) ─────
+
+def test_project_section_includes_worktree_rule_when_valid(fake_home, store, tmp_path):  # noqa: F811
+    import forge_project
+    import post_router
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    forge_project.invalidate()
+    sq = store.create_squad({
+        "id": "ok", "name": "ok", "members": ["scott"], "chair": "scott",
+        "project_dir": str(repo),
+    })
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    out = post_router._render_project_section(t["thread_id"])
+    # Rule is gated on valid project — appears alongside the OK banner.
+    assert "[代码改动规则]" in out
+    assert "openforge-worktree add" in out
+    assert "openforge-worktree rm" in out
+    # Encapsulation: no path, no env var name in agent-visible text.
+    assert str(repo) not in out
+    assert "OPENFORGE_PROJECT_DIR" not in out
+    # Hard line cap: 12 lines max per alice's review standard.
+    assert len(out.splitlines()) <= 12, f"preamble exceeded 12-line cap: {len(out.splitlines())} lines"
+
+
+def test_project_section_rule_absent_when_invalid(fake_home, store, tmp_path):  # noqa: F811
+    """Invariant: a broken project must NOT show a rule that would fail."""
+    import forge_project
+    import post_router
+    bare = tmp_path / "no-git"
+    bare.mkdir()
+    forge_project.invalidate()
+    sq = store.create_squad({
+        "id": "bad", "name": "bad", "members": ["scott"], "chair": "scott",
+        "project_dir": str(bare),
+    })
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    out = post_router._render_project_section(t["thread_id"])
+    assert "[代码改动规则]" not in out
+    assert "openforge-worktree" not in out
+
+
+def test_project_section_rule_absent_when_unset(fake_home, store):  # noqa: F811
+    import post_router
+    sq = store.create_squad({"id": "discuss", "name": "d", "members": ["scott"], "chair": "scott"})
+    t = store.create_thread(sq["id"], "scott", title="t", opening_content="hi")
+    out = post_router._render_project_section(t["thread_id"])
+    assert out == ""
