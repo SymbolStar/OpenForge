@@ -321,11 +321,19 @@ cmd_install() {
   write_plist
 
   # symlink this script onto PATH so `forge` works from anywhere.
+  # Also symlink bin/openforge-worktree so the multi-agent rule preamble
+  # can spell it as a bare command instead of a brittle absolute path.
   local linked=""
+  local linked_wt=""
+  local worktree_src="$REPO_DIR/bin/openforge-worktree"
   for dir in "${PATH_CANDIDATES[@]}"; do
     if [ -d "$dir" ] && [ -w "$dir" ]; then
       ln -sf "$SELF" "$dir/forge"
       linked="$dir/forge"
+      if [ -x "$worktree_src" ]; then
+        ln -sf "$worktree_src" "$dir/openforge-worktree"
+        linked_wt="$dir/openforge-worktree"
+      fi
       break
     fi
   done
@@ -334,6 +342,9 @@ cmd_install() {
     log "    alias forge='$SELF'"
   else
     log "symlinked $linked → $SELF"
+  fi
+  if [ -n "$linked_wt" ]; then
+    log "symlinked $linked_wt → $worktree_src"
   fi
 
   # boot the service
@@ -356,6 +367,9 @@ cmd_uninstall() {
   for dir in "${PATH_CANDIDATES[@]}"; do
     if [ -L "$dir/forge" ]; then
       rm -f "$dir/forge" && log "removed $dir/forge"
+    fi
+    if [ -L "$dir/openforge-worktree" ]; then
+      rm -f "$dir/openforge-worktree" && log "removed $dir/openforge-worktree"
     fi
   done
   log "uninstalled. Repo + logs left intact."

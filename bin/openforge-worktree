@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# openforge-worktree — minimal git-worktree helper for OpenForge multi-agent dev.
+#
+# Usage:
+#   openforge-worktree add <agent-id> <task-slug>
+#       Create worktree at <repo>.worktrees/<agent-id>-<task-slug>/
+#       on a fresh branch <agent-id>/<task-slug>. Prints the absolute path
+#       to stdout (suitable for `cd "$(openforge-worktree add judy fix-bug)"`).
+#       Progress logging goes to stderr so stdout stays clean.
+#
+#   openforge-worktree rm <agent-id>/<task-slug>
+#       Remove the worktree directory + delete the matching local branch.
+#       Skips remote; assumes the corresponding PR was already merged on
+#       GitHub. Won't delete unmerged branches without --force.
+#
+#   openforge-worktree ls
+#       Thin wrapper around `git worktree list` for the current repo.
+#
+# Target repo resolution (first hit wins):
+#   1. --repo <path>          explicit override
+#   2. $OPENFORGE_PROJECT_DIR  injected by post_router for routed @mentions
+#   3. `git rev-parse --show-toplevel` from CWD
+#   4. error out
+#
+# Worktree path convention: <repo-parent>/<repo-basename>.worktrees/<branch-slug>/
+# Branch convention:         <agent-id>/<task-slug>
+#
+# Exit codes: 0=ok, 1=usage, 2=resolution/validation, 3=git error.
+
+set -euo pipefail
+
+# ─── output helpers (stderr; stdout reserved for machine output) ─────
+_err()  { printf '%s\n' "openforge-worktree: $*" >&2; }
+_log()  { printf '\033[2m%s\033[0m %s\n' "[worktree]" "$*" >&2; }
+_warn() { printf '\033[33m%s\033[0m %s\n' "[worktree]" "$*" >&2; }
+_die()  { _err "$*"; exit "${2:-2}"; }
+
+# ─── argv parsing ────────────────────────────────────────────────────
+# ─── argv parsing ────────────────────────────────────────────────────
+# We only consume --repo / --help at the top level. Anything else is
+# passed through to the subcommand so flags like `rm --force` work.
+REPO_OVERRIDE=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)   REPO_OVERRIDE="${2:-}"; shift 2 ;;
+    --repo=*) REPO_OVERRIDE="${1#--repo=}"; shift ;;
+    -h|--help)
+      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    --) shift; ARGS+=("$@"); break ;;
+    *)  ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+[ $# -ge 1 ] || _die "usage: openforge-worktree add|rm|ls ... (try --help)" 1
+CMD="$1"; shift
+
+# ─── repo resolution ─────────────────────────────────────────────────
+resolve_repo() {
+  local candidate=""
+  if [ -n "$REPO_OVERRIDE" ]; then
+    candidate="$REPO_OVERRIDE"
+  elif [ -n "${OPENFORGE_PROJECT_DIR:-}" ]; then
+    candidate="$OPENFORGE_PROJECT_DIR"
+  else
+    candidate="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+  [ -n "$candidate" ] || _die "cannot find a git repo. Pass --repo, set OPENFORGE_PROJECT_DIR, or cd into one."
+  [ -d "$candidate" ] || _die "repo path does not exist: $candidate"
+  [ -d "$candidate/.git" ] || _die "not a git repo (no .git): $candidate"
+  # canonical absolute path; strip trailing slash
+  ( cd "$candidate" && pwd )
+}
+
+# ─── slug helpers ────────────────────────────────────────────────────
+# Conservative: alphanumerics + dash + underscore + dot. Anything else
+# (spaces, slashes inside a single segment, etc.) is rejected so we don't
+# accidentally create exotic branch names that the rule preamble doesn't
+# document.
+_check_slug() {
+  local name="$1" what="$2"
+  [ -n "$name" ] || _die "$what must be non-empty" 1
+  case "$name" in
+    *[![:alnum:]_.-]*) _die "$what may only contain [A-Za-z0-9_.-]: $name" 1 ;;
+  esac
+}
+
+# ─── add ─────────────────────────────────────────────────────────────
+cmd_add() {
+  [ $# -eq 2 ] || _die "usage: openforge-worktree add <agent-id> <task-slug>" 1
+  local agent="$1" task="$2"
+  _check_slug "$agent" "agent-id"
+  _check_slug "$task" "task-slug"
+
+  local repo; repo="$(resolve_repo)"
+  local repo_parent; repo_parent="$(dirname "$repo")"
+  local repo_name;   repo_name="$(basename "$repo")"
+  local worktree_root="$repo_parent/${repo_name}.worktrees"
+  local branch="${agent}/${task}"
+  local dir_slug="${agent}-${task}"
+  local worktree_path="$worktree_root/$dir_slug"
+
+  if [ -e "$worktree_path" ]; then
+    _die "worktree path already exists: $worktree_path"
+  fi
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    _die "branch already exists locally: $branch (use 'openforge-worktree rm $branch' first or pick a new task-slug)"
+  fi
+
+  _log "creating worktree: $worktree_path"
+  _log "branch:            $branch"
+  _log "from:              $repo"
+  mkdir -p "$worktree_root"
+
+  # Branch off the current HEAD of the resolved repo (typically main).
+  if ! git -C "$repo" worktree add -b "$branch" "$worktree_path" >&2; then
+    _die "git worktree add failed" 3
+  fi
+
+  # Single machine-readable line on stdout: the absolute worktree path.
+  # Callers can do:  cd "$(openforge-worktree add judy fix-bug)"
+  printf '%s\n' "$worktree_path"
+}
+
+# ─── rm ──────────────────────────────────────────────────────────────
+cmd_rm() {
+  [ $# -ge 1 ] || _die "usage: openforge-worktree rm <agent-id>/<task-slug> [--force]" 1
+  local branch="$1"; shift
+  local force=0
+  for arg in "$@"; do
+    case "$arg" in
+      --force|-f) force=1 ;;
+      *) _die "unknown arg: $arg" 1 ;;
+    esac
+  done
+
+  case "$branch" in
+    */*) ;;
+    *) _die "branch must look like <agent-id>/<task-slug>, got: $branch" 1 ;;
+  esac
+  local agent="${branch%%/*}"
+  local task="${branch#*/}"
+  _check_slug "$agent" "agent-id"
+  _check_slug "$task" "task-slug"
+
+  local repo; repo="$(resolve_repo)"
+  local repo_parent; repo_parent="$(dirname "$repo")"
+  local repo_name;   repo_name="$(basename "$repo")"
+  local dir_slug="${agent}-${task}"
+  local worktree_path="$repo_parent/${repo_name}.worktrees/$dir_slug"
+
+  if [ -d "$worktree_path" ]; then
+    _log "removing worktree: $worktree_path"
+    local remove_args=(worktree remove)
+    [ "$force" -eq 1 ] && remove_args+=(--force)
+    remove_args+=("$worktree_path")
+    if ! git -C "$repo" "${remove_args[@]}" >&2; then
+      _die "git worktree remove failed (uncommitted changes? pass --force to override)" 3
+    fi
+  else
+    _warn "worktree dir not found, skipping: $worktree_path"
+  fi
+
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    _log "deleting local branch: $branch"
+    local delete_flag="-d"
+    [ "$force" -eq 1 ] && delete_flag="-D"
+    if ! git -C "$repo" branch "$delete_flag" "$branch" >&2; then
+      _die "git branch delete failed (unmerged commits? pass --force to override)" 3
+    fi
+  else
+    _warn "local branch not found, skipping: $branch"
+  fi
+}
+
+# ─── ls ──────────────────────────────────────────────────────────────
+cmd_ls() {
+  local repo; repo="$(resolve_repo)"
+  git -C "$repo" worktree list
+}
+
+# ─── dispatch ────────────────────────────────────────────────────────
+case "$CMD" in
+  add) cmd_add "$@" ;;
+  rm|remove) cmd_rm "$@" ;;
+  ls|list)   cmd_ls "$@" ;;
+  *) _die "unknown command: $CMD (try: add, rm, ls)" 1 ;;
+esac
