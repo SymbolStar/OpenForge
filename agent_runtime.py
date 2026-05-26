@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -158,6 +159,11 @@ class AgentError(RuntimeError):
 
 AGENT_TIMEOUT = int(os.environ.get("OPENFORGE_AGENT_TIMEOUT", "1800"))  # 30 min
 
+# How long to wait after SIGTERM before escalating to SIGKILL on the process
+# group. Short on purpose: by the time we reach here, the agent has already
+# been hung past AGENT_TIMEOUT and we just want it gone.
+_GROUP_KILL_GRACE_SECONDS = float(os.environ.get("OPENFORGE_GROUP_KILL_GRACE", "5"))
+
 
 def _resolve_openclaw_bin() -> str:
     """Pick the right openclaw binary.
@@ -192,37 +198,82 @@ def _resolve_openclaw_bin() -> str:
 OPENCLAW_BIN = _resolve_openclaw_bin()
 
 
+def _killpg_safe(pgid: int, sig: int) -> None:
+    """Send `sig` to process group `pgid`, swallowing already-gone errors."""
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def call_agent(agent_id: str, session_id: str, prompt: str) -> str:
     """Invoke `openclaw agent --local --json`. Raises AgentError on failure.
 
     --local keeps the run fully sandboxed in a subprocess so
     `agent:<id>:main` is NEVER mutated. --json gives us a structured result
     on stdout (older builds wrote to stderr; ≥2026.5.5 is required).
+
+    Subprocess runs in its OWN process group (start_new_session=True) so
+    that on timeout we can SIGTERM→SIGKILL the entire descendant tree.
+    Without this, an agent that backgrounds a long-lived process via its
+    exec tool (e.g. `forge dev`, an MCP server, a file watcher) leaks
+    orphan grandchildren that survive subprocess.run's timeout-kill of
+    the direct child only. Those orphans inherit the openclaw-agent's
+    stdout/stderr pipes, so communicate() never gets EOF and hangs in the
+    read loop indefinitely — pinning the router's in-flight slot and
+    silently dropping every subsequent @mention to that agent in the
+    thread. Real incident: 2026-05-26, judy hung 11 min on `forge dev`.
     """
+    argv = [
+        OPENCLAW_BIN, "agent",
+        "--local", "--json",
+        "--agent", agent_id,
+        "--session-id", session_id,
+        "--timeout", str(AGENT_TIMEOUT),
+        "--message", prompt,
+    ]
     try:
-        result = subprocess.run(
-            [
-                OPENCLAW_BIN, "agent",
-                "--local", "--json",
-                "--agent", agent_id,
-                "--session-id", session_id,
-                "--timeout", str(AGENT_TIMEOUT),
-                "--message", prompt,
-            ],
-            capture_output=True, text=True, timeout=AGENT_TIMEOUT + 30,
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # new process group so killpg() reaches grandchildren
         )
-    except subprocess.TimeoutExpired:
-        raise AgentError(f"timeout after {AGENT_TIMEOUT}s") from None
     except FileNotFoundError:
         raise AgentError(f"openclaw binary not found: {OPENCLAW_BIN}") from None
 
-    if result.returncode != 0:
-        tail = (result.stderr or result.stdout or "").strip().splitlines()[-3:]
+    pgid = proc.pid  # equals process group id thanks to start_new_session
+    try:
+        stdout, stderr = proc.communicate(timeout=AGENT_TIMEOUT + 30)
+    except subprocess.TimeoutExpired:
+        _killpg_safe(pgid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            _killpg_safe(pgid, signal.SIGKILL)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass  # truly stuck — best-effort, we already SIGKILLed the group
+        # Best-effort drain to release pipe fds; we don't use the data.
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream:
+                    stream.close()
+            except Exception:
+                pass
         raise AgentError(
-            f"openclaw agent exited {result.returncode}: " + " | ".join(tail)
+            f"timeout after {AGENT_TIMEOUT}s (process group killed)"
+        ) from None
+
+    if proc.returncode != 0:
+        tail = (stderr or stdout or "").strip().splitlines()[-3:]
+        raise AgentError(
+            f"openclaw agent exited {proc.returncode}: " + " | ".join(tail)
         )
 
-    raw = (result.stdout or "").strip() or (result.stderr or "").strip()
+    raw = (stdout or "").strip() or (stderr or "").strip()
     if not raw:
         raise AgentError("openclaw produced no output")
     try:
