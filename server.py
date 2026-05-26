@@ -87,6 +87,8 @@ SUNSET_DATE = "Wed, 01 Jul 2026 00:00:00 GMT"
 SQUAD_ID_RE = re.compile(r"^[A-Za-z0-9][\w-]{0,31}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
 THREAD_ROUTE_RE = r"(th_[0-9a-f]+_[0-9a-f]+)"
+POST_ID_ROUTE_RE = r"(p_[A-Za-z0-9_]+)"
+STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped"}
 
 
 def _is_local(host: str) -> bool:
@@ -116,6 +118,12 @@ def _serializable_thread(m: dict) -> dict:
                 "content": p["content"],
                 "mentions": p["mentions"],
                 "parent_post_id": p.get("parent_post_id"),
+                "post_type": p.get("post_type") or "message",
+                "phase": p.get("phase"),
+                "duration_ms": p.get("duration_ms"),
+                "error": p.get("error"),
+                "tool_name": p.get("tool_name"),
+                "trigger_post_id": p.get("trigger_post_id"),
                 "superseded": p["superseded"],
                 "superseded_by": p.get("superseded_by"),
                 "reactions": p.get("reactions") or {},
@@ -123,6 +131,34 @@ def _serializable_thread(m: dict) -> dict:
             for p in m["posts"]
         ],
     }
+
+
+def _serializable_post(p: dict) -> dict:
+    return {
+        "id": p["id"],
+        "ts": p.get("ts"),
+        "time": p.get("time"),
+        "speaker": p.get("speaker"),
+        "content": p.get("content", ""),
+        "mentions": p.get("mentions") or [],
+        "parent_post_id": p.get("parent_post_id"),
+        "post_type": p.get("post_type") or "message",
+        "phase": p.get("phase"),
+        "duration_ms": p.get("duration_ms"),
+        "error": p.get("error"),
+        "tool_name": p.get("tool_name"),
+        "trigger_post_id": p.get("trigger_post_id"),
+        "superseded": p.get("superseded", False),
+        "superseded_by": p.get("superseded_by"),
+        "reactions": p.get("reactions") or {},
+    }
+
+
+def _agent_id_from_chip(post: dict) -> str:
+    content = (post.get("content") or "").strip()
+    if not content:
+        return ""
+    return content.split(None, 1)[0].lstrip("@").strip()
 
 
 def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
@@ -848,7 +884,62 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(_serializable_thread(store.project_thread(tid)), 201)
             return
 
-        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/(p_[A-Za-z0-9_]+)/reactions$", url.path)
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}/retry$", url.path)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            thread = store.project_thread(tid)
+            if thread is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            post = (thread.get("posts_by_id") or {}).get(pid)
+            if post is None:
+                self._json({"error": "unknown post"}, 404)
+                return
+            if post.get("post_type") != "status_chip":
+                self._json({"error": "post must be status_chip"}, 400)
+                return
+            trigger_pid = post.get("trigger_post_id") or post.get("parent_post_id")
+            if not trigger_pid or trigger_pid not in (thread.get("posts_by_id") or {}):
+                self._json({"error": "trigger post not found"}, 404)
+                return
+            agent_id = _agent_id_from_chip(post)
+            if not agent_id:
+                self._json({"error": "agent id not found on chip"}, 400)
+                return
+            try:
+                updated = store.patch_post(tid, pid, {"phase": "thinking", "error": None, "duration_ms": None})
+                post_router._dispatch(tid, agent_id, trigger_pid, chip_post_id=pid)
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_post(updated))
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}/skip$", url.path)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            thread = store.project_thread(tid)
+            if thread is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            post = (thread.get("posts_by_id") or {}).get(pid)
+            if post is None:
+                self._json({"error": "unknown post"}, 404)
+                return
+            if post.get("post_type") != "status_chip":
+                self._json({"error": "post must be status_chip"}, 400)
+                return
+            try:
+                updated = store.patch_post(tid, pid, {"phase": "skipped"})
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_post(updated))
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}/reactions$", url.path)
         if m:
             tid = m.group(1)
             pid = m.group(2)
@@ -1092,6 +1183,44 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}$", url.path)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            thread = store.project_thread(tid)
+            if thread is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            post = (thread.get("posts_by_id") or {}).get(pid)
+            if post is None:
+                self._json({"error": "unknown post"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            allowed = {"phase", "duration_ms", "error", "content"}
+            unknown = sorted(set(opts) - allowed)
+            if unknown:
+                self._json({"error": f"unsupported fields: {', '.join(unknown)}"}, 400)
+                return
+            patch = {k: opts[k] for k in allowed if k in opts}
+            if "phase" in patch:
+                if post.get("post_type") != "status_chip":
+                    self._json({"error": "post must be status_chip"}, 400)
+                    return
+                if patch["phase"] not in STATUS_PHASES:
+                    self._json({"error": "invalid phase"}, 400)
+                    return
+            try:
+                updated = store.patch_post(tid, pid, patch)
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_post(updated))
             return
         # v0.9: PATCH /api/agents/<id>/status — update one section
         m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/status$", url.path)

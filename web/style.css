@@ -627,6 +627,106 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .status-chip.chip-open { color: #1a7a48; border-color: #1a7a48; background: #e6f5ed; }
 .status-chip.chip-closed { color: var(--closed); }
 
+/* ─── agent status chip (router placeholder replacement) ──────────────
+   Lives where a `.post` would render when `post_type === 'status_chip'`.
+   Visual weight ≈ half a normal post: short pill, no avatar block on the
+   left, no reactions/reply buttons. Phase color carries the meaning. */
+.agent-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  margin: 4px 8px;
+  border: 1px solid #e7e5e4;
+  background: #f5f5f4;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-mute, #78716c);
+  width: fit-content;
+  max-width: 100%;
+  animation: ascIn .2s ease-out;
+}
+.agent-status-chip .asc-avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+  background: #a8a29e;
+  flex-shrink: 0;
+}
+.agent-status-chip .asc-name { color: var(--text, #1c1917); font-weight: 500; }
+.agent-status-chip .asc-sep { color: #a8a29e; }
+.agent-status-chip .asc-phase { color: var(--text-mute, #78716c); }
+.agent-status-chip .asc-spinner {
+  width: 11px; height: 11px;
+  border: 2px solid #d6d3d1; border-top-color: #78716c;
+  border-radius: 50%;
+  animation: ascSpin .8s linear infinite;
+  display: inline-block;
+}
+.agent-status-chip .asc-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #2563eb;
+  animation: ascPulse 1.2s ease-in-out infinite;
+  display: inline-block;
+}
+.agent-status-chip .asc-icon { font-weight: 700; }
+
+/* phase tinting */
+.agent-status-chip[data-phase="running"] { border-color: #bfdbfe; background: #eff6ff; }
+.agent-status-chip[data-phase="running"] .asc-phase { color: #2563eb; }
+
+.agent-status-chip[data-phase="done"] { border-color: #bbf7d0; background: #f0fdf4; }
+.agent-status-chip[data-phase="done"] .asc-phase { color: #16a34a; }
+.agent-status-chip[data-phase="done"] .asc-icon { color: #16a34a; }
+
+.agent-status-chip[data-phase="done-collapsed"] {
+  background: transparent; border-color: transparent;
+  padding: 2px 8px; color: #a8a29e; font-size: 12px;
+}
+.agent-status-chip[data-phase="done-collapsed"] .asc-avatar { width: 16px; height: 16px; font-size: 10px; }
+.agent-status-chip[data-phase="done-collapsed"] .asc-name { font-weight: 400; color: #a8a29e; }
+
+.agent-status-chip[data-phase="failed"] { border-color: #fecaca; background: #fef2f2; }
+.agent-status-chip[data-phase="failed"] .asc-phase { color: #dc2626; font-weight: 500; }
+.agent-status-chip[data-phase="failed"] .asc-icon { color: #dc2626; }
+.agent-status-chip .asc-actions { display: inline-flex; gap: 4px; margin-left: 4px; }
+.agent-status-chip .asc-btn {
+  border: 1px solid #e7e5e4; background: #fff;
+  border-radius: 6px; padding: 2px 8px; font-size: 12px;
+  color: var(--text, #1c1917); cursor: pointer;
+  font-family: inherit; line-height: 1.3;
+}
+.agent-status-chip .asc-btn:hover { background: #f5f5f4; }
+.agent-status-chip .asc-btn.asc-retry { border-color: #dc2626; color: #dc2626; }
+.agent-status-chip[data-phase="failed"] { position: relative; }
+.agent-status-chip[data-phase="failed"]:hover .asc-tip {
+  opacity: 1; transform: translateY(0); pointer-events: auto;
+}
+.agent-status-chip .asc-tip {
+  position: absolute; bottom: calc(100% + 6px); left: 0;
+  background: #1c1917; color: #fafaf9;
+  padding: 8px 10px; border-radius: 6px;
+  font-size: 12px; line-height: 1.45;
+  max-width: 420px; min-width: 240px;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .15s, transform .15s;
+  pointer-events: none;
+  white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace;
+  z-index: 10;
+}
+
+.agent-status-chip[data-phase="skipped"] {
+  background: transparent; border-color: transparent;
+  color: #a8a29e; font-size: 12px;
+  padding: 2px 8px;
+}
+.agent-status-chip[data-phase="skipped"] .asc-avatar { width: 16px; height: 16px; font-size: 10px; opacity: .7; }
+.agent-status-chip[data-phase="skipped"] .asc-name { font-weight: 400; color: #a8a29e; }
+
+@keyframes ascSpin { to { transform: rotate(360deg); } }
+@keyframes ascPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+@keyframes ascIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
+
 #post-list {
   flex: 1 1 0;
   min-height: 0;

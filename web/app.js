@@ -822,7 +822,113 @@ function renderPosts(posts) {
   // V1.1: flat chronological list. Reply context is rendered as an inline
   // quote card at the top of each child post (see renderPostNode), not as
   // tree nesting — that was too visually heavy in real threads.
-  live.forEach(p => els.postList.appendChild(renderPostNode(p, false)));
+  live.forEach(p => {
+    if (p.post_type === 'status_chip') {
+      els.postList.appendChild(renderAgentStatusChip(p));
+    } else {
+      els.postList.appendChild(renderPostNode(p, false));
+    }
+  });
+}
+
+// ─── agent status chip (router placeholder replacement) ─────────────────
+// post_type === 'status_chip' ；同一 dispatch 全程备同一个 post_id，后端
+// 通过 patch_post / post_updated event 改 phase，前端 SSE 通道拿到后
+// 重调 renderPosts 原地重渲染。
+const _chipCollapseTimers = new Map();   // post_id → timer
+const _chipCollapsed = new Set();        // post_ids 在 done -> done-collapsed
+function renderAgentStatusChip(post) {
+  const pid = post.id || post.post_id || '';
+  const agent = post.speaker || '?';
+  const name = displayName(agent) || agent;
+  // 默认 phase=thinking（应对后端老据或 phase 丢失）
+  let phase = post.phase || 'thinking';
+  if (phase === 'done' && _chipCollapsed.has(pid)) phase = 'done-collapsed';
+
+  const chip = document.createElement('div');
+  chip.className = 'agent-status-chip';
+  chip.dataset.postId = pid;
+  chip.dataset.speaker = agent;
+  chip.dataset.phase = phase;
+
+  const avClass = avatarClass(agent);
+  const avStyleAttr = avatarStyle(agent); // 可能为 '' 或 ' style="..."'
+  const avLetter = (name || '?').slice(0, 1).toUpperCase();
+  const avatar = `<span class="asc-avatar ${avClass}"${avStyleAttr}>${escapeHtml(avLetter)}</span>`;
+  const nameHtml = `<span class="asc-name">${escapeHtml(name)}</span>`;
+  const sep = `<span class="asc-sep">·</span>`;
+
+  if (phase === 'thinking') {
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">思考中…</span><span class="asc-spinner"></span>`;
+  } else if (phase === 'running') {
+    const tool = post.tool_name ? ` · ${escapeHtml(post.tool_name)}` : '';
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">执行中${tool}</span><span class="asc-dot"></span>`;
+  } else if (phase === 'done') {
+    const dur = post.duration_ms != null
+      ? ` · ${(post.duration_ms / 1000).toFixed(1)}s` : '';
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">完成${dur}</span><span class="asc-icon">✓</span>`;
+    // 2s 后自折叠：记下 pid，下次 renderPosts 重画时走 collapsed 分支
+    if (!_chipCollapseTimers.has(pid) && !_chipCollapsed.has(pid)) {
+      const t = setTimeout(() => {
+        _chipCollapsed.add(pid);
+        _chipCollapseTimers.delete(pid);
+        // refetch + rerender。使用现有的刷新路径保持滚动位置。
+        try { refreshCurrentThread(); } catch (_) {}
+      }, 2000);
+      _chipCollapseTimers.set(pid, t);
+    }
+  } else if (phase === 'done-collapsed') {
+    const dur = post.duration_ms != null
+      ? ` · ${(post.duration_ms / 1000).toFixed(1)}s` : '';
+    chip.innerHTML = `<span class="asc-avatar ${avClass}"${avStyleAttr}>${escapeHtml(avLetter)}</span><span class="asc-name">${escapeHtml(name)} 完成${dur}</span>`;
+  } else if (phase === 'failed') {
+    const tipHtml = post.error
+      ? `<span class="asc-tip">${escapeHtml(post.error)}</span>`
+      : '';
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">失败</span><span class="asc-icon">✕</span>` +
+      `<span class="asc-actions">` +
+      `<button type="button" class="asc-btn asc-retry">重试</button>` +
+      `<button type="button" class="asc-btn asc-skip">跳过</button>` +
+      `</span>${tipHtml}`;
+    chip.querySelector('.asc-retry').onclick = (e) => {
+      e.stopPropagation();
+      _chipRetry(pid);
+    };
+    chip.querySelector('.asc-skip').onclick = (e) => {
+      e.stopPropagation();
+      _chipSkip(pid);
+    };
+  } else if (phase === 'skipped') {
+    chip.innerHTML = `<span class="asc-avatar ${avClass}"${avStyleAttr}>${escapeHtml(avLetter)}</span><span class="asc-name">${escapeHtml(name)} 已跳过</span>`;
+  } else {
+    // unknown phase → fall back 到思考中外观，不报错
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">${escapeHtml(phase)}</span>`;
+  }
+  return chip;
+}
+
+async function _chipRetry(pid) {
+  if (!state.currentThreadId || !pid) return;
+  try {
+    await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}/posts/${encodeURIComponent(pid)}/retry`, {
+      method: 'POST', body: '{}',
+    });
+    // SSE 会 refresh；主动拉一下以防 SSE 有延迟
+    refreshCurrentThread();
+  } catch (err) {
+    setStatus(`重试失败: ${err.message}`, false);
+  }
+}
+async function _chipSkip(pid) {
+  if (!state.currentThreadId || !pid) return;
+  try {
+    await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}/posts/${encodeURIComponent(pid)}/skip`, {
+      method: 'POST', body: '{}',
+    });
+    refreshCurrentThread();
+  } catch (err) {
+    setStatus(`跳过失败: ${err.message}`, false);
+  }
 }
 
 // One-line preview of a post's content for use inside quote cards / banners.
@@ -1935,7 +2041,19 @@ buildMemberControls();
 // deep-links. Both calls degrade gracefully (default URL / empty set)
 // so they never block initial rendering.
 Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
-  loadSquads().then(() => { refreshAgentList(); startPolling(); });
+  loadSquads().then(() => {
+    refreshAgentList();
+    startPolling();
+    // Dev helper: ?devOpen=squad:thread auto-selects a thread for screenshot
+    // automation. Cheap, side-effect-free when param absent; not exposed in UI.
+    try {
+      const m = new URLSearchParams(location.search).get('devOpen');
+      if (m && m.includes(':')) {
+        const [sid, tid] = m.split(':', 2);
+        if (sid) selectSquad(sid).then(() => tid && selectThread(tid));
+      }
+    } catch (_) {}
+  });
 });
 
 /* ─── v0.10: Thread create modal (➕ in thread list header + ⌘N) ─────── */

@@ -57,6 +57,8 @@ import forge_project  # PR-B1: shared project_dir validator (lazy + 60s cache)
 
 # ─── config ──────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
+STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped"}
+ERROR_TAIL_LIMIT = 2048
 
 # Concurrency cap across all in-flight agent subprocesses. --local agent
 # runs are fully sandboxed in their own subprocess + ephemeral session, so
@@ -394,7 +396,8 @@ def _implicit_mention_from_parent(thread_id: str, parent_post_id: str | None) ->
 
 
 
-def _dispatch(thread_id: str, agent_id: str, trigger_pid: str) -> bool:
+def _dispatch(thread_id: str, agent_id: str, trigger_pid: str,
+              chip_post_id: str | None = None) -> bool:
     """Spawn a worker thread for one (thread, agent) pair unless already running."""
     key = (thread_id, agent_id)
     with _inflight_lock:
@@ -403,7 +406,7 @@ def _dispatch(thread_id: str, agent_id: str, trigger_pid: str) -> bool:
         _inflight.add(key)
     t = threading.Thread(
         target=_run_one,
-        args=(thread_id, agent_id, trigger_pid),
+        args=(thread_id, agent_id, trigger_pid, chip_post_id),
         name=f"openforge-route-{agent_id}-{thread_id[-6:]}",
         daemon=True,
     )
@@ -411,7 +414,8 @@ def _dispatch(thread_id: str, agent_id: str, trigger_pid: str) -> bool:
     return True
 
 
-def _run_one(thread_id: str, agent_id: str, trigger_pid: str) -> None:
+def _run_one(thread_id: str, agent_id: str, trigger_pid: str,
+             chip_post_id: str | None = None) -> None:
     """Worker entry: bounded-parallel agent invocation for a single mention."""
     key = (thread_id, agent_id)
     # Bound total in-flight subprocesses. (thread, agent) dedupe is enforced
@@ -420,41 +424,48 @@ def _run_one(thread_id: str, agent_id: str, trigger_pid: str) -> None:
     try:
         with _slots:
             try:
-                _route_to_agent_safely(thread_id, agent_id, trigger_pid)
+                if chip_post_id is None:
+                    _route_to_agent_safely(thread_id, agent_id, trigger_pid)
+                else:
+                    _route_to_agent_safely(thread_id, agent_id, trigger_pid, chip_post_id)
             except Exception as e:
-                _record_crash(thread_id, agent_id, e)
+                _record_crash(thread_id, agent_id, e, chip_post_id=chip_post_id)
     finally:
         with _inflight_lock:
             _inflight.discard(key)
 
 
-def _record_crash(thread_id: str, agent_id: str, e: BaseException) -> None:
+def _record_crash(thread_id: str, agent_id: str, e: BaseException,
+                  chip_post_id: str | None = None) -> None:
     try:
-        store.add_thread_post(
-            thread_id, ROUTER_SPEAKER_FALLBACK,
-            f"⚠️ post router crashed routing @{forge_identity.get_identity(agent_id)['name']}: {e!r}",
-        )
+        if chip_post_id:
+            _patch_chip(thread_id, chip_post_id, phase="failed", error=_error_tail(e))
         store.write_thread_markdown(thread_id)
     except Exception:
         pass
 
 
 # ─── core routing ────────────────────────────────────────────────────
-def _route_to_agent_safely(thread_id: str, agent_id: str, trigger_pid: str) -> None:
+def _route_to_agent_safely(thread_id: str, agent_id: str, trigger_pid: str,
+                           chip_post_id: str | None = None) -> None:
     thread = store.project_thread(thread_id)
     if thread is None:
         return
     if thread.get("closed_at"):
+        if chip_post_id:
+            _patch_chip(thread_id, chip_post_id, phase="skipped")
         return  # closed mid-flight; skip silently
     trigger = _find_trigger_post(thread, trigger_pid)
     if not trigger:
+        if chip_post_id:
+            _patch_chip(thread_id, chip_post_id, phase="skipped")
         return
     # We intentionally do NOT re-check `agent_id in trigger.mentions` here:
     # the dispatcher (enqueue_if_needed) is the single source of truth for
     # who to route to (it also resolves implicit-mention-via-reply), and
     # re-deriving here would drop those.
     try:
-        _route_to_agent(thread_id, agent_id, trigger)
+        _route_to_agent(thread_id, agent_id, trigger, chip_post_id=chip_post_id)
     finally:
         try:
             store.write_thread_markdown(thread_id)
@@ -462,19 +473,27 @@ def _route_to_agent_safely(thread_id: str, agent_id: str, trigger_pid: str) -> N
             pass
 
 
-def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
+def _route_to_agent(thread_id: str, agent_id: str, trigger: dict,
+                    chip_post_id: str | None = None) -> None:
     """Run one agent turn → append reply. Concurrency-safe."""
     session_id = f"forge-{thread_id}-{agent_id}"
     trigger_pid = trigger.get("post_id") or trigger.get("id")
     # Step 1: announce we are working so the UI shows progress immediately.
-    placeholder_id: str | None = None
+    started = time.monotonic()
+    placeholder_id: str | None = chip_post_id
     try:
-        ph = store.add_thread_post(
-            thread_id, ROUTER_SPEAKER_FALLBACK,
-            f"⏳ @{forge_identity.get_identity(agent_id)['name']} 正在思考中…",
-            parent_post_id=trigger_pid,
-        )
-        placeholder_id = ph.get("post_id")
+        if placeholder_id:
+            _patch_chip(thread_id, placeholder_id, phase="thinking", content=_chip_content(agent_id))
+        else:
+            ph = store.add_thread_post(
+                thread_id, ROUTER_SPEAKER_FALLBACK,
+                _chip_content(agent_id),
+                parent_post_id=trigger_pid,
+                post_type="status_chip",
+                phase="thinking",
+                trigger_post_id=trigger_pid,
+            )
+            placeholder_id = ph.get("post_id")
         store.write_thread_markdown(thread_id)
     except Exception:
         pass
@@ -490,23 +509,20 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
         # Encapsulation principle (PRD §5.3): agent never sees the value.
         spawn_env = _spawn_env_for_thread(thread_id)
         try:
+            if placeholder_id:
+                _patch_chip(thread_id, placeholder_id, phase="running")
             reply = call_agent(agent_id, session_id, prompt, extra_env=spawn_env)
         except AgentError as e:
-            err = store.add_thread_post(
-                thread_id, ROUTER_SPEAKER_FALLBACK,
-                f"⚠️ @{forge_identity.get_identity(agent_id)['name']} 没回复: {e}",
-                parent_post_id=trigger_pid,
-            )
-            final_post_id = err.get("post_id")
+            if placeholder_id:
+                _patch_chip(thread_id, placeholder_id,
+                            phase="failed", error=_error_tail(e),
+                            duration_ms=_duration_ms(started))
             return
         reply = clean(reply)
         if is_empty(reply):
-            err = store.add_thread_post(
-                thread_id, ROUTER_SPEAKER_FALLBACK,
-                f"_(@{forge_identity.get_identity(agent_id)['name']} 返回空回复)_",
-                parent_post_id=trigger_pid,
-            )
-            final_post_id = err.get("post_id")
+            if placeholder_id:
+                _patch_chip(thread_id, placeholder_id,
+                            phase="skipped", duration_ms=_duration_ms(started))
             return
         added = store.add_thread_post(
             thread_id, agent_id, reply, parent_post_id=trigger_pid,
@@ -555,6 +571,9 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
                 )
         except Exception as e:
             print(f"⚠️  plan-without-action hint failed: {e!r}", flush=True)
+        if placeholder_id:
+            _patch_chip(thread_id, placeholder_id,
+                        phase="done", duration_ms=_duration_ms(started))
         # V1.1 (Scott 2026-05-24 21:00): re-feed the agent's own reply
         # through the router so @mentions inside agent→agent dispatch
         # actually wake their targets. Without this, a chair like judy
@@ -574,20 +593,38 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
             enqueue_if_needed(thread_id, post_router_view)
         except Exception as e:
             print(f"⚠️  agent-reply re-enqueue failed: {e!r}", flush=True)
+    except Exception as e:
+        if placeholder_id:
+            try:
+                _patch_chip(thread_id, placeholder_id,
+                            phase="failed", error=_error_tail(e),
+                            duration_ms=_duration_ms(started))
+            except Exception:
+                pass
+        return
     finally:
         if snap:
             try:
                 restore_main(agent_id, snap)
             except Exception:
                 pass
-        # supersede the placeholder so it doesn't clutter the timeline.
-        if placeholder_id:
-            try:
-                store.supersede_thread_post(
-                    thread_id, placeholder_id, by_post_id=final_post_id,
-                )
-            except Exception:
-                pass
+
+
+def _chip_content(agent_id: str) -> str:
+    return f"{agent_id} thinking"
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _error_tail(e: BaseException) -> str:
+    return str(e)[-ERROR_TAIL_LIMIT:]
+
+
+def _patch_chip(thread_id: str, post_id: str, **patch: Any) -> dict:
+    clean_patch = {k: v for k, v in patch.items() if v is not None}
+    return store.patch_post(thread_id, post_id, clean_patch)
 
 
 # ─── helpers ─────────────────────────────────────────────────────────
