@@ -93,13 +93,13 @@ jobs:
             http://127.0.0.1:17878/api/squads | tee /tmp/squad.json
 
           # create thread (no @ so router stays out of the smoke path; CI has no openclaw)
-          TID=$(curl -sf -X POST -H "Content-Type: application/json" \
+          TID=$(curl -sf -X POST -H "Content-Type: application/json" -H "X-OpenForge-UI: 1" \
             -d '{"content":"kick off without ats","created_by":"scott"}' \
             http://127.0.0.1:17878/api/squads/smoke/threads | python -c 'import json,sys;print(json.load(sys.stdin)["thread_id"])')
           echo "tid=$TID"
 
           # add post
-          curl -sf -X POST -H "Content-Type: application/json" \
+          curl -sf -X POST -H "Content-Type: application/json" -H "X-OpenForge-UI: 1" \
             -d '{"content":"follow up","speaker":"scott"}' \
             http://127.0.0.1:17878/api/threads/$TID/posts >/dev/null
 
