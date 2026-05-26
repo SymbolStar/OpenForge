@@ -154,6 +154,47 @@ def _detect_missing_handoff_mentions(
         return []
 
 
+# ─── plan-without-action detection (2026-05-26 PR-16-followup) ──────
+# Real router-visible incident: judy wrote "现在我直接开干前端…" then the
+# turn ended with zero tool calls; Scott had to chase her. Same shape as
+# the handoff-without-@ bug one layer up — agent describes work instead
+# of doing it.
+_PLAN_INTENT_RE = re.compile(
+    "现在我直接|现在我去|接下来我|我马上|我立刻|我去写|我去提|我去开|"
+    "我会去|我会写|我会提|我这就去|我现在开干|我现在上手"
+)
+# Delivery markers — if present, the agent is reporting completed work,
+# so a plan-intent phrase in the same reply is a recap, not a promise.
+_DELIVERY_RE = re.compile(
+    "已 commit|已 push|已 merge|已部署|已 PR|已开了 PR|已完成|完成了|"
+    "搞定了|搞定。|搞定，|跑起来了|已 force-push|push 完|commit 完|"
+    "已 rebase|已动手|已 self-merge|已 merged|交付完|发出去了|"
+    r"PR #\d+|merged|squash-merged|已在 main|已 land|交去了|"
+    r"代码在 #\d+"
+)
+
+
+def _detect_plan_without_action(reply: str) -> str | None:
+    """Return the matched promise phrase if the reply looks like a plan
+    without delivery markers; None otherwise.
+
+    HEURISTIC. Bias: under-detect. Any delivery marker suppresses the
+    warning even when a plan phrase is also present (most likely the
+    agent did the work AND described next steps).
+    """
+    try:
+        if not reply or len(reply) < 30:
+            return None
+        m = _PLAN_INTENT_RE.search(reply)
+        if not m:
+            return None
+        if _DELIVERY_RE.search(reply):
+            return None
+        return m.group(0)
+    except Exception:
+        return None
+
+
 # ─── public api ──────────────────────────────────────────────────────
 def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     """Inspect a freshly-added post and dispatch routing workers if applicable.
@@ -460,6 +501,26 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict) -> None:
                 )
         except Exception as e:
             print(f"⚠️  handoff-mention hint failed: {e!r}", flush=True)
+        # 2026-05-26 PR-16-followup: plan-without-action detector.
+        # Catches replies like "现在我直接开干前端" / "我马上去 commit"
+        # that promise future work but contain no delivery markers, so
+        # the agent ends the turn without actually doing anything and
+        # Scott has to chase. Hints, never blocks.
+        try:
+            plan_phrase = _detect_plan_without_action(reply)
+            if plan_phrase:
+                display = forge_identity.get_identity(agent_id).get(
+                    "name"
+                ) or agent_id
+                store.add_thread_post(
+                    thread_id, ROUTER_SPEAKER_FALLBACK,
+                    f"💡 检测到 @{display} 写了「{plan_phrase}…」但本 turn 没有交付标记"
+                    f"（已 commit / PR 已开 / push 完 等）。计划不是交付；下一条 trigger 到之前 "
+                    f"thread 不会自动推进。如果你是能做这件事的人，请直接调工具干完再回复。",
+                    parent_post_id=final_post_id,
+                )
+        except Exception as e:
+            print(f"⚠️  plan-without-action hint failed: {e!r}", flush=True)
         # V1.1 (Scott 2026-05-24 21:00): re-feed the agent's own reply
         # through the router so @mentions inside agent→agent dispatch
         # actually wake their targets. Without this, a chair like judy
@@ -571,6 +632,15 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"thread 会完全冻在那里。例子：\n"
         f"  ❌  “alice review 完了可以动了” — alice 不会被唤醒\n"
         f"  ✅  “@alice 你 review 完了就可以动” — alice 会收到 trigger\n"
+        f"- **你能做的事，自己做完再回复**。如果 trigger 是「让你做 X」或你是 squad 里能做 X "
+        f"的人，**不要**在回复里写「接下来我会做 / 现在我去 @ 别人做 / 马上去写」。"
+        f"直接调工具把它做完（exec / edit / write / openforge-worktree / git…），"
+        f"然后 post 里只汇报**结果**——「已 commit / PR 已开 / 已 push / 已部署」。"
+        f"计划不是交付，只有动作是交付。例外只有两种："
+        f"(1) 需要别人的专门能力（如 design 找 dora）且你这边没任何能做的部分；"
+        f"(2) scott 明确要的就是「听取你的判断」（你怎么看 / 评估一下 / 让你决定）。\n"
+        f"  ❌  「现在我直接开干前端：照搬 mock CSS 进 web/style.css、6 分钟写主体、5 分钟跨浏览器验。」 (这是计划)\n"
+        f"  ✅  「已 commit `abc1234`，PR #17 已开 https://github.com/...。」 (这是交付)\n"
         f"- 如果问题已经被回答过或不需要你回答，回复 `completed`\n"
         f"\n"
         f"[文件引用语法 v0.8]\n"

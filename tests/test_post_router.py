@@ -870,3 +870,51 @@ def test_recover_orphan_placeholders_supersedes_unknown_name(
     proj = store.project_thread(t["thread_id"])
     live = [p for p in proj["posts"] if (p.get("post_id") or p.get("id")) == (ph.get("post_id") or ph["id"])]
     assert live and live[0]["superseded"]
+
+
+# ─── plan-without-action detection (2026-05-26 PR-16-followup) ───────
+def test_plan_detector_flags_promise_without_delivery():
+    import post_router
+    reply = (
+        "对，scott 这话戳到了。开发本来就是我的活，前端代码我自己写才对。\n\n"
+        "现在我直接开干前端：照搬 mock CSS 进 web/style.css，6 分钟写主体，"
+        "5 分钟跨浏览器验。"
+    )
+    hit = post_router._detect_plan_without_action(reply)
+    assert hit == "现在我直接", f"expected promise phrase, got {hit!r}"
+
+
+def test_plan_detector_silent_when_delivery_present():
+    import post_router
+    reply = (
+        "搞定 scott — rebase + 测试全绿 + force-push 已完成。\n\n"
+        "PR #16 已开，commit `acfc89f`。接下来我会继续盯 review。"
+    )
+    # Has both "我会继续盯" (intent) AND "已完成 / PR #16 已开" (delivery).
+    # Delivery wins; don't flag.
+    assert post_router._detect_plan_without_action(reply) is None
+
+
+def test_plan_detector_silent_for_short_replies():
+    import post_router
+    assert post_router._detect_plan_without_action("好的") is None
+    assert post_router._detect_plan_without_action("我马上去做") is None  # <30ch
+
+
+def test_plan_detector_silent_without_intent_phrase():
+    import post_router
+    reply = (
+        "PR #16 后端已经 rebase 完了，等前端补完一起 merge。"
+        "dora 前端还没 push commit。"
+    )
+    assert post_router._detect_plan_without_action(reply) is None
+
+
+def test_plan_detector_silent_for_listener_response():
+    import post_router
+    reply = (
+        "scott 这个判断是对的，多空 5:5。如果你坚持持仓，"
+        "止损我建议放 0.495。我没有更强的意见。"
+    )
+    # Pure consultation / answer — no promise to act, no plan-intent verb.
+    assert post_router._detect_plan_without_action(reply) is None
