@@ -251,14 +251,19 @@ def test_call_agent_kills_orphan_grandchild_on_timeout(ar, monkeypatch, tmp_path
     )
     spawner.chmod(0o755)
     monkeypatch.setattr(ar, "OPENCLAW_BIN", str(spawner))
-    monkeypatch.setattr(ar, "AGENT_TIMEOUT", 0)
+    # PR-flake: was AGENT_TIMEOUT=0 which raced the shell's `echo $! > pidfile`
+    # against the kill signal on loaded machines (the pidfile never showed up).
+    # 1s headroom is still negligible against the 30s grandchild sleep but gives
+    # the spawn shell enough breathing room to fork + echo before we kill it.
+    monkeypatch.setattr(ar, "AGENT_TIMEOUT", 1)
     monkeypatch.setattr(ar, "_GROUP_KILL_GRACE_SECONDS", 0.3)
 
     real_popen = subprocess.Popen
 
     class FastPopen(real_popen):
         def communicate(self, input=None, timeout=None):  # noqa: A002
-            return super().communicate(input=input, timeout=0.5)
+            # Mirror AGENT_TIMEOUT + a bit so wait_for actually triggers it.
+            return super().communicate(input=input, timeout=1.5)
 
     monkeypatch.setattr(ar.subprocess, "Popen", FastPopen)
 
@@ -266,7 +271,7 @@ def test_call_agent_kills_orphan_grandchild_on_timeout(ar, monkeypatch, tmp_path
         ar.call_agent("milk", "sid", "hi")
 
     # Wait for grandchild pid to appear (race-safe), then verify it was killed.
-    deadline = _t.time() + 2.0
+    deadline = _t.time() + 4.0
     while _t.time() < deadline and not pidfile.exists():
         _t.sleep(0.05)
     assert pidfile.exists(), "grandchild never recorded its PID"
