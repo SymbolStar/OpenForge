@@ -380,6 +380,14 @@ function renderBody(text) {
     html = escapeHtml(piped).replace(/`([^`\n]+)`/g,
       (_, code) => `<code>${escapeHtml(code)}</code>`);
   }
+  // External links (http/https) — open in new tab. Skip <a> tags that already
+  // have a target= attribute (avatar-link, post-image-link set their own).
+  // Internal hash links (#/...) and relative paths stay in-tab.
+  html = html.replace(/<a\s+([^>]*?)href=("|')(https?:\/\/[^"']+)\2([^>]*)>/gi,
+    (match, pre, q, href, post) => {
+      if (/\btarget\s*=/i.test(pre) || /\btarget\s*=/i.test(post)) return match;
+      return `<a ${pre}href=${q}${href}${q}${post} target="_blank" rel="noopener noreferrer">`;
+    });
   // mentions: run AFTER marked so we match plain text occurrences of @name.
   html = html.replace(MENTION_RE,
     (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
