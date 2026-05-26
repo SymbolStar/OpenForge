@@ -376,6 +376,15 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._file(WEB_DIR / "app.js",
                        "application/javascript; charset=utf-8")
             return
+        if path == "/src/avatar.js":
+            self._file(WEB_DIR / "src" / "avatar.js",
+                       "application/javascript; charset=utf-8")
+            return
+        m = re.match(r"^/assets/avatars/default/([A-Za-z0-9_-]+\.png)$", path)
+        if m:
+            self._file(WEB_DIR / "assets" / "avatars" / "default" / m.group(1),
+                       "image/png")
+            return
 
         # api endpoints
         if not self._check_auth():

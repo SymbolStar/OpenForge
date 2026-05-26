@@ -607,12 +607,14 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   width: 24px;
   height: 24px;
   border: 2px solid #fff;
-  border-radius: 5px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-size: 11px;
   font-weight: 800;
+  overflow: hidden;
+  position: relative;
 }
 .mini-avatar + .mini-avatar { margin-left: -2px; }
 
@@ -651,12 +653,36 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .avatar {
   width: 36px;
   height: 36px;
-  border-radius: 6px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-weight: 800;
+  overflow: hidden;
+  position: relative;
 }
+.avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.avatar-glyph {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  font-weight: 850;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.32);
+}
+.mini-avatar .avatar-glyph { font-size: 12px; }
+.avatar .avatar-glyph { font-size: 18px; }
 /* PR-3 / PRD-v1.0 §4: employee avatars become deep-links to the agent's
    webchat main session. Keep the same box but make it feel clickable. */
 a.avatar.avatar-link,
@@ -1529,6 +1555,22 @@ a.mini-avatar.avatar-link:focus-visible {
   cursor: pointer;
   border-left: 3px solid transparent;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+.agents-list-avatar {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+}
+.agents-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agents-item:hover { background: var(--hover-bg, rgba(255,255,255,0.04)); }
 .agents-item.is-active {

@@ -110,6 +110,26 @@ function avatarLabel(name) {
   return [...src][0].toUpperCase();
 }
 
+function agentEmoji(agentId) {
+  return _identityEmoji.get(agentId) || '';
+}
+
+function defaultAvatar(agentId) {
+  const api = window.OpenForgeAvatar;
+  if (api && typeof api.getDefaultAvatar === 'function') {
+    return api.getDefaultAvatar(agentId, agentEmoji(agentId));
+  }
+  return { pngPath: '', glyph: avatarLabel(agentId), key: 'fallback' };
+}
+
+function renderDefaultAvatarInner(agentId) {
+  const av = defaultAvatar(agentId);
+  const img = av.pngPath
+    ? `<img class="avatar-img" src="${escapeAttr(av.pngPath)}" alt="" aria-hidden="true" loading="lazy" />`
+    : '';
+  return `${img}<span class="avatar-glyph">${escapeHtml(av.glyph || avatarLabel(agentId))}</span>`;
+}
+
 // ─── PR-3 / PRD-v1.0 §4: employee-avatar deep-link to agent webchat ───
 // Boot-time fetch of /api/config caches the webchat base URL; /api/employees
 // caches the employee roster. renderAvatarTag() then emits a clickable <a>
@@ -122,6 +142,7 @@ let _employeeSet = new Set();
 // helpers consult this map; storage keys (post.speaker, squad.members,
 // avatar colour class) stay on agent_id.
 let _displayNames = new Map();
+let _identityEmoji = new Map();
 // Reverse map for the @-picker / future inline autocomplete:
 // 'dora' → 'designer', 'xiaoba' → 'xiaoba' (back-mapped from display tokens).
 let _displayToId = new Map();
@@ -153,6 +174,7 @@ async function loadEmployeeSet() {
       if (Array.isArray(list)) {
         _employeeSet = new Set();
         _displayNames = new Map();
+        _identityEmoji = new Map();
         _displayToId = new Map();
         list.forEach(item => {
           // Back-compat: server may still return bare strings if the
@@ -182,6 +204,8 @@ async function loadEmployeeSet() {
               if (!_displayToId.has(k)) _displayToId.set(k, id);
             });
           }
+          const emoji = (item.emoji || '').trim();
+          if (emoji) _identityEmoji.set(id, emoji);
           // Also map id → id so 'designer' still resolves.
           _displayToId.set(id.toLowerCase(), id);
         });
@@ -229,17 +253,17 @@ function webchatLinkFor(agentId, threadId) {
 }
 
 function renderAvatarTag(name, { extraClass = '', styleAttr = '', threadId = null } = {}) {
-  const cls = `avatar ${avatarClass(name)}${extraClass ? ' ' + extraClass : ''}`;
-  const label = escapeHtml(avatarLabel(name));
+  const cls = `avatar avatar-default ${avatarClass(name)}${extraClass ? ' ' + extraClass : ''}`;
+  const inner = renderDefaultAvatarInner(name);
   const friendly = displayName(name);
   if (isEmployee(name)) {
     const href = webchatLinkFor(name, threadId);
     const title = threadId
       ? `点击查看 ${friendly} 在本 thread 的 session`
       : `点击查看 ${friendly} 的 main session`;
-    return `<a class="${cls} avatar-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"${styleAttr}>${label}</a>`;
+    return `<a class="${cls} avatar-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}"${styleAttr}>${inner}</a>`;
   }
-  return `<div class="${cls}"${styleAttr} title="${escapeHtml(friendly || '')}">${label}</div>`;
+  return `<div class="${cls}"${styleAttr} title="${escapeHtml(friendly || '')}">${inner}</div>`;
 }
 
 function avatarClass(name) {
@@ -748,8 +772,7 @@ function renderDetail({ keepScroll = false } = {}) {
 function renderParticipants(members) {
   els.detailParticipants.innerHTML = '';
   (members || []).slice(0, 6).forEach(name => {
-    const cls = `mini-avatar ${avatarClass(name)}`;
-    const label = avatarLabel(name);
+    const cls = `mini-avatar avatar-default ${avatarClass(name)}`;
     let el;
     if (isEmployee(name)) {
       // V1.1: prefer per-thread explicit session if a thread is open;
@@ -771,7 +794,7 @@ function renderParticipants(members) {
     if (name.toLowerCase() === 'scott' && (state.settings.myAvatarColor || '').trim()) {
       el.style.background = state.settings.myAvatarColor.trim();
     }
-    el.textContent = label;
+    el.innerHTML = renderDefaultAvatarInner(name);
     els.detailParticipants.appendChild(el);
   });
 }
@@ -3048,10 +3071,19 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     for (const id of ids) {
       const li = document.createElement('li');
       li.className = 'agents-item' + (id === current ? ' is-active' : '');
-      li.textContent = '🧑 ' + id;
+      li.innerHTML = `${renderAgentListAvatar(id)}<span class="agents-item-name">${escapeHtml(id)}</span>`;
       li.addEventListener('click', () => { location.hash = '#/agents/' + encodeURIComponent(id); });
       list.appendChild(li);
     }
+  }
+
+  function renderAgentListAvatar(id) {
+    const av = window.OpenForgeAvatar?.getDefaultAvatar?.(id, '') || { pngPath: '', glyph: id.slice(0, 1).toUpperCase() };
+    const img = av.pngPath
+      ? '<img class="avatar-img" src="' + escapeHtml(av.pngPath) + '" alt="" aria-hidden="true" loading="lazy" />'
+      : '';
+    return '<span class="mini-avatar avatar-default agents-list-avatar">'
+      + img + '<span class="avatar-glyph">' + escapeHtml(av.glyph || '?') + '</span></span>';
   }
 
   async function discoverAgents() {
