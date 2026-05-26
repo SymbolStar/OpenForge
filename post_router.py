@@ -595,7 +595,16 @@ def _render_project_section(thread_id: str) -> str:
     if v.get("exists") and v.get("is_git_repo"):
         return (
             "[project]\n"
-            "目标 repo 已由当前 squad 锁定。记录在 squad 配置里，调用脚本会自动拿到路径。"
+            "目标 repo 已由当前 squad 锁定。记录在 squad 配置里，调用脚本会自动拿到路径。\n"
+            "\n"
+            "[代码改动规则]\n"
+            "修改这个 squad 的目标 repo 时，按以下步骤——不要直接在主 repo 改：\n"
+            "1. `openforge-worktree add <你的 agent id> <task-slug>` — 输出即 worktree 绝对路径，cd 进去。\n"
+            "2. 在该路径下 edit / commit / `git push -u origin <agent>/<task-slug>`。\n"
+            "3. `gh pr create`，标题以 `[<agent>] ` 开头，body 贴当前 thread 链接。\n"
+            "4. PR merge 后：`openforge-worktree rm <agent>/<task-slug>`。\n"
+            "例外（不要建 worktree）：只读看代码、文档写在自己 workspace、scott 明确说「直接改主 repo」。\n"
+            "不要传 `--repo` 或猜路径。"
         )
     return (
         "[project] ⚠️ 配置异常\n"
