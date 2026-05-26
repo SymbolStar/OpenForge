@@ -1847,3 +1847,138 @@ a.mini-avatar.avatar-link:focus-visible {
   vertical-align: -2px;
   margin-right: 6px;
 }
+
+/* PR-A: Squad project_dir field + header chip */
+#squad-form input.mono,
+#squad-form input[name="project_dir"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+#squad-form input.pd-valid {
+  border-color: #1b9e5c;
+  outline-color: #1b9e5c;
+}
+#squad-form input.pd-invalid {
+  border-color: #d63a3a;
+  outline-color: #d63a3a;
+}
+#squad-form input.pd-warn {
+  border-color: #d4a12c;
+  outline-color: #d4a12c;
+}
+#squad-form input.pd-validating {
+  border-color: #2d7cf6;
+}
+#squad-project-dir-helper {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.4;
+}
+#squad-form input.pd-valid + #squad-project-dir-helper { color: #1b9e5c; }
+#squad-form input.pd-invalid + #squad-project-dir-helper { color: #d63a3a; }
+#squad-form input.pd-warn + #squad-project-dir-helper { color: #b07e1e; }
+
+.squad-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--chip-bg, #f1f4f8);
+  color: var(--chip-fg, #4a5566);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+/* ─── Squad project_dir field (v0.5 PR-A) ─────────────────────────────
+   Design spec: /designer/products/openforge-squad-project/design.md §2
+   The state machine drives all visuals via data-state on the wrap span.
+   Tokens stay aligned with the rest of the modal (var(--border) etc.)
+   plus two new semantic tokens for valid/error states that piggy-back on
+   the existing --ok / --warn / --closed palette. */
+:root {
+  --pd-ok: #1B9E5C;
+  --pd-bad: #D63A3A;
+  --pd-warn: #D4A12C;
+  --pd-focus: #2D7CF6;
+  --pd-chip-bg: var(--accent-soft);
+  --pd-chip-fg: var(--text-mute);
+}
+.project-dir-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.project-dir-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.project-dir-input-wrap {
+  position: relative;
+  display: block;
+}
+.project-dir-input-wrap > input {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding-right: 32px; /* room for suffix icon */
+}
+.project-dir-input-wrap > input:focus {
+  border-color: var(--pd-focus);
+  box-shadow: 0 0 0 3px rgba(45, 124, 246, 0.15);
+  outline: none;
+}
+.project-dir-suffix {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
+}
+.project-dir-input-wrap[data-state="validating"] .project-dir-suffix {
+  color: var(--text-mute);
+  animation: pd-spin 1.2s linear infinite;
+}
+.project-dir-input-wrap[data-state="valid"] > input { border-color: var(--pd-ok); }
+.project-dir-input-wrap[data-state="valid"] .project-dir-suffix { color: var(--pd-ok); }
+.project-dir-input-wrap[data-state="invalid"] > input { border-color: var(--pd-bad); }
+.project-dir-input-wrap[data-state="invalid"] .project-dir-suffix { color: var(--pd-bad); }
+.project-dir-input-wrap[data-state="warn"] > input { border-color: var(--pd-warn); }
+.project-dir-input-wrap[data-state="warn"] .project-dir-suffix { color: var(--pd-warn); }
+@keyframes pd-spin { to { transform: translateY(-50%) rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .project-dir-input-wrap[data-state="validating"] .project-dir-suffix {
+    animation: none;
+  }
+}
+.project-dir-helper { color: var(--text-mute); font-size: 12px; line-height: 1.4; }
+.project-dir-helper.is-ok { color: var(--pd-ok); }
+.project-dir-helper.is-bad { color: var(--pd-bad); }
+.project-dir-helper.is-warn { color: var(--pd-warn); }
+
+/* Squad header 📁 chip — visible only when project_dir is valid. */
+.squad-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: var(--pd-chip-bg);
+  color: var(--pd-chip-fg);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.squad-project-chip[hidden] { display: none !important; }
