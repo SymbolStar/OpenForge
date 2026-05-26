@@ -68,6 +68,38 @@ MAX_PARALLEL_ROUTES = int(os.environ.get("OPENFORGE_MAX_PARALLEL_ROUTES", "6"))
 # pair is dropped silently if re-enqueued while still running.
 _inflight: set[tuple[str, str]] = set()
 _inflight_lock = threading.Lock()
+
+# Set to True by drain_and_terminate() when forge is shutting down.
+# Once set, enqueue_if_needed() refuses to spawn new workers — those
+# triggers will be picked up as orphan placeholders on the next boot
+# (see recover_orphan_placeholders). We never reset this within a
+# process: a forge that's been told to drain has no business spawning
+# new workers, even if a stray trigger sneaks in mid-shutdown.
+_draining = False
+
+
+def is_draining() -> bool:
+    return _draining
+
+
+def drain_and_terminate(grace_seconds: float = 8.0) -> int:
+    """Tell forge to stop accepting new dispatches and SIGTERM every
+    in-flight openclaw subprocess group.
+
+    Used from the server's SIGTERM handler so OpenClaw subprocesses get
+    a chance to run their own cleanup (releaseAllLocksSync → session
+    lockfile cleared). Without this, forge dying via SIGTERM/SIGKILL
+    leaves openclaw children orphaned to init, holding their session
+    lockfiles indefinitely.
+
+    Returns the number of openclaw subprocess groups we SIGTERMed.
+    """
+    global _draining
+    _draining = True
+    # Import here to avoid a top-level circular import.
+    import agent_runtime
+    return agent_runtime.terminate_all_active(grace_seconds=grace_seconds)
+
 _slots = threading.BoundedSemaphore(MAX_PARALLEL_ROUTES)
 
 # How many prior posts to feed the agent. Bounds the prompt size.
@@ -205,6 +237,8 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
     """
     if not post:
         return False
+    if _draining:
+        return False  # forge is shutting down; surfaced as orphan on next boot
     speaker = (post.get("speaker") or "").strip().lower()
     # V1.1: any non-router speaker can trigger routing. Was previously
     # scott-only, which directly contradicted the PRD chair-dispatch
