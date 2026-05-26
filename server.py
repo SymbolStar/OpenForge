@@ -1232,6 +1232,21 @@ def main():
             print(f"🩹 healed polluted main session for: {', '.join(healed)}")
     except Exception as e:
         print(f"⚠️  heal step failed: {e!r}")
+    # Recover orphan placeholders left dangling by a previous restart.
+    # See post_router.recover_orphan_placeholders for the why; in short,
+    # `_inflight` is process-local memory and `forge restart` mid-turn
+    # leaves a `⏳ @X 正在思考中…` post that nothing will ever
+    # supersede, silently freezing that thread. Sweep once at boot.
+    try:
+        recovered = post_router.recover_orphan_placeholders(redispatch=True)
+        if recovered:
+            redisp = sum(1 for r in recovered if r.get("redispatched"))
+            print(
+                f"🧩 recovered {len(recovered)} orphan placeholder(s); "
+                f"re-dispatched {redisp}"
+            )
+    except Exception as e:
+        print(f"⚠️  orphan-placeholder sweep failed: {e!r}")
     print(f"🌐 server:        http://{args.host}:{args.port}")
     server = ThreadingHTTPServer((args.host, args.port), OpenForgeHandler)
     try:
