@@ -268,6 +268,20 @@ function escapeAttr(s) {
 //   any of the above with |display label
 const FILE_LINK_RE = /\[\[([A-Za-z0-9_.\-\/:]+)(?:\|([^\]]+))?\]\]/g;
 
+// Rewrite <a href="http(s)://..."> to open in a new tab. Skip tags that
+// already declare target=. Internal hash routes (#/...) stay in-tab so the
+// SPA can handle them. Used by renderBody AND by every markdown preview
+// (file ref preview, README pane, status card) so external links never
+// blow the current SPA tab away.
+function openExternalLinksInNewTab(html) {
+  if (!html || typeof html !== 'string') return html;
+  return html.replace(/<a\s+([^>]*?)href=("|')(https?:\/\/[^"']+)\2([^>]*)>/gi,
+    (match, pre, q, href, post) => {
+      if (/\btarget\s*=/i.test(pre) || /\btarget\s*=/i.test(post)) return match;
+      return `<a ${pre}href=${q}${href}${q}${post} target="_blank" rel="noopener noreferrer">`;
+    });
+}
+
 // Async ref index used by chip renderer + References tab.
 window._forgeRefs = window._forgeRefs || { byId: new Map(), all: [], loaded: false, loading: null };
 
@@ -380,14 +394,7 @@ function renderBody(text) {
     html = escapeHtml(piped).replace(/`([^`\n]+)`/g,
       (_, code) => `<code>${escapeHtml(code)}</code>`);
   }
-  // External links (http/https) — open in new tab. Skip <a> tags that already
-  // have a target= attribute (avatar-link, post-image-link set their own).
-  // Internal hash links (#/...) and relative paths stay in-tab.
-  html = html.replace(/<a\s+([^>]*?)href=("|')(https?:\/\/[^"']+)\2([^>]*)>/gi,
-    (match, pre, q, href, post) => {
-      if (/\btarget\s*=/i.test(pre) || /\btarget\s*=/i.test(post)) return match;
-      return `<a ${pre}href=${q}${href}${q}${post} target="_blank" rel="noopener noreferrer">`;
-    });
+  html = openExternalLinksInNewTab(html);
   // mentions: run AFTER marked so we match plain text occurrences of @name.
   html = html.replace(MENTION_RE,
     (_, name) => `<span class="mention">@${escapeHtml(name)}</span>`);
@@ -2725,7 +2732,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         const text = new TextDecoder().decode(buf);
         state.content = text;
         if ((ctype.startsWith('text/markdown') || /\.md$/i.test(ref.label)) && typeof marked !== 'undefined' && marked.parse) {
-          previewEl.innerHTML = marked.parse(text);
+          previewEl.innerHTML = openExternalLinksInNewTab(marked.parse(text));
         } else if (ctype.includes('json')) {
           try {
             previewEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(JSON.parse(text), null, 2)) + '</pre>';
@@ -2907,7 +2914,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   function renderPreview() {
     if (typeof marked !== 'undefined' && marked.parse) {
-      previewEl.innerHTML = marked.parse(state.content || '');
+      previewEl.innerHTML = openExternalLinksInNewTab(marked.parse(state.content || ''));
     } else {
       previewEl.textContent = state.content || '';
     }
@@ -3107,7 +3114,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         sub.textContent = '更新于 ' + updated + ' · ' + d.size + ' B';
         const md = d.content || '';
         if (typeof marked !== 'undefined' && marked.parse) {
-          statusCard.innerHTML = marked.parse(md);
+          statusCard.innerHTML = openExternalLinksInNewTab(marked.parse(md));
         } else {
           statusCard.textContent = md;
         }
