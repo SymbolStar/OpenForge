@@ -169,50 +169,21 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
     return clean, None
 
 
-# ─── /api/fs/validate cache (PR-A) ────────────────────────────────────
+# ─── /api/fs/validate cache (PR-A → PR-B1: now lives in forge_project) ─
 # project_dir validation hits the filesystem (stat + .git lookup). Squads
 # list views and individual squad GETs need the `project_dir_valid` derived
-# field on every render — without a cache, each render does N stats. 60s
-# TTL is well below "someone fixed the disk and refreshed" timescales and
-# we invalidate explicitly on writes (create/update/delete).
-_FS_VALIDATE_TTL = 60.0
-_fs_validate_cache: dict[str, tuple[float, dict]] = {}
-_fs_validate_lock = __import__("threading").Lock()
+# field on every render — without a cache, each render does N stats. PR-B1
+# extracted the cache + helpers to forge_project so post_router can share
+# them when deciding whether to inject the `[project]` segment.
+import forge_project
 
 
 def _fs_validate_path(path: str) -> dict:
-    """Return {exists, is_git_repo, error} for an absolute path. Cached 60s."""
-    now = time.time()
-    with _fs_validate_lock:
-        hit = _fs_validate_cache.get(path)
-        if hit and (now - hit[0]) < _FS_VALIDATE_TTL:
-            return hit[1]
-    try:
-        p = Path(path)
-        # Defensive: resolve symlinks so traversal tricks (//, /./, …) get
-        # normalized to a real path; do NOT require the target to exist.
-        try:
-            resolved = p.resolve(strict=False)
-        except (OSError, RuntimeError):
-            resolved = p
-        exists = resolved.exists() and resolved.is_dir()
-        is_git = exists and (resolved / ".git").exists()
-        result = {"exists": exists, "is_git_repo": is_git, "error": None}
-    except Exception as e:  # noqa: BLE001 — final safety net
-        result = {"exists": False, "is_git_repo": False, "error": str(e)}
-    with _fs_validate_lock:
-        _fs_validate_cache[path] = (now, result)
-    return result
+    return forge_project.validate(path)
 
 
 def _fs_validate_invalidate(*paths: str | None) -> None:
-    with _fs_validate_lock:
-        if not paths:
-            _fs_validate_cache.clear()
-            return
-        for p in paths:
-            if p:
-                _fs_validate_cache.pop(p, None)
+    forge_project.invalidate(*paths)
 
 
 def _squad_with_validity(squad: dict | None) -> dict | None:
@@ -225,12 +196,7 @@ def _squad_with_validity(squad: dict | None) -> dict | None:
     if squad is None:
         return None
     out = dict(squad)
-    pd = out.get("project_dir")
-    if not pd:
-        out["project_dir_valid"] = None
-    else:
-        v = _fs_validate_path(pd)
-        out["project_dir_valid"] = bool(v.get("exists") and v.get("is_git_repo"))
+    out["project_dir_valid"] = forge_project.derive_validity(out.get("project_dir"))
     return out
 
 

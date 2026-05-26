@@ -51,6 +51,8 @@ try:
 except Exception:  # pragma: no cover
     forge_context = None  # type: ignore
 
+import forge_project  # PR-B1: shared project_dir validator (lazy + 60s cache)
+
 # ─── config ──────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
 
@@ -485,6 +487,15 @@ def _render_bundle_preamble(thread_id: str, agent_id: str, trigger_preview: str)
 
     Fails soft: if forge_context isn't importable or bundle building raises,
     returns "" so the agent still gets a usable prompt.
+
+    **Design principle (PR-B1, codified for future contributors):**
+    Preamble segments are *conditionally injected* — if there is no data to
+    convey, the segment is omitted entirely. The visibility of a segment is
+    itself a signal: e.g. the ``[project]`` block only appears when the
+    current squad has a configured project_dir, so its presence tells the
+    agent "this is a development squad". When you add new metadata
+    segments, never render an empty/placeholder block "for consistency";
+    that pollutes agent context. No data → don't show.
     """
     if forge_context is None:
         return ""
@@ -498,12 +509,61 @@ def _render_bundle_preamble(thread_id: str, agent_id: str, trigger_preview: str)
         rendered = bundle.render()
     except Exception:
         return ""
-    if not rendered:
+    project_section = _render_project_section(thread_id)
+    if not rendered and not project_section:
         return ""
+    head = "## 你的最新上下文（OpenForge 已预查，请基于此回复）\n\n"
+    body_parts: list[str] = []
+    if project_section:
+        body_parts.append(project_section)
+    if rendered:
+        body_parts.append(rendered)
+    return head + "\n\n".join(body_parts) + "\n\n---\n\n"
+
+
+def _render_project_section(thread_id: str) -> str:
+    """Render the ``[project]`` preamble segment for a given thread.
+
+    Three behaviors, driven by ``squad.project_dir`` + a live filesystem check:
+
+    * **unset** — returns ``""`` (segment omitted; visibility = signal).
+    * **set + valid (path exists AND is a git repo)** — returns a short OK
+      banner. PR-B2 will additionally inject ``OPENFORGE_PROJECT_DIR`` into
+      the spawned subprocess env; PR-C2 will add the worktree rule preamble
+      gated on the same condition. The banner deliberately does NOT include
+      the path itself — agents don't need to know it (encapsulation; PRD
+      §5.3). The path lives in env / scripts; the prompt only says "locked".
+    * **set + invalid (path missing or not a git repo)** — returns a loud
+      warning so agents see config drift early and don't waste a turn
+      writing into a broken target.
+    """
+    try:
+        thread = store.project_thread(thread_id) or {}
+        squad_id = thread.get("squad_id")
+        if not squad_id:
+            return ""
+        squad = store.get_squad(squad_id) or {}
+        project_dir = squad.get("project_dir")
+    except Exception:
+        return ""
+    if not project_dir:
+        return ""
+    try:
+        v = forge_project.validate(project_dir)
+    except Exception:
+        # If validation itself bombs, prefer the warning path over silently
+        # injecting the OK banner — fail loud.
+        v = {"exists": False, "is_git_repo": False, "error": "validate raised"}
+    if v.get("exists") and v.get("is_git_repo"):
+        return (
+            "[project]\n"
+            "目标 repo 已由当前 squad 锁定。记录在 squad 配置里，调用脚本会自动拿到路径。"
+        )
     return (
-        "## 你的最新上下文（OpenForge 已预查，请基于此回复）\n\n"
-        f"{rendered}\n\n"
-        "---\n\n"
+        "[project] ⚠️ 配置异常\n"
+        f"  squad.project_dir = {project_dir}\n"
+        "  问题：路径不存在 或 不是 git 仓库。\n"
+        "  worktree 规则本轮已禁用；如要动代码，先改 squad 配置后重试。"
     )
 
 
