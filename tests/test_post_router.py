@@ -974,3 +974,96 @@ def test_recover_default_supersedes_but_does_not_redispatch(fake_home, store):  
 
     # No worker should be in flight (because we did not redispatch).
     assert not post_router._inflight, "default recovery must not spawn a worker"
+
+
+# ─── graceful shutdown (PR-21) ───────────────────────────────────────
+def test_drain_blocks_new_dispatches(fake_home, store):  # noqa: F811
+    """Once drain_and_terminate has been called, enqueue_if_needed must
+    refuse to spawn any new worker — those triggers will be picked up
+    as orphan placeholders on the next boot."""
+    import post_router
+    # Drain immediately (no active procs to terminate).
+    n = post_router.drain_and_terminate(grace_seconds=0.1)
+    assert n == 0
+    assert post_router.is_draining()
+
+    store.ensure_default_squads()
+    sq = store.create_squad({
+        "id": "drn", "name": "drn",
+        "members": ["scott", "milk"], "chair": "scott",
+    })
+    t = store.create_thread(sq["id"], "scott", "@milk hi")
+    fake_post = {
+        "speaker": "scott",
+        "content": "@milk ping",
+        "mentions": ["milk"],
+        "parent_post_id": None,
+        "post_id": "p_test",
+    }
+    dispatched = post_router.enqueue_if_needed(t["thread_id"], fake_post)
+    assert dispatched is False, "draining server must not dispatch"
+
+
+def test_terminate_all_active_sigterms_registered_procs(fake_home, monkeypatch, tmp_path):  # noqa: F811
+    """terminate_all_active should SIGTERM every registered Popen and
+    return the count. We register fake long-running shell subprocesses
+    and verify they actually die."""
+    import os
+    import subprocess
+    import time
+
+    import agent_runtime
+
+    # Drop any leftover entries from earlier tests.
+    with agent_runtime._active_procs_lock:
+        agent_runtime._active_procs.clear()
+
+    procs = []
+    for _ in range(3):
+        # Each child sleeps a long time in its own process group.
+        proc = subprocess.Popen(
+            ["sh", "-c", "sleep 30"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        procs.append(proc)
+        agent_runtime._register_active(proc.pid, proc)
+
+    assert agent_runtime.active_count() == 3
+
+    killed = agent_runtime.terminate_all_active(grace_seconds=2.0)
+    assert killed == 3
+
+    # Within a generous deadline, all three should be reaped.
+    deadline = time.time() + 4.0
+    while time.time() < deadline:
+        alive = [p for p in procs if p.poll() is None]
+        if not alive:
+            break
+        time.sleep(0.1)
+    survivors = [p.pid for p in procs if p.poll() is None]
+    if survivors:
+        # Force-cleanup so we don't leak across tests.
+        for p in procs:
+            try:
+                os.killpg(p.pid, 9)
+            except ProcessLookupError:
+                pass
+        raise AssertionError(
+            f"terminate_all_active left {len(survivors)} survivors: {survivors}"
+        )
+
+    # Always clear regardless so other tests start fresh.
+    with agent_runtime._active_procs_lock:
+        agent_runtime._active_procs.clear()
+
+
+def test_drain_idempotent(fake_home):  # noqa: F811
+    """Calling drain twice is fine and stays draining."""
+    import post_router
+    post_router.drain_and_terminate(grace_seconds=0.1)
+    assert post_router.is_draining()
+    n = post_router.drain_and_terminate(grace_seconds=0.1)
+    assert n == 0
+    assert post_router.is_draining()

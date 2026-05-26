@@ -34,8 +34,10 @@ import argparse
 import base64
 import binascii
 import json
+import os
 import re
 import secrets
+import signal
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1254,10 +1256,44 @@ def main():
         print(f"⚠️  orphan-placeholder sweep failed: {e!r}")
     print(f"🌐 server:        http://{args.host}:{args.port}")
     server = ThreadingHTTPServer((args.host, args.port), OpenForgeHandler)
+
+    # Graceful shutdown on SIGTERM (launchd bootout) and SIGINT (Ctrl-C).
+    # We need to (a) stop accepting new triggers, (b) SIGTERM every
+    # in-flight openclaw child so its own cleanup releases the session
+    # lockfile, then (c) shut the HTTP server down. macOS launchctl
+    # bootout escalates SIGTERM → SIGKILL after ~20s, so we keep the
+    # grace window tight (8s by default; tunable via env).
+    _shutdown_grace_s = float(os.environ.get("OPENFORGE_SHUTDOWN_GRACE_SECONDS", "8"))
+
+    def _graceful_shutdown(signum: int, _frame=None) -> None:
+        try:
+            print(
+                f"📛 received signal {signum}; draining in-flight openclaw "
+                f"workers (grace {_shutdown_grace_s}s)…",
+                flush=True,
+            )
+        except Exception:
+            pass
+        try:
+            n = post_router.drain_and_terminate(grace_seconds=_shutdown_grace_s)
+            print(f"📛 terminated {n} in-flight openclaw process group(s).", flush=True)
+        except Exception as e:
+            print(f"⚠️  drain failed: {e!r}", flush=True)
+        # Run shutdown() from a background thread because calling it from
+        # the signal handler thread (== serve_forever's thread) would
+        # deadlock per stdlib docs.
+        import threading as _t
+        _t.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nbye 🦞")
+        # Should be caught by handler above, but keep as defence-in-depth.
+        _graceful_shutdown(signal.SIGINT)
+    print("bye 🦞")
 
 
 if __name__ == "__main__":

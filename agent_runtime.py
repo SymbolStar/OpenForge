@@ -165,6 +165,69 @@ AGENT_TIMEOUT = int(os.environ.get("OPENFORGE_AGENT_TIMEOUT", "1800"))  # 30 min
 _GROUP_KILL_GRACE_SECONDS = float(os.environ.get("OPENFORGE_GROUP_KILL_GRACE", "5"))
 
 
+# Live registry of in-flight openclaw subprocess groups.
+# Key: pgid (== proc.pid because start_new_session=True). Value: Popen.
+# Used by terminate_all_active() during graceful shutdown so we can
+# SIGTERM the entire descendant tree of every running agent turn and
+# let OpenClaw's own cleanup handlers release session lockfiles.
+import threading as _threading  # noqa: E402
+
+_active_procs: dict[int, subprocess.Popen] = {}
+_active_procs_lock = _threading.Lock()
+
+
+def _register_active(pgid: int, proc: subprocess.Popen) -> None:
+    with _active_procs_lock:
+        _active_procs[pgid] = proc
+
+
+def _unregister_active(pgid: int) -> None:
+    with _active_procs_lock:
+        _active_procs.pop(pgid, None)
+
+
+def active_count() -> int:
+    with _active_procs_lock:
+        return len(_active_procs)
+
+
+def terminate_all_active(grace_seconds: float = 8.0) -> int:
+    """SIGTERM every in-flight openclaw process group, then escalate to
+    SIGKILL after `grace_seconds`. Returns the count we acted on.
+
+    Critical for graceful shutdown: when forge's signal handler fires,
+    we want each spawned openclaw subprocess to receive SIGTERM so its
+    own cleanup runs (releaseAllLocksSync → lockfile cleared → next boot
+    can re-acquire). Without this, openclaw subprocesses get orphaned
+    to init and hold their session lockfiles indefinitely.
+    """
+    with _active_procs_lock:
+        snapshot = list(_active_procs.items())
+    if not snapshot:
+        return 0
+    for pgid, _proc in snapshot:
+        _killpg_safe(pgid, signal.SIGTERM)
+    # Wait up to grace_seconds total for all to exit.
+    import time as _time
+    deadline = _time.monotonic() + grace_seconds
+    for _pgid, proc in snapshot:
+        remaining = max(0.0, deadline - _time.monotonic())
+        try:
+            proc.wait(timeout=remaining if remaining > 0 else 0.1)
+        except subprocess.TimeoutExpired:
+            pass
+    # Escalate SIGKILL on any survivors.
+    for pgid, proc in snapshot:
+        if proc.poll() is None:
+            _killpg_safe(pgid, signal.SIGKILL)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+    return len(snapshot)
+
+
+
 def _resolve_openclaw_bin() -> str:
     """Pick the right openclaw binary.
 
@@ -256,9 +319,11 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
         raise AgentError(f"openclaw binary not found: {OPENCLAW_BIN}") from None
 
     pgid = proc.pid  # equals process group id thanks to start_new_session
+    _register_active(pgid, proc)
     try:
         stdout, stderr = proc.communicate(timeout=AGENT_TIMEOUT + 30)
     except subprocess.TimeoutExpired:
+        _unregister_active(pgid)
         _killpg_safe(pgid, signal.SIGTERM)
         try:
             proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
@@ -279,6 +344,7 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
             f"timeout after {AGENT_TIMEOUT}s (process group killed)"
         ) from None
 
+    _unregister_active(pgid)
     if proc.returncode != 0:
         tail = (stderr or stdout or "").strip().splitlines()[-3:]
         raise AgentError(
