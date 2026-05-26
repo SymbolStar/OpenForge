@@ -2491,11 +2491,19 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
     }
+    if (!state.refsCollapsed) state.refsCollapsed = new Set();
     for (const [agent, refs] of groups) {
+      const collapsed = state.refsCollapsed.has(agent);
       const head = document.createElement('li');
-      head.className = 'refs-group-head';
+      head.className = 'refs-group-head' + (collapsed ? ' is-collapsed' : '');
       head.textContent = agent + ' (' + refs.length + ')';
+      head.addEventListener('click', () => {
+        if (state.refsCollapsed.has(agent)) state.refsCollapsed.delete(agent);
+        else state.refsCollapsed.add(agent);
+        renderRefsList();
+      });
       refsListEl.appendChild(head);
+      if (collapsed) continue;
       for (const r of refs) {
         const li = document.createElement('li');
         li.className = 'refs-item';
