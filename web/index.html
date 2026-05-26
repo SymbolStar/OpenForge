@@ -163,6 +163,12 @@
     </aside>
     <main id="agents-pane">
       <header id="agents-toolbar">
+        <div id="agent-avatar-control" class="agent-avatar-control" hidden>
+          <button id="btn-agent-avatar" type="button" class="avatar-edit-target" title="更换头像" aria-label="更换头像">
+            <span id="agent-avatar-preview" class="avatar avatar-default avatar-xl"></span>
+            <span class="avatar-edit-pencil" aria-hidden="true">✎</span>
+          </button>
+        </div>
         <div class="files-toolbar-info">
           <h2 id="agent-title">选择一个 agent</h2>
           <div id="agent-sub" class="meta"></div>
@@ -269,6 +275,43 @@
         <button type="button" id="btn-close-settings-2">关闭</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div id="avatar-modal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal avatar-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-modal-title">
+    <div class="modal-header">
+      <h2 id="avatar-modal-title">更换头像</h2>
+      <button id="btn-avatar-close" type="button" title="Close">×</button>
+    </div>
+    <div id="avatar-dropzone" class="avatar-dropzone" data-state="default">
+      <canvas id="avatar-canvas" width="256" height="256" aria-label="头像裁剪预览"></canvas>
+      <div class="crop-ring" aria-hidden="true"></div>
+      <input id="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+    </div>
+    <div class="avatar-crop-controls">
+      <label>缩放<input id="avatar-zoom" type="range" min="1" max="3" step="0.01" value="1" /></label>
+    </div>
+    <div class="avatar-modal-actions">
+      <button id="btn-avatar-reset" type="button" class="ghost-btn">恢复默认</button>
+      <span class="flex-spacer"></span>
+      <button id="btn-avatar-cancel" type="button" class="ghost-btn">取消</button>
+      <button id="btn-avatar-save" type="button" class="ghost-btn avatar-save-btn" disabled>保存头像</button>
+    </div>
+  </div>
+</div>
+
+<div id="avatar-confirm" class="modal-backdrop" aria-hidden="true">
+  <div class="modal avatar-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-confirm-title">
+    <div class="modal-header">
+      <h2 id="avatar-confirm-title">恢复默认头像？</h2>
+      <button id="btn-avatar-confirm-close" type="button" title="Close">×</button>
+    </div>
+    <p>当前自定义头像会被移除。</p>
+    <div class="modal-actions">
+      <button id="btn-avatar-confirm-cancel" type="button">取消</button>
+      <button id="btn-avatar-confirm-reset" type="button" class="btn-danger">恢复默认</button>
+    </div>
   </div>
 </div>
 

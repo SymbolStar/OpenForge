@@ -98,6 +98,15 @@ function setStatus(text, ok = true) {
   els.statusDot.className = 'dot ' + (ok ? 'dot-ok' : 'dot-warn');
 }
 
+function showToast(msg, ms = 2000) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.hidden = true; }, ms);
+}
+
 function avatarLabel(name) {
   if ((name || '').toLowerCase() === 'scott') {
     const a = (state.settings.myAvatar || '').trim();
@@ -3047,6 +3056,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const refreshBtn = document.getElementById('btn-agent-bundle-refresh');
   const agentsRefreshBtn = document.getElementById('btn-agents-refresh');
   const emptyMain = document.getElementById('agent-empty');
+  const avatarControl = document.getElementById('agent-avatar-control');
+  const avatarBtn = document.getElementById('btn-agent-avatar');
+  const avatarPreview = document.getElementById('agent-avatar-preview');
 
   const knownAgents = new Set();
   let current = null;
@@ -3121,6 +3133,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     bundleCard.hidden = true;
     emptyMain.hidden = !current;
     refreshBtn.disabled = !current;
+    if (avatarControl) avatarControl.hidden = !current;
+    if (avatarBtn) avatarBtn.disabled = !current;
+    renderAgentHeaderAvatar();
     if (!current) return;
     // 1) STATUS — render as markdown (mirrors Files view's preview).
     try {
@@ -3170,9 +3185,235 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   });
   refreshBtn?.addEventListener('click', () => { if (current) refreshBundle(current, true); });
   agentsRefreshBtn?.addEventListener('click', discoverAgents);
+  avatarBtn?.addEventListener('click', () => { if (current) window.__openAvatarEditor?.(current); });
+
+  function renderAgentHeaderAvatar() {
+    if (!avatarPreview) return;
+    if (!current) {
+      avatarPreview.innerHTML = '';
+      return;
+    }
+    const av = window.OpenForgeAvatar?.getDefaultAvatar?.(current, '') || { pngPath: '', glyph: current.slice(0, 1).toUpperCase() };
+    const customUrl = window.__agentAvatarUrls?.get?.(current);
+    const src = customUrl || av.pngPath;
+    avatarPreview.innerHTML = (src ? '<img class="avatar-img" src="' + escapeHtml(src) + '" alt="" aria-hidden="true" />' : '')
+      + (customUrl ? '' : '<span class="avatar-glyph">' + escapeHtml(av.glyph || '?') + '</span>');
+  }
+
+  window.__refreshAgentAvatar = (agentId, url) => {
+    if (!window.__agentAvatarUrls) window.__agentAvatarUrls = new Map();
+    if (url) window.__agentAvatarUrls.set(agentId, url);
+    else window.__agentAvatarUrls.delete(agentId);
+    if (agentId === current) renderAgentHeaderAvatar();
+  };
 
   window.__forgeAgentsSelect = selectAgent;
 
   // initial discovery
   discoverAgents();
+})();
+
+/* ─── agent avatar upload/crop UI ───────────────────────────────────── */
+(function () {
+  const modal = document.getElementById('avatar-modal');
+  if (!modal) return;
+  const confirmModal = document.getElementById('avatar-confirm');
+  const canvas = document.getElementById('avatar-canvas');
+  const ctx = canvas?.getContext('2d');
+  const dropzone = document.getElementById('avatar-dropzone');
+  const input = document.getElementById('avatar-file-input');
+  const zoom = document.getElementById('avatar-zoom');
+  const btnSave = document.getElementById('btn-avatar-save');
+  const btnReset = document.getElementById('btn-avatar-reset');
+  const btnCancel = document.getElementById('btn-avatar-cancel');
+  const btnClose = document.getElementById('btn-avatar-close');
+  const btnConfirmClose = document.getElementById('btn-avatar-confirm-close');
+  const btnConfirmCancel = document.getElementById('btn-avatar-confirm-cancel');
+  const btnConfirmReset = document.getElementById('btn-avatar-confirm-reset');
+  const TOASTS = {
+    choose: '请选择 PNG、JPEG 或 WebP 图片',
+    loaded: '图片已载入，拖动调整位置',
+    saved: '头像已更新',
+    saveFailed: '头像保存失败，请重试',
+    reset: '已恢复默认头像',
+    resetFailed: '恢复默认失败，请重试',
+  };
+  let agentId = '';
+  let img = null;
+  let pos = { x: 128, y: 128 };
+  let scale = 1;
+  let dragging = false;
+  let dragStart = null;
+
+  function setCropState(state) {
+    if (dropzone) dropzone.dataset.state = state;
+  }
+
+  function drawDefault() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.fillStyle = '#eef0f3';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = '#8d8d8d';
+    ctx.font = '600 14px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(TOASTS.choose, 128, 132);
+  }
+
+  function drawImage() {
+    if (!ctx || !img) return;
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(128, 128, 128, 0, Math.PI * 2);
+    ctx.clip();
+    const base = Math.max(256 / img.width, 256 / img.height);
+    const w = img.width * base * scale;
+    const h = img.height * base * scale;
+    ctx.drawImage(img, pos.x - w / 2, pos.y - h / 2, w, h);
+    ctx.restore();
+  }
+
+  function loadFile(file) {
+    if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
+      setCropState('failed');
+      showToast(TOASTS.choose);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const next = new Image();
+      next.onload = () => {
+        img = next;
+        pos = { x: 128, y: 128 };
+        scale = 1;
+        zoom.value = '1';
+        btnSave.disabled = false;
+        setCropState('default');
+        drawImage();
+        showToast(TOASTS.loaded);
+      };
+      next.onerror = () => { setCropState('failed'); showToast(TOASTS.choose); };
+      next.src = String(reader.result || '');
+    };
+    reader.onerror = () => { setCropState('failed'); showToast(TOASTS.choose); };
+    reader.readAsDataURL(file);
+  }
+
+  function open(id) {
+    agentId = id;
+    img = null;
+    btnSave.disabled = true;
+    btnReset.disabled = !window.__agentAvatarUrls?.has?.(id);
+    setCropState('default');
+    drawDefault();
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function close() {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    setCropState('default');
+  }
+
+  function openConfirm() {
+    if (btnReset.disabled) return;
+    setCropState('confirm');
+    confirmModal.classList.add('open');
+    confirmModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeConfirm() {
+    confirmModal.classList.remove('open');
+    confirmModal.setAttribute('aria-hidden', 'true');
+    setCropState('default');
+  }
+
+  async function save() {
+    if (!agentId || !img) return;
+    setCropState('uploading');
+    btnSave.disabled = true;
+    try {
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('canvas export failed');
+      const res = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/avatar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/png', 'X-OpenForge-UI': '1' },
+        body: blob,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json().catch(() => ({}));
+      const url = data.url || ('/api/agents/' + encodeURIComponent(agentId) + '/avatar?v=' + Date.now());
+      window.__refreshAgentAvatar?.(agentId, url);
+      showToast(TOASTS.saved);
+      close();
+    } catch (e) {
+      setCropState('failed');
+      btnSave.disabled = false;
+      showToast(TOASTS.saveFailed);
+    }
+  }
+
+  async function reset() {
+    if (!agentId) return;
+    try {
+      const res = await fetch('/api/agents/' + encodeURIComponent(agentId) + '/avatar', {
+        method: 'DELETE',
+        headers: { 'X-OpenForge-UI': '1' },
+      });
+      if (!res.ok && res.status !== 404) throw new Error('HTTP ' + res.status);
+      window.__refreshAgentAvatar?.(agentId, null);
+      showToast(TOASTS.reset);
+      closeConfirm();
+      close();
+    } catch (e) {
+      showToast(TOASTS.resetFailed);
+    }
+  }
+
+  dropzone?.addEventListener('click', () => input?.click());
+  dropzone?.addEventListener('dragover', e => { e.preventDefault(); setCropState('dragging'); });
+  dropzone?.addEventListener('dragleave', () => setCropState('default'));
+  dropzone?.addEventListener('drop', e => {
+    e.preventDefault();
+    setCropState('default');
+    loadFile(e.dataTransfer?.files?.[0]);
+  });
+  input?.addEventListener('change', () => loadFile(input.files?.[0]));
+  zoom?.addEventListener('input', () => {
+    scale = Number(zoom.value || 1);
+    setCropState(scale >= 2.99 ? 'max' : 'default');
+    drawImage();
+  });
+  canvas?.addEventListener('pointerdown', e => {
+    if (!img) return;
+    dragging = true;
+    dragStart = { x: e.clientX, y: e.clientY, pos: { ...pos } };
+    canvas.setPointerCapture(e.pointerId);
+    setCropState('dragging');
+  });
+  canvas?.addEventListener('pointermove', e => {
+    if (!dragging || !dragStart) return;
+    pos.x = dragStart.pos.x + (e.clientX - dragStart.x);
+    pos.y = dragStart.pos.y + (e.clientY - dragStart.y);
+    drawImage();
+  });
+  canvas?.addEventListener('pointerup', e => {
+    dragging = false;
+    dragStart = null;
+    try { canvas.releasePointerCapture(e.pointerId); } catch {}
+    setCropState('default');
+  });
+  btnSave?.addEventListener('click', save);
+  btnReset?.addEventListener('click', openConfirm);
+  btnCancel?.addEventListener('click', close);
+  btnClose?.addEventListener('click', close);
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  btnConfirmClose?.addEventListener('click', closeConfirm);
+  btnConfirmCancel?.addEventListener('click', closeConfirm);
+  btnConfirmReset?.addEventListener('click', reset);
+  confirmModal?.addEventListener('click', e => { if (e.target === confirmModal) closeConfirm(); });
+
+  window.__openAvatarEditor = open;
 })();
