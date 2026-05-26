@@ -63,6 +63,8 @@ STANDUP_DIR = Path.home() / ".openclaw" / "standups"
 DATA_DIR = STANDUP_DIR / "data"
 
 THREAD_ID_RE = re.compile(r"^th_[0-9a-f]+_[0-9a-f]+$")
+POST_TYPES = {"message", "status_chip", "placeholder", "router"}
+POST_PATCH_FIELDS = {"phase", "duration_ms", "error", "content"}
 
 # Permissive across CJK + ascii word + dash; aligned across server/script/web.
 AGENT_ID_RE = r"[\w\u4e00-\u9fff][-\w\u4e00-\u9fff]*"
@@ -386,11 +388,23 @@ def project_meeting(date: str) -> dict[str, Any] | None:
                 "mentions": ev.get("mentions") or
                             extract_mentions(ev.get("content", "")),
                 "parent_post_id": ev.get("parent_post_id"),
+                "post_type": ev.get("post_type") or "message",
+                "phase": ev.get("phase"),
+                "duration_ms": ev.get("duration_ms"),
+                "error": ev.get("error"),
+                "tool_name": ev.get("tool_name"),
+                "trigger_post_id": ev.get("trigger_post_id"),
                 "topic_id": tid,
                 "superseded": False,
             }
             meeting["posts_by_id"][post["id"]] = post
             topic["posts"].append(post)
+        elif kind == "post_updated":
+            pid = ev.get("post_id")
+            post = meeting["posts_by_id"].get(pid)
+            patch = ev.get("patch")
+            if post and isinstance(patch, dict):
+                post.update({k: v for k, v in patch.items() if k in POST_PATCH_FIELDS})
         elif kind == "post_superseded":
             pid = ev.get("post_id")
             post = meeting["posts_by_id"].get(pid)
@@ -489,7 +503,11 @@ def start_topic(date: str, idx: int, title: str, kind: str = "topic",
 
 
 def add_post(date: str, topic_id: str, speaker: str, content: str,
-             parent_post_id: str | None = None) -> dict:
+             parent_post_id: str | None = None,
+             post_type: str = "message",
+             phase: str | None = None) -> dict:
+    if post_type not in POST_TYPES:
+        raise ValueError(f"invalid post_type: {post_type!r}")
     pid = gen_id("p")
     return append_event(date, {
         "kind": "post_added",
@@ -499,6 +517,8 @@ def add_post(date: str, topic_id: str, speaker: str, content: str,
         "content": content,
         "mentions": extract_mentions(content),
         "parent_post_id": parent_post_id,
+        "post_type": post_type,
+        "phase": phase,
     })
 
 
@@ -704,7 +724,10 @@ def delete_squad(squad_id: str) -> bool:
 #
 # Event kinds:
 #   thread_started     { thread_id, squad_id, created_by }
-#   post_added         { post_id, speaker, content, mentions[], parent_post_id }
+#   post_added         { post_id, speaker, content, mentions[], parent_post_id,
+#                        post_type, phase?, duration_ms?, error?, tool_name?,
+#                        trigger_post_id? }
+#   post_updated       { post_id, patch }
 #   post_superseded    { post_id, by_post_id }
 #   reaction_added     { post_id, emoji, actor }
 #   reaction_removed   { post_id, emoji, actor }
@@ -800,19 +823,67 @@ def create_thread(squad_id: str,
 
 
 def add_thread_post(thread_id: str, speaker: str, content: str,
-                    parent_post_id: str | None = None) -> dict:
-    if not isinstance(content, str) or not content.strip():
+                    parent_post_id: str | None = None,
+                    post_type: str = "message",
+                    phase: str | None = None,
+                    duration_ms: int | None = None,
+                    error: str | None = None,
+                    tool_name: str | None = None,
+                    trigger_post_id: str | None = None) -> dict:
+    if post_type not in POST_TYPES:
+        raise ValueError(f"invalid post_type: {post_type!r}")
+    if not isinstance(content, str) or (post_type == "message" and not content.strip()):
         raise ValueError("post content must be a non-empty string")
     pid = gen_id("p")
-    append_thread_event(thread_id, {
+    ev = {
         "kind": "post_added",
         "post_id": pid,
         "speaker": (speaker or "scott").strip() or "scott",
         "content": content,
         "mentions": extract_mentions(content),
         "parent_post_id": parent_post_id,
-    })
+        "post_type": post_type,
+        "phase": phase,
+        "duration_ms": duration_ms,
+        "error": error,
+        "tool_name": tool_name,
+        "trigger_post_id": trigger_post_id,
+    }
+    append_thread_event(thread_id, ev)
     return {"post_id": pid}
+
+
+def patch_post(thread_id: str, post_id: str, patch: dict) -> dict:
+    """Append a post_updated event and return the projected updated post."""
+    if not isinstance(patch, dict):
+        raise ValueError("patch must be an object")
+    unknown = sorted(set(patch) - POST_PATCH_FIELDS)
+    if unknown:
+        raise ValueError(f"unsupported post patch fields: {', '.join(unknown)}")
+    model = project_thread(thread_id)
+    if model is None:
+        raise ValueError(f"unknown thread: {thread_id!r}")
+    if post_id not in model.get("posts_by_id", {}):
+        raise ValueError(f"unknown post: {post_id!r}")
+    clean_patch = {k: patch[k] for k in POST_PATCH_FIELDS if k in patch}
+    if "content" in clean_patch and not isinstance(clean_patch["content"], str):
+        raise ValueError("content must be a string")
+    if "phase" in clean_patch and clean_patch["phase"] is not None and not isinstance(clean_patch["phase"], str):
+        raise ValueError("phase must be a string or null")
+    if "duration_ms" in clean_patch and clean_patch["duration_ms"] is not None:
+        try:
+            clean_patch["duration_ms"] = int(clean_patch["duration_ms"])
+        except (TypeError, ValueError):
+            raise ValueError("duration_ms must be an integer or null") from None
+    if "error" in clean_patch and clean_patch["error"] is not None:
+        clean_patch["error"] = str(clean_patch["error"])
+    append_thread_event(thread_id, {
+        "kind": "post_updated",
+        "post_id": post_id,
+        "patch": clean_patch,
+    })
+    refreshed = project_thread(thread_id) or {}
+    return dict((refreshed.get("posts_by_id") or {}).get(post_id) or {})
 
 
 def supersede_thread_post(thread_id: str, post_id: str,
@@ -951,6 +1022,12 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                 "content": ev.get("content", ""),
                 "mentions": ev.get("mentions") or extract_mentions(ev.get("content", "")),
                 "parent_post_id": ev.get("parent_post_id"),
+                "post_type": ev.get("post_type") or "message",
+                "phase": ev.get("phase"),
+                "duration_ms": ev.get("duration_ms"),
+                "error": ev.get("error"),
+                "tool_name": ev.get("tool_name"),
+                "trigger_post_id": ev.get("trigger_post_id"),
                 "superseded": False,
                 "reactions": {},
             }
@@ -966,6 +1043,12 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                 p["superseded"] = True
                 p["superseded_by"] = ev.get("by_post_id")
                 model["superseded"].add(pid)
+        elif kind == "post_updated":
+            pid = ev.get("post_id")
+            p = model["posts_by_id"].get(pid)
+            patch = ev.get("patch")
+            if p and isinstance(patch, dict):
+                p.update({k: v for k, v in patch.items() if k in POST_PATCH_FIELDS})
         elif kind == "reaction_added":
             pid = ev.get("post_id")
             emoji = ev.get("emoji")
@@ -1080,4 +1163,3 @@ def write_thread_markdown(thread_id: str) -> Path:
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, target)
     return target
-

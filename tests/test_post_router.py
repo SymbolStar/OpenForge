@@ -338,7 +338,7 @@ def test_agent_reply_with_mention_re_enqueues(router, store, monkeypatch):
 
 
 def test_route_to_agent_success(router, store, monkeypatch):
-    """call_agent returns text → final post appended, placeholder superseded."""
+    """call_agent returns text -> final post appended, chip marked done."""
     monkeypatch.setattr(router, "call_agent", lambda ag, sid, prompt, **_kw: "okay 👍")
     monkeypatch.setattr(router, "snapshot_main", lambda ag: None)
     monkeypatch.setattr(router, "restore_main", lambda ag, snap: True)
@@ -352,10 +352,9 @@ def test_route_to_agent_success(router, store, monkeypatch):
     proj = store.project_thread(t["thread_id"])
     speakers = [p["speaker"] for p in proj["posts"] if not p.get("superseded")]
     assert "milk" in speakers
-    # placeholder should be superseded
-    placeholder = next(p for p in proj["posts"]
-                       if p["speaker"] == "__router__" and "正在思考" in p["content"])
-    assert placeholder["superseded"]
+    chip = next(p for p in proj["posts"] if p.get("post_type") == "status_chip")
+    assert chip["phase"] == "done"
+    assert chip["duration_ms"] is not None
 
 
 def test_route_to_agent_error(router, store, monkeypatch):
@@ -370,8 +369,12 @@ def test_route_to_agent_error(router, store, monkeypatch):
                "content": "@milk help", "mentions": ["milk"]}
     router._route_to_agent(t["thread_id"], "milk", trigger)
     proj = store.project_thread(t["thread_id"])
-    assert any("没回复" in p["content"] for p in proj["posts"]
-               if p["speaker"] == "__router__")
+    chips = [p for p in proj["posts"] if p.get("post_type") == "status_chip"]
+    assert len(chips) == 1
+    assert chips[0]["phase"] == "failed"
+    assert "kaboom" in chips[0]["error"]
+    assert not any(p["speaker"] == "__router__" and p.get("post_type") != "status_chip"
+                   for p in proj["posts"])
 
 
 def test_route_to_agent_empty_reply(router, store, monkeypatch):
@@ -382,8 +385,9 @@ def test_route_to_agent_empty_reply(router, store, monkeypatch):
                "content": "@milk help", "mentions": ["milk"]}
     router._route_to_agent(t["thread_id"], "milk", trigger)
     proj = store.project_thread(t["thread_id"])
-    assert any("空回复" in p["content"] for p in proj["posts"]
-               if p["speaker"] == "__router__")
+    chip = next(p for p in proj["posts"] if p.get("post_type") == "status_chip")
+    assert chip["phase"] == "skipped"
+    assert "reason" not in chip
 
 
 def test_route_to_agent_safely_skips_closed(router, store, monkeypatch):
