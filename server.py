@@ -49,8 +49,8 @@ ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
 
 sys.path.insert(0, str(ROOT))
-import forge_config
 import forge_avatar
+import forge_config
 import forge_context
 import forge_employees
 import forge_files
@@ -214,6 +214,8 @@ def _validate_squad_payload(payload: dict) -> tuple[dict | None, str | None]:
 # field on every render — without a cache, each render does N stats. PR-B1
 # extracted the cache + helpers to forge_project so post_router can share
 # them when deciding whether to inject the `[project]` segment.
+from datetime import UTC
+
 import forge_project
 
 
@@ -248,9 +250,9 @@ def _format_http_date(iso_ts: str | None) -> str | None:
     if not iso_ts:
         return None
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         dt = datetime.fromisoformat(iso_ts)
-        dt = dt.astimezone(timezone.utc)
+        dt = dt.astimezone(UTC)
         return dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
     except Exception:
         return None
@@ -279,11 +281,11 @@ def _activity_row_for_thread(thread_id: str, squad_name_by_id: dict[str, str]) -
         status = "resolved"
     else:
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             dt = datetime.fromisoformat(last_post_at) if last_post_at else None
             if dt is not None:
-                now = datetime.now(timezone.utc)
-                if (now - dt.astimezone(timezone.utc)).total_seconds() > _IDLE_THRESHOLD_SEC:
+                now = datetime.now(UTC)
+                if (now - dt.astimezone(UTC)).total_seconds() > _IDLE_THRESHOLD_SEC:
                     status = "idle"
         except Exception:
             pass
