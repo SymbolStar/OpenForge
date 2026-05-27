@@ -589,8 +589,15 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 
 /* ─── detail pane (right) ───────────────────────────────────── */
 #thread-pane {
+  /* Self-contained layout contract: works whether parent is the home-view
+     CSS grid cell or any other flex/grid container. Per alice's call:
+     reusable detail must not depend on parent height assumptions.
+     - flex:1 lets us stretch inside a flex column (Activity right pane).
+     - height:100% lets us stretch inside a grid cell (Threads home view). */
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -2398,6 +2405,12 @@ a.mini-avatar.avatar-link:focus-visible {
   min-height: 0; min-width: 0;
   overflow: hidden;
   background: var(--panel, #FFFFFF);
+}
+/* Mount slot for the relocated #thread-pane. `display:contents` removes the
+   wrapper from the box tree so #thread-pane becomes a direct flex child of
+   #activity-pane and inherits its height context without any extra rules. */
+#activity-pane-mount {
+  display: contents;
 }
 #activity-detail-header {
   display: flex; align-items: flex-start; gap: 12px;

@@ -83,6 +83,10 @@ const state = {
   settings: loadSettings(),
   replyTo: null,  // { post_id, speaker, content } when composing a reply
 };
+// v0.5+: expose state + the squad/thread helpers so the Activity IIFE can
+// soft-sync currentSquadId when a cross-squad thread is selected (alice's
+// edge case: detail-shown thread should also be selected in Threads view).
+window.state = state;
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
 const AGENT_COLOR_CLASS = new Map(AGENTS.map(a => [a, `av-${a}`]));
@@ -1440,6 +1444,8 @@ async function submitPost() {
     state.currentThread = updated;
     renderDetail();
     refreshThreadsForCurrentSquad();  // update preview/last_post_at
+    // v0.5+: if Activity view is showing, optimistically refresh its rows.
+    try { window.__forgeActivityNudge && window.__forgeActivityNudge(); } catch (_) {}
   } catch (err) {
     setStatus(`发送失败: ${err.message}`, false);
   } finally {
@@ -3780,14 +3786,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const errorBanner = document.getElementById('activity-error-banner');
   const offlineBanner = document.getElementById('activity-offline-banner');
   const newChip = document.getElementById('activity-new-chip');
-  const detailHeader = document.getElementById('activity-detail-header');
-  const detailTitle = document.getElementById('activity-detail-title');
-  const detailSub = document.getElementById('activity-detail-sub');
-  const detailOpenLink = document.getElementById('activity-detail-openlink');
   const detailEmpty = document.getElementById('activity-detail-empty');
   const detailLoading = document.getElementById('activity-detail-loading');
   const detailError = document.getElementById('activity-detail-error');
-  const detailPosts = document.getElementById('activity-detail-posts');
+  const paneMount = document.getElementById('activity-pane-mount');
   const chips = Array.from(view.querySelectorAll('.activity-chip'));
   const iconRailBtn = document.querySelector('.icon-rail-item[data-view="activity"]');
   const iconRailDot = iconRailBtn?.querySelector('.icon-rail-dot') || null;
@@ -4003,84 +4005,68 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     }, POLL_MS);
   }
 
-  /* ---- detail (right pane, read-only) ---- */
+  /* ---- detail (right pane: reuses #thread-pane in full) ---- */
+  // Track relocated #thread-pane + its origin so we can put it back on exit.
+  let _threadPaneOrigParent = null;
+  let _threadPaneOrigNext = null;
+  function mountThreadPane() {
+    const pane = document.getElementById('thread-pane');
+    if (!pane || !paneMount) return;
+    if (pane.parentNode === paneMount) return; // already mounted
+    _threadPaneOrigParent = pane.parentNode;
+    _threadPaneOrigNext = pane.nextSibling;
+    paneMount.appendChild(pane);
+  }
+  function unmountThreadPane() {
+    const pane = document.getElementById('thread-pane');
+    if (!pane || !_threadPaneOrigParent) return;
+    if (pane.parentNode === paneMount) {
+      if (_threadPaneOrigNext && _threadPaneOrigNext.parentNode === _threadPaneOrigParent) {
+        _threadPaneOrigParent.insertBefore(pane, _threadPaneOrigNext);
+      } else {
+        _threadPaneOrigParent.appendChild(pane);
+      }
+    }
+    _threadPaneOrigParent = null;
+    _threadPaneOrigNext = null;
+  }
+
   async function selectThread(tid) {
     state.selected = tid;
     renderList(); // updates selected class
-    detailEmpty.hidden = true;
-    detailHeader.hidden = false;
-    detailLoading.hidden = false;
-    detailError.hidden = true;
-    detailPosts.hidden = true;
-    const myReq = ++state.detailReq;
+    // Hide empty placeholder; let the real thread pane take over.
+    if (detailEmpty) detailEmpty.hidden = true;
+    if (detailLoading) detailLoading.hidden = true;
+    if (detailError) detailError.hidden = true;
     location.hash = '#/activity/' + tid;
+    // Soft-sync squad so that switching to Threads view shows this thread
+    // selected in its middle list too (no cross-view orphan-detail split).
+    // Safety per alice: only switch squad if it's in the user's visible list;
+    // otherwise just update the thread id and accept the small split rather
+    // than dropping the user into a squad they can't see.
     try {
-      const resp = await fetch('/api/threads/' + encodeURIComponent(tid));
-      if (myReq !== state.detailReq) return; // race
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-      renderDetail(data);
-    } catch (e) {
-      if (myReq !== state.detailReq) return;
-      detailLoading.hidden = true;
-      detailError.hidden = false;
-      detailError.querySelector('[data-msg]').textContent = '加载失败：' + (e.message || e);
-      detailError.querySelector('[data-retry]').onclick = () => selectThread(tid);
-    }
-  }
-
-  function renderDetail(t) {
-    detailLoading.hidden = true;
-    detailError.hidden = true;
-    detailPosts.hidden = false;
-    detailTitle.textContent = t.title || t.preview || '(empty)';
-    detailSub.textContent = `${t.created_by || '?'} started · ${t.post_count || 0} posts · ${t.in_progress ? 'open' : 'closed'}`;
-    // link to home view filtered to that squad+thread for replies
-    detailOpenLink.href = '#/squads';
-    detailOpenLink.dataset.squadId = t.squad_id || '';
-    detailOpenLink.dataset.threadId = t.thread_id || '';
-    detailOpenLink.onclick = (e) => {
-      e.preventDefault();
-      location.hash = '#/squads';
-      // try to select squad + thread in home view
-      try {
-        if (window.__forgeSelectSquadAndThread) {
-          window.__forgeSelectSquadAndThread(t.squad_id, t.thread_id);
+      const row = state.rows.find(r => r.thread_id === tid);
+      const sid = row && row.squad_id;
+      if (sid && window.state && window.state.squads &&
+          window.state.squads.some(s => s.id === sid)) {
+        if (window.state.currentSquadId !== sid) {
+          window.state.currentSquadId = sid;
+          if (window.refreshThreadsForCurrentSquad) {
+            window.refreshThreadsForCurrentSquad();
+          }
+          if (window.renderSquadRail) window.renderSquadRail();
         }
-      } catch (_) {}
-    };
-    const posts = (t.posts || []).filter(p => !p.superseded);
-    if (!posts.length) {
-      detailPosts.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
-      return;
-    }
-    const parts = posts.map(p => {
-      const time = escapeHtml(p.time || p.ts || '');
-      const speaker = escapeHtml(p.speaker || '?');
-      const content = (p.content || '').replace(/[<>]/g, ch => ch === '<' ? '&lt;' : '&gt;');
-      // light markdown: line breaks + bold + code (delegate to marked if available)
-      let html;
-      if (window.marked) {
-        try { html = window.marked.parse(p.content || ''); }
-        catch (_) { html = '<pre>' + escapeHtml(p.content || '') + '</pre>'; }
-      } else {
-        html = '<pre style="white-space:pre-wrap">' + escapeHtml(p.content || '') + '</pre>';
       }
-      return `<div class="a-detail-post">
-        <div class="a-detail-post-head"><strong>${speaker}</strong> <span class="meta">· ${time}</span></div>
-        <div class="a-detail-post-body markdown-body">${html}</div>
-      </div>`;
-    });
-    detailPosts.innerHTML = parts.join('');
+    } catch (_) {}
+    if (window.selectThread && window.selectThread !== selectThread) {
+      // Use the home-view's full selectThread (loads detail + opens SSE + wires composer).
+      try { await window.selectThread(tid); } catch (_) {}
+    }
   }
 
   function clearDetail() {
     state.selected = null;
-    detailHeader.hidden = true;
-    detailLoading.hidden = true;
-    detailError.hidden = true;
-    detailPosts.hidden = true;
-    detailEmpty.hidden = false;
+    if (detailEmpty) detailEmpty.hidden = false;
   }
 
   /* ---- chips ---- */
@@ -4121,6 +4107,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     setError(null);
     offlineBanner.hidden = true;
     state.failStreak = 0;
+    mountThreadPane();
+    // If nothing selected, show the empty placeholder; thread-pane shows itself only when selectThread is called.
+    if (!state.selected) { if (detailEmpty) detailEmpty.hidden = false; }
     if (state.rows.length === 0) {
       loadInitial().then(() => schedulePoll());
     } else {
@@ -4131,8 +4120,18 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   };
   window.__forgeActivityDeactivate = function () {
     if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+    unmountThreadPane();
   };
   window.__forgeActivitySelect = function (tid) { selectThread(tid); };
+
+  // Hook for the home-view's submitPost: after a post lands, refresh the
+  // activity rows so the row jumps to the top + snippet updates immediately
+  // (alice's edge case #3: optimistic feedback, don't wait for next poll).
+  window.__forgeActivityNudge = function () {
+    if (view.hidden) return;
+    state.lastModified = null; // bypass 304 so we get fresh data + ordering
+    poll();
+  };
 
   // Background heartbeat for the icon-rail red dot (every 60s when not in Activity)
   setInterval(async () => {
