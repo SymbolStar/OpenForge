@@ -2420,26 +2420,31 @@ a.mini-avatar.avatar-link:focus-visible {
 .a-detail-post-head .meta { color: var(--muted, #8A95A3); margin-left: 4px; }
 .a-detail-post-body { font-size: 13px; }
 
-/* icon-rail unread badge */
+/* icon-rail unread badge
+   The icon-rail is always icon+small-label (no expanded mode in current UI).
+   Per designer's lock-in: collapsed/icon state shows an 8px red dot (no number);
+   the numeric badge is for a future hover/expanded state. We keep the badge
+   element wired (renders inline when unhidden) and rely on the red dot in the
+   default narrow rail. */
 .icon-rail-item { position: relative; }
 .icon-rail-dot {
-  position: absolute; top: 4px; right: 8px;
+  position: absolute; top: 8px; right: 14px;
   width: 8px; height: 8px; border-radius: 50%;
   background: #E5484D;
-  border: 2px solid var(--panel, #fff);
+  border: 2px solid #1a1d24; /* match icon-rail bg so dot reads cleanly */
+  pointer-events: none;
 }
 .icon-rail-badge {
-  margin-left: 6px;
+  position: absolute; top: 6px; right: 6px;
   background: var(--color-primary, #2D7CF6); color: #fff;
-  font-size: 10px; font-weight: 600;
-  padding: 1px 5px; border-radius: 9px; line-height: 14px;
+  font-size: 9px; font-weight: 600;
+  padding: 1px 4px; border-radius: 8px; line-height: 12px;
+  pointer-events: none;
 }
 
-/* narrow viewport: icon-rail collapses, hide labels + badge text, only dot */
+/* Activity middle-column collapse threshold (the page-level breakpoint
+   designer's mock uses for the column shrink, not icon-rail). */
 @media (max-width: 1099px) {
-  .icon-rail-item .label { display: none; }
-  .icon-rail-item .icon-rail-badge { display: none; }
-  /* dot stays */
   #activity-view.view-shell { grid-template-columns: 340px 1fr; }
 }
 @media (max-width: 800px) {

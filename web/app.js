@@ -3726,6 +3726,8 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     detailReq: 0,        // monotonic request id for race-safety
     lastSeenLatest: null,
     pendingNew: 0,
+    everSucceeded: false, // BUG-2 fix: hide error until first success exists
+    failStreak: 0,        // BUG-2 fix: tolerate 1 transient failure
   };
 
   /* ---- helpers ---- */
@@ -3819,27 +3821,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   }
 
   function updateUnreadBadge() {
-    // v0.1: 无 unread 后端字段；先按「最近 5min 有 in-progress thread」近似
-    // 仅展示视觉示意，避免长期假信号。
-    const hasFresh = state.rows.some(r => {
-      if (!r.latest_post_at) return false;
-      const dt = Date.parse(r.latest_post_at);
-      return dt && (Date.now() - dt) < 5 * 60 * 1000 && r.status === 'in-progress';
-    });
-    if (iconRailDot) iconRailDot.hidden = !hasFresh;
-    if (iconRailBadge) {
-      if (hasFresh) {
-        const n = state.rows.filter(r => {
-          const dt = Date.parse(r.latest_post_at || 0);
-          return dt && (Date.now() - dt) < 5 * 60 * 1000 && r.status === 'in-progress';
-        }).length;
-        iconRailBadge.hidden = false;
-        iconRailBadge.textContent = '●' + n;
-      } else {
-        iconRailBadge.hidden = true;
-        iconRailBadge.textContent = '';
-      }
-    }
+    // v0.1: 没有 per-user unread 后端字段。产品信号由 designer 锁为
+    // 「有任何未解决的 thread 」——这里近似用「any non-closed thread」。
+    // icon-rail 总是窄状态，只贴 8px 红点，不显示数字 badge（留给未来 hover/expanded）。
+    const hasAny = state.rows.some(r => !r.closed);
+    if (iconRailDot) iconRailDot.hidden = !hasAny;
+    if (iconRailBadge) iconRailBadge.hidden = true;
   }
 
   /* ---- fetch ---- */
@@ -3850,16 +3837,41 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     try {
       resp = await fetch('/api/activity?filter=' + encodeURIComponent(state.filter), { headers });
     } catch (e) {
-      offlineBanner.hidden = false;
-      setError(e.message || String(e));
+      // network error: bump failure streak; only show a banner after 2 in a row,
+      // and prefer offline (mutually exclusive with error).
+      state.failStreak += 1;
+      if (state.failStreak >= 2) {
+        // show only one of the two banners. If browser reports offline, prefer offline.
+        const isOffline = (typeof navigator !== 'undefined') && navigator.onLine === false;
+        if (isOffline) {
+          offlineBanner.hidden = false;
+          setError(null);
+        } else if (state.everSucceeded) {
+          // we had data once and now fetch fails: real error
+          offlineBanner.hidden = true;
+          setError(e.message || String(e));
+        } else {
+          // never succeeded yet: keep banners hidden, list empty-state will tell the story
+          offlineBanner.hidden = true;
+          setError(null);
+        }
+      }
       return null;
     }
+    // any HTTP response means we're not offline; clear offline
     offlineBanner.hidden = true;
-    if (resp.status === 304) return { unchanged: true };
+    if (resp.status === 304) {
+      state.failStreak = 0;
+      setError(null);
+      return { unchanged: true };
+    }
     if (!resp.ok) {
-      setError('HTTP ' + resp.status);
+      state.failStreak += 1;
+      if (state.failStreak >= 2 && state.everSucceeded) setError('HTTP ' + resp.status);
       return null;
     }
+    state.failStreak = 0;
+    state.everSucceeded = true;
     setError(null);
     const lm = resp.headers.get('Last-Modified');
     if (lm) state.lastModified = lm;
@@ -4028,6 +4040,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   /* ---- entry/exit ---- */
   window.__forgeActivityActivate = function () {
+    // BUG-2 fix: clear stale banners on entry; let the next fetch decide.
+    setError(null);
+    offlineBanner.hidden = true;
+    state.failStreak = 0;
     if (state.rows.length === 0) {
       loadInitial().then(() => schedulePoll());
     } else {
