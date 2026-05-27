@@ -182,13 +182,11 @@
       </div>
     </aside>
     <main id="activity-pane">
-      <header id="activity-detail-header" hidden>
-        <div class="activity-detail-main">
-          <h2 id="activity-detail-title">—</h2>
-          <div id="activity-detail-sub" class="meta"></div>
-        </div>
-        <a id="activity-detail-openlink" class="ghost-btn" href="#" title="在 squad 中打开">在 squad 中打开 ↗</a>
-      </header>
+      <!-- v0.5+: when Activity is active, the existing #thread-pane (full
+           threads detail with reply box / @mention / file refs / status
+           chip) is relocated into #activity-pane-mount and restored on
+           view exit. See app.js __forgeActivityActivate / Deactivate. -->
+      <div id="activity-pane-mount"></div>
       <div id="activity-detail-empty" class="activity-detail-empty">
         <div class="activity-detail-empty-art">⌁</div>
         <p>← 从左侧选一个 thread 查看详情</p>
@@ -198,7 +196,6 @@
         <p data-msg>加载失败</p>
         <button type="button" data-retry>重试</button>
       </div>
-      <div id="activity-detail-posts" class="markdown-body" hidden></div>
     </main>
   </section>
 
