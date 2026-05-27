@@ -607,12 +607,14 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   width: 24px;
   height: 24px;
   border: 2px solid #fff;
-  border-radius: 5px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-size: 11px;
   font-weight: 800;
+  overflow: hidden;
+  position: relative;
 }
 .mini-avatar + .mini-avatar { margin-left: -2px; }
 
@@ -751,12 +753,36 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .avatar {
   width: 36px;
   height: 36px;
-  border-radius: 6px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
   font-weight: 800;
+  overflow: hidden;
+  position: relative;
 }
+.avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.avatar-glyph {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  font-weight: 850;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.32);
+}
+.mini-avatar .avatar-glyph { font-size: 12px; }
+.avatar .avatar-glyph { font-size: 18px; }
 /* PR-3 / PRD-v1.0 §4: employee avatars become deep-links to the agent's
    webchat main session. Keep the same box but make it feel clickable. */
 a.avatar.avatar-link,
@@ -1629,6 +1655,22 @@ a.mini-avatar.avatar-link:focus-visible {
   cursor: pointer;
   border-left: 3px solid transparent;
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+}
+.agents-list-avatar {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+}
+.agents-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agents-item:hover { background: var(--hover-bg, rgba(255,255,255,0.04)); }
 .agents-item.is-active {
@@ -1655,8 +1697,48 @@ a.mini-avatar.avatar-link:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 12px;
   margin-bottom: 16px;
 }
+.agent-avatar-control { flex: 0 0 auto; }
+.avatar-edit-target {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  border-radius: 50%;
+}
+.avatar-xl {
+  width: 72px;
+  height: 72px;
+  font-size: 32px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.avatar-edit-pencil {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(0.92);
+}
+.avatar-edit-target:hover .avatar-edit-pencil { opacity: 1; transform: scale(1); }
+.avatar-edit-target:active .avatar-edit-pencil { background: var(--accent); color: #fff; opacity: 1; }
+.avatar-edit-target:focus-visible { outline: 2px solid #5b9bff; outline-offset: 3px; }
+.avatar-edit-target:focus-visible .avatar-edit-pencil { opacity: 1; box-shadow: 0 0 0 2px #5b9bff; }
+.avatar-edit-target:disabled { cursor: default; opacity: 0.45; }
+.avatar-edit-target:disabled .avatar-edit-pencil { opacity: 0; }
 #agent-status-card .status-md {
   background: var(--code-bg, #0f0f0f);
   border: 1px solid var(--border, #2a2a2a);
@@ -1686,6 +1768,67 @@ a.mini-avatar.avatar-link:focus-visible {
   max-height: 480px;
   overflow: auto;
 }
+
+/* ─── agent avatar upload/crop ───────────────────────────────── */
+.avatar-modal { width: min(440px, calc(100vw - 32px)); }
+.avatar-dropzone {
+  width: 296px;
+  height: 296px;
+  margin: 22px auto 12px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f4f5f7;
+  border: 1px dashed var(--border);
+  overflow: hidden;
+  cursor: grab;
+}
+.avatar-dropzone canvas {
+  width: 256px;
+  height: 256px;
+  border-radius: 50%;
+  background: #e7e9ee;
+}
+.crop-ring {
+  position: absolute;
+  inset: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.92);
+  box-shadow: 0 0 0 999px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(0,0,0,0.18);
+  pointer-events: none;
+}
+.avatar-dropzone[data-state="dragging"] { cursor: grabbing; border-color: #2563eb; }
+.avatar-dropzone[data-state="max"] .crop-ring { border-color: #f59e0b; }
+.avatar-dropzone[data-state="uploading"] { opacity: 0.72; cursor: progress; }
+.avatar-dropzone[data-state="failed"] { border-color: #dc2626; background: #fff1f2; }
+.avatar-dropzone[data-state="confirm"] { border-color: #f59e0b; background: #fffbeb; }
+.avatar-crop-controls {
+  padding: 0 28px 12px;
+}
+.avatar-crop-controls label {
+  display: grid;
+  gap: 8px;
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 700;
+}
+.avatar-crop-controls input { width: 100%; }
+.avatar-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--border);
+}
+.avatar-save-btn:not([disabled]) {
+  background: #007a5a;
+  color: #fff;
+  border-color: #007a5a;
+}
+.avatar-confirm-modal { width: min(360px, calc(100vw - 32px)); }
+.avatar-confirm-modal p { margin: 18px; color: var(--text-mute); }
+.avatar-confirm-modal .modal-actions { padding: 0 18px 18px; }
 
 /* ============ Thread Create Modal (v0.10) ============ */
 .rail-list-head-actions { display: flex; align-items: center; gap: 6px; }
