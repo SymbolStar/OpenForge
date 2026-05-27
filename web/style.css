@@ -400,6 +400,9 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .rail-header {
   min-height: 70px;
@@ -465,7 +468,8 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
 }
 .thread-item button {
   width: 100%;
