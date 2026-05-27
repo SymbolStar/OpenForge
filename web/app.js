@@ -318,6 +318,48 @@ function openExternalLinksInNewTab(html) {
 // Async ref index used by chip renderer + References tab.
 window._forgeRefs = window._forgeRefs || { byId: new Map(), all: [], loaded: false, loading: null };
 
+// Stale-cache recovery: when a chip resolver misses an unresolved [[…]]
+// target, a new ref may have been registered after our last /api/refs
+// fetch (e.g. designer just attached screenshots while this tab was open).
+// Schedule a single background refresh + re-render of the current thread.
+// Debounced + per-target deduped so a post with 6 unresolved chips only
+// triggers ONE refetch, and we don't busy-loop if the ref truly doesn't
+// exist server-side.
+window._forgeRefsRefreshPending = window._forgeRefsRefreshPending || false;
+window._forgeRefsMissTargets = window._forgeRefsMissTargets || new Set();
+function scheduleRefIndexRefresh(target) {
+  // Don't keep retrying a target we already failed to resolve after a fresh
+  // fetch — that means the server really doesn't have it.
+  if (window._forgeRefsMissTargets.has(target)) return;
+  if (window._forgeRefsRefreshPending) return;
+  window._forgeRefsRefreshPending = true;
+  setTimeout(async () => {
+    const before = (window._forgeRefs && window._forgeRefs.all.length) || 0;
+    try {
+      await loadRefIndex(true);
+    } catch (_e) {
+      /* ignore — keep existing cache */
+    }
+    window._forgeRefsRefreshPending = false;
+    const idx = window._forgeRefs;
+    const after = (idx && idx.all.length) || 0;
+    // Re-resolve all currently-missing targets; anything still missing gets
+    // permanently parked so we don't refetch on every render pass.
+    for (const t of Array.from(window._forgeRefsMissTargets)) {
+      if (resolveChipFromRefs(t)) {
+        window._forgeRefsMissTargets.delete(t);
+      }
+    }
+    if (!resolveChipFromRefs(target)) {
+      window._forgeRefsMissTargets.add(target);
+    }
+    // Only repaint when the cache actually changed; avoids needless flicker.
+    if (after !== before && typeof refreshCurrentThread === 'function') {
+      refreshCurrentThread();
+    }
+  }, 150);
+}
+
 async function loadRefIndex(force) {
   const idx = window._forgeRefs;
   if (idx.loaded && !force) return idx;
@@ -393,7 +435,11 @@ function renderBody(text) {
     }
     // v0.7 fallback: [[name.md]] or [[root/name.md]]
     if (!/\.md$/i.test(target.split('/').pop() || '')) {
-      // unresolved + not even a v0.7-shaped path → render as plain text
+      // unresolved + not even a v0.7-shaped path → register as a miss and
+      // kick off a background ref-index refresh; the post may be referring
+      // to a ref registered AFTER we last fetched /api/refs (common when a
+      // peer agent attaches files while this tab is open).
+      scheduleRefIndexRefresh(target);
       chips.push({ kind: 'unresolved', display: (label || target).trim(), target });
       return `\u0001CHIP${chips.length - 1}\u0001`;
     }
