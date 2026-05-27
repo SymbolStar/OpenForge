@@ -2254,6 +2254,15 @@ a.mini-avatar.avatar-link:focus-visible {
 .squad-project-chip[hidden] { display: none !important; }
 
 /* ─── Activity view (v0.5+) ─────────────────────────────────────────── */
+/* Make [hidden] always win over our display: flex/grid/block rules below.
+   Without this, UA `[hidden]{display:none}` has the same specificity as a
+   single class selector and our class rule (declared later) wins, causing
+   phantom banners / loading rows / empty placeholders to stay visible even
+   when JS set hidden=true. */
+#activity-view [hidden],
+.icon-rail-dot[hidden],
+.icon-rail-badge[hidden] { display: none !important; }
+
 #activity-view.view-shell {
   display: grid;
   grid-template-columns: 380px 1fr;
