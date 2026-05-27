@@ -83,6 +83,10 @@ const state = {
   settings: loadSettings(),
   replyTo: null,  // { post_id, speaker, content } when composing a reply
 };
+// v0.5+: expose state + the squad/thread helpers so the Activity IIFE can
+// soft-sync currentSquadId when a cross-squad thread is selected (alice's
+// edge case: detail-shown thread should also be selected in Threads view).
+window.state = state;
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
 const AGENT_COLOR_CLASS = new Map(AGENTS.map(a => [a, `av-${a}`]));
@@ -4009,6 +4013,25 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     if (detailLoading) detailLoading.hidden = true;
     if (detailError) detailError.hidden = true;
     location.hash = '#/activity/' + tid;
+    // Soft-sync squad so that switching to Threads view shows this thread
+    // selected in its middle list too (no cross-view orphan-detail split).
+    // Safety per alice: only switch squad if it's in the user's visible list;
+    // otherwise just update the thread id and accept the small split rather
+    // than dropping the user into a squad they can't see.
+    try {
+      const row = state.rows.find(r => r.thread_id === tid);
+      const sid = row && row.squad_id;
+      if (sid && window.state && window.state.squads &&
+          window.state.squads.some(s => s.id === sid)) {
+        if (window.state.currentSquadId !== sid) {
+          window.state.currentSquadId = sid;
+          if (window.refreshThreadsForCurrentSquad) {
+            window.refreshThreadsForCurrentSquad();
+          }
+          if (window.renderSquadRail) window.renderSquadRail();
+        }
+      }
+    } catch (_) {}
     if (window.selectThread && window.selectThread !== selectThread) {
       // Use the home-view's full selectThread (loads detail + opens SSE + wires composer).
       try { await window.selectThread(tid); } catch (_) {}
