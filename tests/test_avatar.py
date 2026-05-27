@@ -19,6 +19,29 @@ def test_fnv1a_stable(fake_home):
     assert forge_avatar.fnv1a("designer") != forge_avatar.fnv1a("judy")
 
 
+def test_fnv1a_design_palette_mapping(fake_home):
+    # Regression: design.md §1.4 verification table. fnv1a must iterate UTF-8
+    # bytes so emoji map identically on JS (TextEncoder) and Python sides;
+    # iterating Unicode codepoints / UTF-16 code units silently breaks D-06.
+    import forge_avatar
+
+    palette = ["slate", "indigo", "rose", "amber", "emerald", "violet",
+               "sky", "fuchsia", "teal", "lime", "orange", "pink"]
+    cases = [
+        ("dora", "\U0001F3A8", "rose"),
+        ("alice", "\U0001F4CB", "orange"),
+        ("judy", "\U0001F50D", "pink"),
+        ("scott", "\U0001F451", "rose"),
+        ("milk", "\U0001F95B", "slate"),
+        ("xiaoba", "\U0001F42F", "lime"),
+        ("bugfix", "\U0001F527", "violet"),
+        ("main", "\U0001F916", "orange"),
+    ]
+    for agent_id, emoji, want in cases:
+        got = palette[forge_avatar.fnv1a(emoji or agent_id) % len(palette)]
+        assert got == want, f"{agent_id} {emoji} -> {got}, want {want}"
+
+
 def test_identity_patch_replaces_existing_avatar(fake_home):
     import forge_avatar
 

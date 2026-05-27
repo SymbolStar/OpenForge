@@ -25,8 +25,8 @@ class UnsupportedAvatarError(AvatarError):
 
 def fnv1a(input_value: str) -> int:
     h = 0x811C9DC5
-    for ch in str(input_value or ""):
-        h ^= ord(ch)
+    for b in str(input_value or "").encode("utf-8"):
+        h ^= b
         h = (h * 0x01000193) & 0xFFFFFFFF
     return h
 

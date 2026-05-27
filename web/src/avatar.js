@@ -18,8 +18,9 @@
   function fnv1a(input) {
     const s = String(input || '');
     let hash = 0x811c9dc5;
-    for (let i = 0; i < s.length; i += 1) {
-      hash ^= s.charCodeAt(i);
+    const bytes = new TextEncoder().encode(s);
+    for (let i = 0; i < bytes.length; i += 1) {
+      hash ^= bytes[i];
       hash = Math.imul(hash, 0x01000193) >>> 0;
     }
     return hash >>> 0;
