@@ -510,6 +510,19 @@ function squadUnreadCount(squadId) {
   return n;
 }
 
+// dora's #3: tab 不在前台时让 document.title 打标
+// 总未读数 = 跨所有 squad 的 unread thread 总和。不需要 favicon、不闪烁。
+const BASE_TITLE = 'OpenForge';
+function totalUnread() {
+  let n = 0;
+  for (const s of state.squads) n += squadUnreadCount(s.id);
+  return n;
+}
+function updateUnreadTitle() {
+  const n = totalUnread();
+  document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+}
+
 // ─── squads ───────────────────────────────────────────────────────────
 async function loadSquads() {
   setStatus('加载 squads...');
@@ -520,11 +533,23 @@ async function loadSquads() {
       const detail = await apiJson(`/api/squads/${encodeURIComponent(squad.id)}`);
       state.squadDetails.set(squad.id, detail);
     }));
+    // First-run seed: 首次访问时 lastSeen 为空，把所有现有 thread 的 last_post_at
+    // 当作“已知态”写进去，避免第一眼满屏红 badge。dora 提的 #2。
+    if (Object.keys(_lastSeen).length === 0) {
+      for (const squad of state.squads) {
+        const d = state.squadDetails.get(squad.id);
+        for (const t of (d?.threads || [])) {
+          if (t.thread_id && t.last_post_at) _lastSeen[t.thread_id] = t.last_post_at;
+        }
+      }
+      _persistLastSeen();
+    }
     if (!state.currentSquadId && state.squads.length) {
       state.currentSquadId = state.squads[0].id;
     }
     renderSquadRail();
     renderThreadRail();
+    updateUnreadTitle();
     setStatus(`已加载 ${state.squads.length} 个 squad`);
   } catch (err) {
     setStatus(`加载失败: ${err.message}`, false);
@@ -612,6 +637,7 @@ async function refreshThreadsForCurrentSquad() {
     state.squadDetails.set(state.currentSquadId, detail);
     renderSquadRail();
     renderThreadRail();
+    updateUnreadTitle();
   } catch (err) {
     setStatus(`thread 列表加载失败: ${err.message}`, false);
   }
@@ -691,8 +717,11 @@ function renderThreadList(threads) {
     li.className = 'thread-item' + closedCls
       + (t.thread_id === state.currentThreadId ? ' active' : '')
       + (unread ? ' thread-item--unread' : '');
+    // dora's call: live-dot 和 unread-dot 语义重合。in_progress 只显示绿点
+    // （已覆盖有动静），unread 仅在 closed thread 上加红点；in_progress 的 unread
+    // 靠 preview 加粗 + squad badge 传达。
     const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
-    const unreadDot = unread ? '<span class="unread-dot" title="有新消息"></span>' : '';
+    const unreadDot = (unread && !t.in_progress) ? '<span class="unread-dot" title="有新消息"></span>' : '';
     const closedChip = t.in_progress
       ? ''
       : '<span class="thread-closed-chip" title="Closed">🔒</span>';
@@ -731,6 +760,7 @@ async function selectThread(threadId) {
     renderDetail();
     renderThreadRail();
     renderSquadRail();
+    updateUnreadTitle();
     setStatus(`已加载 ${threadId}`);
   } catch (err) {
     state.currentThread = null;
@@ -779,6 +809,7 @@ async function refreshCurrentThread() {
     // user is actively viewing → keep last-seen current as new posts stream in
     markThreadSeen(state.currentThreadId, state.currentThread?.last_post_at || Date.now());
     renderDetail({ keepScroll: true });
+    updateUnreadTitle();
   } catch (err) {
     /* ignore transient */
   }
