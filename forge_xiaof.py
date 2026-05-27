@@ -34,10 +34,11 @@ according to the contract.  Adapters never write to the socket directly.
 
 from __future__ import annotations
 
+import json as _json
 import secrets
 import time
-from typing import Any, Callable, Iterable, Iterator, Mapping
-
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from typing import Any
 
 # ── public types ────────────────────────────────────────────────────
 
@@ -213,8 +214,6 @@ def validate_ask_request(opts: Any) -> dict[str, Any]:
 
 
 # ── SSE frame builders ─────────────────────────────────────────────
-
-import json as _json
 
 
 def sse_frame(event: str, data: Mapping[str, Any]) -> str:
