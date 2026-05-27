@@ -92,9 +92,9 @@ def test_list_employees_ignores_empty_suffix(fake_home):
     assert forge_employees.list_employees() == ["alice"]
 
 
-def test_list_employees_excludes_agents_dir_profiles(fake_home):
-    """codex / claude-code / main live in agents/, never in workspace-*. They
-    must not appear in the employee roster."""
+def test_list_employees_includes_allowlisted_runtime_agents(fake_home):
+    """codex / claude-code count as employees (squad-addable LLM workers)
+    even without a workspace-<id>/SOUL.md. main / claude stay out."""
     import forge_employees
     oc = fake_home / ".openclaw"
     oc.mkdir()
@@ -104,7 +104,9 @@ def test_list_employees_excludes_agents_dir_profiles(fake_home):
         (agents / runtime / "sessions").mkdir(parents=True)
     _make_workspace(oc, "alice")
     _make_workspace(oc, "designer")  # Dora
-    assert forge_employees.list_employees() == ["alice", "designer"]
+    assert forge_employees.list_employees() == [
+        "alice", "claude-code", "codex", "designer",
+    ]
 
 
 def test_is_employee_positive(fake_home):
@@ -131,6 +133,26 @@ def test_is_employee_requires_agent_dir(fake_home):
     oc.mkdir()
     _make_workspace(oc, "clawdesign", with_agent=False)
     assert forge_employees.is_employee("clawdesign") is False
+
+
+def test_is_employee_allowlisted_runtime_agent(fake_home):
+    """codex / claude-code count as employees once their agents/<id>/ exists,
+    even with no workspace-<id>/SOUL.md."""
+    import forge_employees
+    oc = fake_home / ".openclaw"
+    oc.mkdir()
+    (oc / "agents" / "codex").mkdir(parents=True)
+    (oc / "agents" / "claude-code").mkdir(parents=True)
+    assert forge_employees.is_employee("codex") is True
+    assert forge_employees.is_employee("claude-code") is True
+    # main / claude are NOT on the allowlist even if their dirs exist
+    (oc / "agents" / "main").mkdir(parents=True)
+    assert forge_employees.is_employee("main") is False
+    # And the allowlist doesn't bypass the agents-dir requirement
+    assert forge_employees.is_employee("codex") is True
+    import shutil
+    shutil.rmtree(oc / "agents" / "codex")
+    assert forge_employees.is_employee("codex") is False
 
 
 @pytest.mark.parametrize("bad", ["", "../passwd", "a/b", None])
@@ -172,9 +194,10 @@ def test_http_employees_excludes_project_repos(fake_home, server):
     assert "clawdesign" not in body
 
 
-def test_http_employees_excludes_runtime_profiles(fake_home, server):
-    """Regression for the 'Dora missing from members' bug. Even with codex
-    et al. living in agents/, the endpoint must only return workspace-* owners."""
+def test_http_employees_includes_allowlisted_runtime_agents(fake_home, server):
+    """codex / claude-code are squad-addable LLM workers — they must appear
+    in /api/employees even though they have no workspace-<id>/SOUL.md.
+    main and other runtime profiles stay out."""
     oc = fake_home / ".openclaw"
     oc.mkdir(exist_ok=True)
     agents = oc / "agents"
@@ -185,9 +208,8 @@ def test_http_employees_excludes_runtime_profiles(fake_home, server):
 
     code, body = _get(f"{server}/api/employees")
     assert code == 200
-    assert body == ["designer"]
-    for runtime in ("codex", "claude-code", "main"):
-        assert runtime not in body
+    assert body == ["claude-code", "codex", "designer"]
+    assert "main" not in body
 
 
 def test_http_employees_empty_when_no_workspaces(fake_home, server):
