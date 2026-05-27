@@ -464,6 +464,52 @@ async function apiJson(url, options) {
   return data;
 }
 
+// ─── unread tracking (client-side, localStorage) ──────────────────────
+// We persist `lastSeenAt` per thread_id in localStorage. A thread is
+// "unread" when its `last_post_at` > the cached `lastSeenAt`. New threads
+// (never opened) count as unread iff they have any post. Marking-seen
+// happens on selectThread and on every SSE refresh of the *currently
+// open* thread (user is looking at it right now).
+const LAST_SEEN_KEY = 'openforge:lastSeen:v1';
+let _lastSeen = (() => {
+  try {
+    const raw = localStorage.getItem(LAST_SEEN_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch { return {}; }
+})();
+
+function _persistLastSeen() {
+  try { localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(_lastSeen)); } catch {}
+}
+
+function markThreadSeen(threadId, atMs) {
+  if (!threadId) return;
+  const ts = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
+  const prev = _lastSeen[threadId] || 0;
+  if (ts > prev) {
+    _lastSeen[threadId] = ts;
+    _persistLastSeen();
+  }
+}
+
+function isThreadUnread(t) {
+  if (!t || !t.thread_id) return false;
+  const lp = t.last_post_at || 0;
+  if (!lp) return false;
+  const seen = _lastSeen[t.thread_id] || 0;
+  return lp > seen;
+}
+
+function squadUnreadCount(squadId) {
+  const detail = state.squadDetails.get(squadId);
+  const threads = detail?.threads || [];
+  let n = 0;
+  for (const t of threads) if (isThreadUnread(t)) n++;
+  return n;
+}
+
 // ─── squads ───────────────────────────────────────────────────────────
 async function loadSquads() {
   setStatus('加载 squads...');
@@ -499,16 +545,21 @@ function renderSquadRail() {
   state.squads.forEach(squad => {
     const detail = state.squadDetails.get(squad.id);
     const count = detail?.threads?.length || 0;
+    const unread = squadUnreadCount(squad.id);
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'squad-item'
       + (squad.id === state.currentSquadId ? ' active' : '')
-      + (squad.archived ? ' archived' : '');
+      + (squad.archived ? ' archived' : '')
+      + (unread > 0 ? ' has-unread' : '');
+    const countHtml = unread > 0
+      ? `<span class="squad-unread-badge" title="${unread} unread thread${unread === 1 ? '' : 's'}">${unread}</span>`
+      : `<span class="squad-count">${count}</span>`;
     btn.innerHTML = `
       <span class="squad-emoji">${escapeHtml(squad.emoji || '#')}</span>
       <span class="squad-name">${escapeHtml(squad.name || squad.id)}${squad.archived ? ' <span class="archived-tag">archived</span>' : ''}</span>
-      <span class="squad-count">${count}</span>
+      ${countHtml}
     `;
     btn.onclick = () => selectSquad(squad.id);
     li.appendChild(btn);
@@ -636,9 +687,12 @@ function renderThreadList(threads) {
 
     const li = document.createElement('li');
     const closedCls = t.in_progress ? '' : ' thread-item--closed';
+    const unread = isThreadUnread(t) && t.thread_id !== state.currentThreadId;
     li.className = 'thread-item' + closedCls
-      + (t.thread_id === state.currentThreadId ? ' active' : '');
+      + (t.thread_id === state.currentThreadId ? ' active' : '')
+      + (unread ? ' thread-item--unread' : '');
     const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
+    const unreadDot = unread ? '<span class="unread-dot" title="有新消息"></span>' : '';
     const closedChip = t.in_progress
       ? ''
       : '<span class="thread-closed-chip" title="Closed">🔒</span>';
@@ -646,6 +700,7 @@ function renderThreadList(threads) {
       <button type="button">
         <div class="thread-line-1">
           ${liveDot}
+          ${unreadDot}
           <span class="thread-preview">${escapeHtml(t.title || t.preview || '(empty)')}</span>
           ${closedChip}
         </div>
@@ -670,7 +725,12 @@ async function selectThread(threadId) {
   renderThreadRail();
   try {
     state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}`);
+    // Mark this thread as seen up to its newest post — user is now
+    // looking at it. Also bump squad rail so the badge clears.
+    markThreadSeen(threadId, state.currentThread?.last_post_at || Date.now());
     renderDetail();
+    renderThreadRail();
+    renderSquadRail();
     setStatus(`已加载 ${threadId}`);
   } catch (err) {
     state.currentThread = null;
@@ -716,6 +776,8 @@ async function refreshCurrentThread() {
   if (!state.currentThreadId) return;
   try {
     state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}`);
+    // user is actively viewing → keep last-seen current as new posts stream in
+    markThreadSeen(state.currentThreadId, state.currentThread?.last_post_at || Date.now());
     renderDetail({ keepScroll: true });
   } catch (err) {
     /* ignore transient */
