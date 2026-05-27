@@ -1539,8 +1539,9 @@ function syncChairOptions() {
 
 // Build the squad-modal member checkboxes from the curated employee
 // roster (GET /api/employees). The roster is authoritative — it returns
-// only agents with ~/.openclaw/workspace-<id>/SOUL.md on the server side,
-// so adding a new employee requires zero front-end code changes.
+// curated workspace-<id>/SOUL.md owners PLUS an opt-in runtime allowlist
+// (codex, claude-code) on the server side, so adding a new employee
+// requires zero front-end code changes.
 async function buildMemberControls() {
   let employees = null;
   try {
