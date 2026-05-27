@@ -497,6 +497,65 @@ async function apiJson(url, options) {
   return data;
 }
 
+// ─── unread tracking (client-side, localStorage) ──────────────────────
+// We persist `lastSeenAt` per thread_id in localStorage. A thread is
+// "unread" when its `last_post_at` > the cached `lastSeenAt`. New threads
+// (never opened) count as unread iff they have any post. Marking-seen
+// happens on selectThread and on every SSE refresh of the *currently
+// open* thread (user is looking at it right now).
+const LAST_SEEN_KEY = 'openforge:lastSeen:v1';
+let _lastSeen = (() => {
+  try {
+    const raw = localStorage.getItem(LAST_SEEN_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch { return {}; }
+})();
+
+function _persistLastSeen() {
+  try { localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(_lastSeen)); } catch {}
+}
+
+function markThreadSeen(threadId, atMs) {
+  if (!threadId) return;
+  const ts = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
+  const prev = _lastSeen[threadId] || 0;
+  if (ts > prev) {
+    _lastSeen[threadId] = ts;
+    _persistLastSeen();
+  }
+}
+
+function isThreadUnread(t) {
+  if (!t || !t.thread_id) return false;
+  const lp = t.last_post_at || 0;
+  if (!lp) return false;
+  const seen = _lastSeen[t.thread_id] || 0;
+  return lp > seen;
+}
+
+function squadUnreadCount(squadId) {
+  const detail = state.squadDetails.get(squadId);
+  const threads = detail?.threads || [];
+  let n = 0;
+  for (const t of threads) if (isThreadUnread(t)) n++;
+  return n;
+}
+
+// dora's #3: tab 不在前台时让 document.title 打标
+// 总未读数 = 跨所有 squad 的 unread thread 总和。不需要 favicon、不闪烁。
+const BASE_TITLE = 'OpenForge';
+function totalUnread() {
+  let n = 0;
+  for (const s of state.squads) n += squadUnreadCount(s.id);
+  return n;
+}
+function updateUnreadTitle() {
+  const n = totalUnread();
+  document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+}
+
 // ─── squads ───────────────────────────────────────────────────────────
 async function loadSquads() {
   setStatus('加载 squads...');
@@ -507,11 +566,23 @@ async function loadSquads() {
       const detail = await apiJson(`/api/squads/${encodeURIComponent(squad.id)}`);
       state.squadDetails.set(squad.id, detail);
     }));
+    // First-run seed: 首次访问时 lastSeen 为空，把所有现有 thread 的 last_post_at
+    // 当作“已知态”写进去，避免第一眼满屏红 badge。dora 提的 #2。
+    if (Object.keys(_lastSeen).length === 0) {
+      for (const squad of state.squads) {
+        const d = state.squadDetails.get(squad.id);
+        for (const t of (d?.threads || [])) {
+          if (t.thread_id && t.last_post_at) _lastSeen[t.thread_id] = t.last_post_at;
+        }
+      }
+      _persistLastSeen();
+    }
     if (!state.currentSquadId && state.squads.length) {
       state.currentSquadId = state.squads[0].id;
     }
     renderSquadRail();
     renderThreadRail();
+    updateUnreadTitle();
     setStatus(`已加载 ${state.squads.length} 个 squad`);
   } catch (err) {
     setStatus(`加载失败: ${err.message}`, false);
@@ -532,16 +603,21 @@ function renderSquadRail() {
   state.squads.forEach(squad => {
     const detail = state.squadDetails.get(squad.id);
     const count = detail?.threads?.length || 0;
+    const unread = squadUnreadCount(squad.id);
     const li = document.createElement('li');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'squad-item'
       + (squad.id === state.currentSquadId ? ' active' : '')
-      + (squad.archived ? ' archived' : '');
+      + (squad.archived ? ' archived' : '')
+      + (unread > 0 ? ' has-unread' : '');
+    const countHtml = unread > 0
+      ? `<span class="squad-unread-badge" title="${unread} unread thread${unread === 1 ? '' : 's'}">${unread}</span>`
+      : `<span class="squad-count">${count}</span>`;
     btn.innerHTML = `
       <span class="squad-emoji">${escapeHtml(squad.emoji || '#')}</span>
       <span class="squad-name">${escapeHtml(squad.name || squad.id)}${squad.archived ? ' <span class="archived-tag">archived</span>' : ''}</span>
-      <span class="squad-count">${count}</span>
+      ${countHtml}
     `;
     btn.onclick = () => selectSquad(squad.id);
     li.appendChild(btn);
@@ -594,6 +670,7 @@ async function refreshThreadsForCurrentSquad() {
     state.squadDetails.set(state.currentSquadId, detail);
     renderSquadRail();
     renderThreadRail();
+    updateUnreadTitle();
   } catch (err) {
     setStatus(`thread 列表加载失败: ${err.message}`, false);
   }
@@ -669,9 +746,15 @@ function renderThreadList(threads) {
 
     const li = document.createElement('li');
     const closedCls = t.in_progress ? '' : ' thread-item--closed';
+    const unread = isThreadUnread(t) && t.thread_id !== state.currentThreadId;
     li.className = 'thread-item' + closedCls
-      + (t.thread_id === state.currentThreadId ? ' active' : '');
+      + (t.thread_id === state.currentThreadId ? ' active' : '')
+      + (unread ? ' thread-item--unread' : '');
+    // dora's call: live-dot 和 unread-dot 语义重合。in_progress 只显示绿点
+    // （已覆盖有动静），unread 仅在 closed thread 上加红点；in_progress 的 unread
+    // 靠 preview 加粗 + squad badge 传达。
     const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
+    const unreadDot = (unread && !t.in_progress) ? '<span class="unread-dot" title="有新消息"></span>' : '';
     const closedChip = t.in_progress
       ? ''
       : '<span class="thread-closed-chip" title="Closed">🔒</span>';
@@ -679,6 +762,7 @@ function renderThreadList(threads) {
       <button type="button">
         <div class="thread-line-1">
           ${liveDot}
+          ${unreadDot}
           <span class="thread-preview">${escapeHtml(t.title || t.preview || '(empty)')}</span>
           ${closedChip}
         </div>
@@ -703,7 +787,13 @@ async function selectThread(threadId) {
   renderThreadRail();
   try {
     state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(threadId)}`);
+    // Mark this thread as seen up to its newest post — user is now
+    // looking at it. Also bump squad rail so the badge clears.
+    markThreadSeen(threadId, state.currentThread?.last_post_at || Date.now());
     renderDetail();
+    renderThreadRail();
+    renderSquadRail();
+    updateUnreadTitle();
     setStatus(`已加载 ${threadId}`);
   } catch (err) {
     state.currentThread = null;
@@ -749,7 +839,10 @@ async function refreshCurrentThread() {
   if (!state.currentThreadId) return;
   try {
     state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}`);
+    // user is actively viewing → keep last-seen current as new posts stream in
+    markThreadSeen(state.currentThreadId, state.currentThread?.last_post_at || Date.now());
     renderDetail({ keepScroll: true });
+    updateUnreadTitle();
   } catch (err) {
     /* ignore transient */
   }

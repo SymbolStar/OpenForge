@@ -352,6 +352,20 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .squad-emoji { width: 24px; text-align: center; }
 .squad-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .squad-count { color: rgba(255,255,255,0.58); font-size: 12px; }
+.squad-unread-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #e01e5a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
+}
+.squad-item.has-unread .squad-name { font-weight: 700; color: #fff; }
 
 .new-squad-btn {
   width: calc(100% - 24px);
@@ -493,6 +507,15 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   animation: pulse 1.4s infinite;
   flex: 0 0 auto;
 }
+.unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e01e5a;
+  flex: 0 0 auto;
+}
+.thread-item--unread .thread-preview { font-weight: 700; color: var(--text); }
+.thread-item--unread .thread-time { color: var(--text); font-weight: 600; }
 .thread-line-2 {
   display: flex;
   align-items: center;
