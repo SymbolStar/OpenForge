@@ -994,11 +994,37 @@ function renderPosts(posts) {
     els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
     return;
   }
+  // Build chip → reply pairing (PR 20:18). A regular post with
+  // from_chip_post_id pointing at a phase=done chip means the agent's
+  // real reply has landed; render duration inline on the reply header
+  // and suppress the chip. Only phase=done suppresses — failed/skipped
+  // chips are the only evidence and must stay visible.
+  const _suppressedChipIds = new Set();
+  const chipById = new Map();
+  live.forEach(p => {
+    if (p.post_type === 'status_chip') {
+      const pid = p.id || p.post_id;
+      if (pid) chipById.set(pid, p);
+    }
+  });
+  live.forEach(p => {
+    if (p.post_type === 'status_chip') return;
+    const chipId = p.from_chip_post_id;
+    if (!chipId) return;
+    const chip = chipById.get(chipId);
+    if (chip && chip.phase === 'done') {
+      _suppressedChipIds.add(chipId);
+      // Stash duration on the reply post object for renderPostNode header.
+      if (chip.duration_ms != null) p._inlineDurationMs = chip.duration_ms;
+    }
+  });
   // V1.1: flat chronological list. Reply context is rendered as an inline
   // quote card at the top of each child post (see renderPostNode), not as
   // tree nesting — that was too visually heavy in real threads.
   live.forEach(p => {
     if (p.post_type === 'status_chip') {
+      const pid = p.id || p.post_id;
+      if (_suppressedChipIds.has(pid)) return; // duration moved to reply header
       els.postList.appendChild(renderAgentStatusChip(p));
     } else {
       els.postList.appendChild(renderPostNode(p, false));
@@ -1197,7 +1223,7 @@ function renderPostNode(post, _unused) {
     <div class="post-content">
       <div class="post-head">
         <span class="post-name" title="${escapeHtml(post.speaker)}">${escapeHtml(displayName(post.speaker))}</span>
-        <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>
+        <span class="post-time" title="${escapeHtml(post.ts || '')}">${escapeHtml(post.time || '')}</span>${post._inlineDurationMs != null ? `<span class="post-duration" title="agent dispatch duration">· ${(post._inlineDurationMs / 1000).toFixed(1)}s</span>` : ''}
       </div>
       <div class="post-quote-slot"></div>
       <div class="post-body">${renderBody(post.content)}</div>

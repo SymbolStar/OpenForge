@@ -64,6 +64,11 @@ def test_phase_lifecycle_thinking_to_done(router, store, monkeypatch):
     # so the UI can render the chip with the agent's avatar/name.
     assert chip["speaker"] == "__router__"
     assert chip["agent_id"] == "milk"
+    reply = next(p for p in proj["posts"] if p["speaker"] == "milk" and p["content"] == "done reply")
+    # PR 20:18: reply post is tagged with from_chip_post_id pointing at
+    # the chip so the UI can suppress the done chip and inline duration
+    # on the reply header.
+    assert reply["from_chip_post_id"] == chip["id"]
     assert any(p["speaker"] == "milk" and p["content"] == "done reply" for p in proj["posts"])
 
 

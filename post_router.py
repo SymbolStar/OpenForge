@@ -527,6 +527,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict,
             return
         added = store.add_thread_post(
             thread_id, agent_id, reply, parent_post_id=trigger_pid,
+            from_chip_post_id=placeholder_id,
         )
         final_post_id = added.get("post_id")
         # 2026-05-26: defensive handoff-mention check. If the agent

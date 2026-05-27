@@ -830,7 +830,8 @@ def add_thread_post(thread_id: str, speaker: str, content: str,
                     error: str | None = None,
                     tool_name: str | None = None,
                     trigger_post_id: str | None = None,
-                    agent_id: str | None = None) -> dict:
+                    agent_id: str | None = None,
+                    from_chip_post_id: str | None = None) -> dict:
     if post_type not in POST_TYPES:
         raise ValueError(f"invalid post_type: {post_type!r}")
     if not isinstance(content, str) or (post_type == "message" and not content.strip()):
@@ -850,6 +851,7 @@ def add_thread_post(thread_id: str, speaker: str, content: str,
         "tool_name": tool_name,
         "trigger_post_id": trigger_post_id,
         "agent_id": agent_id,
+        "from_chip_post_id": from_chip_post_id,
     }
     append_thread_event(thread_id, ev)
     return {"post_id": pid}
@@ -1031,6 +1033,7 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
                 "tool_name": ev.get("tool_name"),
                 "trigger_post_id": ev.get("trigger_post_id"),
                 "agent_id": ev.get("agent_id"),
+                "from_chip_post_id": ev.get("from_chip_post_id"),
                 "superseded": False,
                 "reactions": {},
             }
