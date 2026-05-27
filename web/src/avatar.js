@@ -1,17 +1,18 @@
 (function () {
+  // Palette source of truth: design.md §1.2 (12 keys, ordered).
   const PALETTE = [
-    { key: 'ember', bg: '#F36F21', ring: '#9A3412' },
-    { key: 'cobalt', bg: '#2563EB', ring: '#1E3A8A' },
-    { key: 'jade', bg: '#0F9F6E', ring: '#065F46' },
-    { key: 'violet', bg: '#7C3AED', ring: '#4C1D95' },
-    { key: 'amber', bg: '#F59E0B', ring: '#92400E' },
-    { key: 'rose', bg: '#E11D48', ring: '#881337' },
-    { key: 'cyan', bg: '#0891B2', ring: '#155E75' },
-    { key: 'lime', bg: '#65A30D', ring: '#3F6212' },
-    { key: 'indigo', bg: '#4F46E5', ring: '#312E81' },
-    { key: 'coral', bg: '#EF4444', ring: '#991B1B' },
-    { key: 'slate', bg: '#475569', ring: '#1E293B' },
-    { key: 'mint', bg: '#14B8A6', ring: '#0F766E' },
+    { key: 'slate',   bg: '#475569', ring: '#334155' },
+    { key: 'indigo',  bg: '#4f46e5', ring: '#3730a3' },
+    { key: 'rose',    bg: '#e11d48', ring: '#9f1239' },
+    { key: 'amber',   bg: '#d97706', ring: '#92400e' },
+    { key: 'emerald', bg: '#059669', ring: '#065f46' },
+    { key: 'violet',  bg: '#7c3aed', ring: '#5b21b6' },
+    { key: 'sky',     bg: '#0284c7', ring: '#075985' },
+    { key: 'fuchsia', bg: '#c026d3', ring: '#86198f' },
+    { key: 'teal',    bg: '#0d9488', ring: '#115e59' },
+    { key: 'lime',    bg: '#65a30d', ring: '#3f6212' },
+    { key: 'orange',  bg: '#ea580c', ring: '#9a3412' },
+    { key: 'pink',    bg: '#db2777', ring: '#9d174d' },
   ];
 
   function fnv1a(input) {
@@ -30,9 +31,12 @@
   }
 
   function getDefaultAvatar(agentId, emoji) {
+    // design.md D-06: hash on emoji (stable same-emoji-same-color);
+    // fall back to agent id when no emoji present.
     const id = String(agentId || '');
-    const slot = PALETTE[fnv1a(id) % PALETTE.length];
-    const glyph = Array.from(String(emoji || '').trim())[0] || firstGlyph(id);
+    const e = String(emoji || '').trim();
+    const slot = PALETTE[fnv1a(e || id) % PALETTE.length];
+    const glyph = Array.from(e)[0] || firstGlyph(id);
     return {
       key: slot.key,
       pngPath: `/assets/avatars/default/${slot.key}.png`,

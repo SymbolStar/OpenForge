@@ -3243,13 +3243,15 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const btnConfirmClose = document.getElementById('btn-avatar-confirm-close');
   const btnConfirmCancel = document.getElementById('btn-avatar-confirm-cancel');
   const btnConfirmReset = document.getElementById('btn-avatar-confirm-reset');
+  const MAX_BYTES = 2 * 1024 * 1024;
   const TOASTS = {
-    choose: '请选择 PNG、JPEG 或 WebP 图片',
-    loaded: '图片已载入，拖动调整位置',
-    saved: '头像已更新',
-    saveFailed: '头像保存失败，请重试',
-    reset: '已恢复默认头像',
-    resetFailed: '恢复默认失败，请重试',
+    badFormat: '⚠️ 不支持的格式，仅支持 jpg / png / webp',
+    tooBig: (mb) => `⚠️ 图片超过 2MB（当前 ${mb}MB），请压缩后重试`,
+    loaded: '拖动调整位置，确认后保存',
+    saved: '✅ 头像已更新',
+    saveFailed: '❌ 写盘失败，UI 已回滚到旧头像',
+    reset: '✅ 已恢复默认头像',
+    resetFailed: '❌ 恢复默认失败，请重试',
   };
   let agentId = '';
   let img = null;
@@ -3270,7 +3272,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     ctx.fillStyle = '#8d8d8d';
     ctx.font = '600 14px Inter, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(TOASTS.choose, 128, 132);
+    ctx.fillText('点击或拖入图片（jpg / png / webp、≤2MB）', 128, 132);
   }
 
   function drawImage() {
@@ -3288,9 +3290,15 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   }
 
   function loadFile(file) {
-    if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
       setCropState('failed');
-      showToast(TOASTS.choose);
+      showToast(TOASTS.badFormat);
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      setCropState('failed');
+      showToast(TOASTS.tooBig((file.size / 1024 / 1024).toFixed(1)));
       return;
     }
     const reader = new FileReader();
@@ -3306,10 +3314,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         drawImage();
         showToast(TOASTS.loaded);
       };
-      next.onerror = () => { setCropState('failed'); showToast(TOASTS.choose); };
+      next.onerror = () => { setCropState('failed'); showToast(TOASTS.badFormat); };
       next.src = String(reader.result || '');
     };
-    reader.onerror = () => { setCropState('failed'); showToast(TOASTS.choose); };
+    reader.onerror = () => { setCropState('failed'); showToast(TOASTS.badFormat); };
     reader.readAsDataURL(file);
   }
 
