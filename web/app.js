@@ -839,7 +839,10 @@ const _chipCollapseTimers = new Map();   // post_id → timer
 const _chipCollapsed = new Set();        // post_ids 在 done -> done-collapsed
 function renderAgentStatusChip(post) {
   const pid = post.id || post.post_id || '';
-  const agent = post.speaker || '?';
+  // status_chip posts are authored by __router__ but represent a specific
+  // agent's lifecycle; prefer the explicit agent_id field when present so
+  // chips render with the agent's avatar/name, not router's.
+  const agent = post.agent_id || post.speaker || '?';
   const name = displayName(agent) || agent;
   // 默认 phase=thinking（应对后端老据或 phase 丢失）
   let phase = post.phase || 'thinking';

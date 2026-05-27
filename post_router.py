@@ -492,6 +492,7 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict,
                 post_type="status_chip",
                 phase="thinking",
                 trigger_post_id=trigger_pid,
+                agent_id=agent_id,
             )
             placeholder_id = ph.get("post_id")
         store.write_thread_markdown(thread_id)

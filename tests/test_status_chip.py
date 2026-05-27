@@ -60,6 +60,10 @@ def test_phase_lifecycle_thinking_to_done(router, store, monkeypatch):
     assert chip["phase"] == "done"
     assert chip["trigger_post_id"] == t["posts"][0]["id"]
     assert chip["duration_ms"] is not None
+    # Chip post is authored by __router__ but carries the target agent_id
+    # so the UI can render the chip with the agent's avatar/name.
+    assert chip["speaker"] == "__router__"
+    assert chip["agent_id"] == "milk"
     assert any(p["speaker"] == "milk" and p["content"] == "done reply" for p in proj["posts"])
 
 
