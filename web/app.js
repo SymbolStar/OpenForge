@@ -842,7 +842,16 @@ function renderAgentStatusChip(post) {
   // status_chip posts are authored by __router__ but represent a specific
   // agent's lifecycle; prefer the explicit agent_id field when present so
   // chips render with the agent's avatar/name, not router's.
-  const agent = post.agent_id || post.speaker || '?';
+  // Legacy fallback: pre-#22 chips lack agent_id; their content is the
+  // string '<agent_id> thinking' (see _chip_content in post_router.py),
+  // so we can recover the agent_id from the first token.
+  let agent = post.agent_id;
+  if (!agent) {
+    const content = (post.content || '').trim();
+    const m = content.match(/^([a-z][a-z0-9_-]*)\s+thinking$/i);
+    if (m && m[1] !== '__router__') agent = m[1];
+  }
+  if (!agent) agent = post.speaker || '?';
   const name = displayName(agent) || agent;
   // 默认 phase=thinking（应对后端老据或 phase 丢失）
   let phase = post.phase || 'thinking';
