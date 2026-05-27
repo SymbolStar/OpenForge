@@ -24,8 +24,10 @@
       <button class="icon-rail-item is-dim" type="button" data-view="dms" title="DMs">
         <span class="icon">💬</span><span class="label">DMs</span>
       </button>
-      <button class="icon-rail-item is-dim" type="button" data-view="activity" title="Activity">
+      <button class="icon-rail-item" type="button" data-view="activity" data-enabled="1" title="Activity">
         <span class="icon">🔔</span><span class="label">Activity</span>
+        <span class="icon-rail-dot" hidden aria-hidden="true"></span>
+        <span class="icon-rail-badge" hidden aria-label="unread"></span>
       </button>
       <button class="icon-rail-item is-dim" type="button" data-view="later" title="Later">
         <span class="icon">🔖</span><span class="label">Later</span>
@@ -148,6 +150,55 @@
       </header>
       <div id="file-preview" class="markdown-body"></div>
       <textarea id="file-editor" hidden spellcheck="false" placeholder="# 在这里写 markdown…"></textarea>
+    </main>
+  </section>
+
+  <section id="activity-view" class="view-shell" hidden>
+    <aside id="activity-rail">
+      <header class="activity-rail-head">
+        <div class="activity-title-row">
+          <h1 class="activity-title">Activity</h1>
+          <span id="activity-count" class="activity-count"></span>
+        </div>
+        <div class="activity-chips" role="tablist">
+          <button type="button" class="activity-chip is-active" data-filter="all" role="tab">All</button>
+          <button type="button" class="activity-chip is-disabled" data-filter="me" role="tab" disabled title="v0.1 暂未启用">@Me</button>
+          <button type="button" class="activity-chip is-disabled" data-filter="unread" role="tab" disabled title="v0.1 暂未启用">Unread</button>
+          <button type="button" class="activity-chip is-disabled" data-filter="squads" role="tab" disabled title="v0.1 暂未启用">My Squads</button>
+        </div>
+      </header>
+      <div id="activity-new-chip" class="activity-new-chip" hidden role="button" tabindex="0">↑ <span data-count>0</span> new updates</div>
+      <div id="activity-error-banner" class="activity-banner activity-banner-error" hidden>
+        <span data-msg>加载失败</span>
+        <button type="button" data-retry>重试</button>
+      </div>
+      <div id="activity-offline-banner" class="activity-banner activity-banner-offline" hidden>离线中，显示最近一次缓存</div>
+      <ul id="activity-list" role="listbox" aria-label="Activity threads"></ul>
+      <div id="activity-empty" class="activity-empty" hidden></div>
+      <div id="activity-loading" class="activity-loading" hidden>
+        <div class="activity-skel-row"></div>
+        <div class="activity-skel-row"></div>
+        <div class="activity-skel-row"></div>
+      </div>
+    </aside>
+    <main id="activity-pane">
+      <header id="activity-detail-header" hidden>
+        <div class="activity-detail-main">
+          <h2 id="activity-detail-title">—</h2>
+          <div id="activity-detail-sub" class="meta"></div>
+        </div>
+        <a id="activity-detail-openlink" class="ghost-btn" href="#" title="在 squad 中打开">在 squad 中打开 ↗</a>
+      </header>
+      <div id="activity-detail-empty" class="activity-detail-empty">
+        <div class="activity-detail-empty-art">⌁</div>
+        <p>← 从左侧选一个 thread 查看详情</p>
+      </div>
+      <div id="activity-detail-loading" class="activity-detail-loading" hidden>加载中…</div>
+      <div id="activity-detail-error" class="activity-detail-error" hidden>
+        <p data-msg>加载失败</p>
+        <button type="button" data-retry>重试</button>
+      </div>
+      <div id="activity-detail-posts" class="markdown-body" hidden></div>
     </main>
   </section>
 

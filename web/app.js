@@ -2783,10 +2783,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   function setActive(view) {
     items.forEach(it => it.classList.toggle('is-active', it.dataset.view === view));
     const agentsView = document.getElementById('agents-view');
+    const activityView = document.getElementById('activity-view');
     const hideAll = () => {
       homeView.hidden = true;
       filesView.hidden = true;
       if (agentsView) agentsView.hidden = true;
+      if (activityView) activityView.hidden = true;
     };
     if (view === 'files') {
       hideAll();
@@ -2795,14 +2797,25 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     } else if (view === 'agents') {
       hideAll();
       if (agentsView) agentsView.hidden = false;
+    } else if (view === 'activity') {
+      hideAll();
+      if (activityView) activityView.hidden = false;
+      if (window.__forgeActivityActivate) window.__forgeActivityActivate();
     } else {
       hideAll();
       homeView.hidden = false;
+      if (window.__forgeActivityDeactivate) window.__forgeActivityDeactivate();
     }
   }
 
   function routeFromHash() {
     const h = location.hash || '';
+    if (h.startsWith('#/activity')) {
+      setActive('activity');
+      const m = h.match(/^#\/activity\/(th_[A-Za-z0-9_]+)$/);
+      if (m && window.__forgeActivitySelect) window.__forgeActivitySelect(decodeURIComponent(m[1]));
+      return;
+    }
     if (h.startsWith('#/agents')) {
       setActive('agents');
       const m = h.match(/^#\/agents\/([A-Za-z0-9][A-Za-z0-9._\-]{0,63})$/);
@@ -2853,6 +2866,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (it.dataset.enabled === '1') {
         if (v === 'files') location.hash = '#/files';
         else if (v === 'agents') location.hash = '#/agents';
+        else if (v === 'activity') location.hash = '#/activity';
         else location.hash = '#/squads';
       } else {
         toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
@@ -3721,4 +3735,380 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   confirmModal?.addEventListener('click', e => { if (e.target === confirmModal) closeConfirm(); });
 
   window.__openAvatarEditor = open;
+})();
+
+/* ─── v0.5+: Activity view ────────────────────────────────────────────── */
+(function () {
+  const POLL_MS = 10000;
+  const view = document.getElementById('activity-view');
+  if (!view) return;
+  const listEl = document.getElementById('activity-list');
+  const emptyEl = document.getElementById('activity-empty');
+  const loadingEl = document.getElementById('activity-loading');
+  const countEl = document.getElementById('activity-count');
+  const errorBanner = document.getElementById('activity-error-banner');
+  const offlineBanner = document.getElementById('activity-offline-banner');
+  const newChip = document.getElementById('activity-new-chip');
+  const detailHeader = document.getElementById('activity-detail-header');
+  const detailTitle = document.getElementById('activity-detail-title');
+  const detailSub = document.getElementById('activity-detail-sub');
+  const detailOpenLink = document.getElementById('activity-detail-openlink');
+  const detailEmpty = document.getElementById('activity-detail-empty');
+  const detailLoading = document.getElementById('activity-detail-loading');
+  const detailError = document.getElementById('activity-detail-error');
+  const detailPosts = document.getElementById('activity-detail-posts');
+  const chips = Array.from(view.querySelectorAll('.activity-chip'));
+  const iconRailBtn = document.querySelector('.icon-rail-item[data-view="activity"]');
+  const iconRailDot = iconRailBtn?.querySelector('.icon-rail-dot') || null;
+  const iconRailBadge = iconRailBtn?.querySelector('.icon-rail-badge') || null;
+
+  const state = {
+    rows: [],            // last loaded rows
+    lastModified: null,  // server Last-Modified header
+    selected: null,      // thread_id
+    filter: 'all',
+    firstLoad: true,
+    pollTimer: null,
+    detailReq: 0,        // monotonic request id for race-safety
+    lastSeenLatest: null,
+    pendingNew: 0,
+    everSucceeded: false, // BUG-2 fix: hide error until first success exists
+    failStreak: 0,        // BUG-2 fix: tolerate 1 transient failure
+  };
+
+  /* ---- helpers ---- */
+  function fmtRel(iso) {
+    if (!iso) return '';
+    const ts = Date.parse(iso);
+    if (!ts) return '';
+    const diff = Math.max(0, Date.now() - ts);
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + 'h';
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + 'd';
+    return new Date(ts).toLocaleDateString();
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function avatarClassFor(name) {
+    if (window.avatarClass) try { return window.avatarClass(name); } catch (_) {}
+    // fallback: deterministic 1..6
+    let h = 0; for (const c of (name || '?')) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return 'av-' + ((h % 6) + 1);
+  }
+  function statusBadge(status) {
+    if (status === 'resolved') return '<span class="row-status">✅ resolved</span>';
+    if (status === 'idle')     return '<span class="row-status">⏸ idle</span>';
+    return '<span class="row-status">💭 in-progress</span>';
+  }
+
+  /* ---- rendering ---- */
+  function renderList() {
+    const rows = state.rows;
+    countEl.textContent = rows.length ? `(${rows.length})` : '';
+    listEl.innerHTML = '';
+    if (!rows.length) {
+      emptyEl.hidden = false;
+      emptyEl.textContent = state.firstLoad
+        ? '还没有任何 thread —— 去某个 squad 开第一个 thread 吧。'
+        : '当前 filter 下没有结果。';
+      return;
+    }
+    emptyEl.hidden = true;
+    for (const r of rows) {
+      const li = document.createElement('li');
+      li.className = 'a-row';
+      if (r.thread_id === state.selected) li.classList.add('selected');
+      // unread inference: v0.1 没有 seen 状态后端，先不画 unread 蓝点（避免假信号）
+      li.dataset.threadId = r.thread_id;
+      const avName = r.latest_author_human || r.latest_author || r.started_by || '?';
+      const avLetter = (avName || '?').slice(0, 1).toUpperCase();
+      const avClass = avatarClassFor(avName);
+      li.innerHTML = `
+        <div class="a-row-avatar ${escapeHtml(avClass)}">${escapeHtml(avLetter)}</div>
+        <div class="a-row-body">
+          <div class="a-row-top">
+            <span class="a-row-title">${escapeHtml(r.title || '(empty)')}</span>
+            <span class="a-row-time" title="${escapeHtml(r.latest_post_at || '')}">${escapeHtml(fmtRel(r.latest_post_at))}</span>
+          </div>
+          <div class="a-row-meta">${escapeHtml(r.squad_name || r.squad_id || '')}</div>
+          <div class="a-row-snippet">${escapeHtml(r.latest_snippet || '')}</div>
+          <div class="a-row-foot">
+            ${statusBadge(r.status)}
+            <span class="sep">·</span>
+            <span>${r.post_count} posts</span>
+            <span class="sep">·</span>
+            <span>${r.participant_count} people</span>
+            <span class="sep">·</span>
+            <span>@${escapeHtml(avName)}</span>
+          </div>
+        </div>`;
+      li.addEventListener('click', () => selectThread(r.thread_id));
+      listEl.appendChild(li);
+    }
+  }
+
+  function setLoading(on) {
+    loadingEl.hidden = !on;
+    if (on) listEl.style.opacity = '0.4';
+    else    listEl.style.opacity = '';
+  }
+
+  function setError(msg) {
+    if (!msg) { errorBanner.hidden = true; return; }
+    errorBanner.hidden = false;
+    errorBanner.querySelector('[data-msg]').textContent = '加载失败：' + msg;
+  }
+
+  function updateUnreadBadge() {
+    // v0.1: 没有 per-user unread 后端字段。产品信号由 designer 锁为
+    // 「有任何未解决的 thread 」——这里近似用「any non-closed thread」。
+    // icon-rail 总是窄状态，只贴 8px 红点，不显示数字 badge（留给未来 hover/expanded）。
+    const hasAny = state.rows.some(r => !r.closed);
+    if (iconRailDot) iconRailDot.hidden = !hasAny;
+    if (iconRailBadge) iconRailBadge.hidden = true;
+  }
+
+  /* ---- fetch ---- */
+  async function fetchActivity(useIfMod = true) {
+    const headers = {};
+    if (useIfMod && state.lastModified) headers['If-Modified-Since'] = state.lastModified;
+    let resp;
+    try {
+      resp = await fetch('/api/activity?filter=' + encodeURIComponent(state.filter), { headers });
+    } catch (e) {
+      // network error: bump failure streak; only show a banner after 2 in a row,
+      // and prefer offline (mutually exclusive with error).
+      state.failStreak += 1;
+      if (state.failStreak >= 2) {
+        // show only one of the two banners. If browser reports offline, prefer offline.
+        const isOffline = (typeof navigator !== 'undefined') && navigator.onLine === false;
+        if (isOffline) {
+          offlineBanner.hidden = false;
+          setError(null);
+        } else if (state.everSucceeded) {
+          // we had data once and now fetch fails: real error
+          offlineBanner.hidden = true;
+          setError(e.message || String(e));
+        } else {
+          // never succeeded yet: keep banners hidden, list empty-state will tell the story
+          offlineBanner.hidden = true;
+          setError(null);
+        }
+      }
+      return null;
+    }
+    // any HTTP response means we're not offline; clear offline
+    offlineBanner.hidden = true;
+    if (resp.status === 304) {
+      state.failStreak = 0;
+      setError(null);
+      return { unchanged: true };
+    }
+    if (!resp.ok) {
+      state.failStreak += 1;
+      if (state.failStreak >= 2 && state.everSucceeded) setError('HTTP ' + resp.status);
+      return null;
+    }
+    state.failStreak = 0;
+    state.everSucceeded = true;
+    setError(null);
+    const lm = resp.headers.get('Last-Modified');
+    if (lm) state.lastModified = lm;
+    const data = await resp.json();
+    return { rows: data.threads || [] };
+  }
+
+  async function loadInitial() {
+    setLoading(true);
+    const r = await fetchActivity(false);
+    setLoading(false);
+    if (r && r.rows) {
+      state.rows = r.rows;
+      state.lastSeenLatest = r.rows[0]?.latest_post_at || null;
+      state.firstLoad = false;
+      renderList();
+      updateUnreadBadge();
+    } else if (!r) {
+      renderList();
+    }
+  }
+
+  async function poll() {
+    const r = await fetchActivity(true);
+    if (!r) return;
+    if (r.unchanged) return;
+    // detect new activity above current viewport
+    const newest = r.rows[0]?.latest_post_at || null;
+    const wasAtTop = listEl.scrollTop <= 8;
+    if (newest && newest !== state.lastSeenLatest && !wasAtTop) {
+      // count rows ahead of last seen
+      let count = 0;
+      for (const row of r.rows) {
+        if (row.latest_post_at === state.lastSeenLatest) break;
+        count++;
+      }
+      state.pendingNew = count || 1;
+      newChip.hidden = false;
+      newChip.querySelector('[data-count]').textContent = state.pendingNew;
+    }
+    state.rows = r.rows;
+    if (wasAtTop) state.lastSeenLatest = newest;
+    renderList();
+    updateUnreadBadge();
+  }
+
+  function schedulePoll() {
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(async () => {
+      try { await poll(); } catch (_) {}
+      if (!view.hidden) schedulePoll();
+    }, POLL_MS);
+  }
+
+  /* ---- detail (right pane, read-only) ---- */
+  async function selectThread(tid) {
+    state.selected = tid;
+    renderList(); // updates selected class
+    detailEmpty.hidden = true;
+    detailHeader.hidden = false;
+    detailLoading.hidden = false;
+    detailError.hidden = true;
+    detailPosts.hidden = true;
+    const myReq = ++state.detailReq;
+    location.hash = '#/activity/' + tid;
+    try {
+      const resp = await fetch('/api/threads/' + encodeURIComponent(tid));
+      if (myReq !== state.detailReq) return; // race
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      renderDetail(data);
+    } catch (e) {
+      if (myReq !== state.detailReq) return;
+      detailLoading.hidden = true;
+      detailError.hidden = false;
+      detailError.querySelector('[data-msg]').textContent = '加载失败：' + (e.message || e);
+      detailError.querySelector('[data-retry]').onclick = () => selectThread(tid);
+    }
+  }
+
+  function renderDetail(t) {
+    detailLoading.hidden = true;
+    detailError.hidden = true;
+    detailPosts.hidden = false;
+    detailTitle.textContent = t.title || t.preview || '(empty)';
+    detailSub.textContent = `${t.created_by || '?'} started · ${t.post_count || 0} posts · ${t.in_progress ? 'open' : 'closed'}`;
+    // link to home view filtered to that squad+thread for replies
+    detailOpenLink.href = '#/squads';
+    detailOpenLink.dataset.squadId = t.squad_id || '';
+    detailOpenLink.dataset.threadId = t.thread_id || '';
+    detailOpenLink.onclick = (e) => {
+      e.preventDefault();
+      location.hash = '#/squads';
+      // try to select squad + thread in home view
+      try {
+        if (window.__forgeSelectSquadAndThread) {
+          window.__forgeSelectSquadAndThread(t.squad_id, t.thread_id);
+        }
+      } catch (_) {}
+    };
+    const posts = (t.posts || []).filter(p => !p.superseded);
+    if (!posts.length) {
+      detailPosts.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
+      return;
+    }
+    const parts = posts.map(p => {
+      const time = escapeHtml(p.time || p.ts || '');
+      const speaker = escapeHtml(p.speaker || '?');
+      const content = (p.content || '').replace(/[<>]/g, ch => ch === '<' ? '&lt;' : '&gt;');
+      // light markdown: line breaks + bold + code (delegate to marked if available)
+      let html;
+      if (window.marked) {
+        try { html = window.marked.parse(p.content || ''); }
+        catch (_) { html = '<pre>' + escapeHtml(p.content || '') + '</pre>'; }
+      } else {
+        html = '<pre style="white-space:pre-wrap">' + escapeHtml(p.content || '') + '</pre>';
+      }
+      return `<div class="a-detail-post">
+        <div class="a-detail-post-head"><strong>${speaker}</strong> <span class="meta">· ${time}</span></div>
+        <div class="a-detail-post-body markdown-body">${html}</div>
+      </div>`;
+    });
+    detailPosts.innerHTML = parts.join('');
+  }
+
+  function clearDetail() {
+    state.selected = null;
+    detailHeader.hidden = true;
+    detailLoading.hidden = true;
+    detailError.hidden = true;
+    detailPosts.hidden = true;
+    detailEmpty.hidden = false;
+  }
+
+  /* ---- chips ---- */
+  chips.forEach(ch => {
+    ch.addEventListener('click', () => {
+      if (ch.disabled) return;
+      chips.forEach(c => c.classList.toggle('is-active', c === ch));
+      state.filter = ch.dataset.filter;
+      state.firstLoad = true;
+      state.lastModified = null;
+      loadInitial();
+    });
+  });
+
+  /* ---- new-chip click ---- */
+  newChip.addEventListener('click', () => {
+    listEl.scrollTo({ top: 0, behavior: 'smooth' });
+    state.lastSeenLatest = state.rows[0]?.latest_post_at || null;
+    state.pendingNew = 0;
+    newChip.hidden = true;
+  });
+  listEl.addEventListener('scroll', () => {
+    if (listEl.scrollTop <= 8 && state.pendingNew) {
+      state.lastSeenLatest = state.rows[0]?.latest_post_at || null;
+      state.pendingNew = 0;
+      newChip.hidden = true;
+    }
+  });
+
+  errorBanner.querySelector('[data-retry]').addEventListener('click', () => {
+    setError(null);
+    loadInitial();
+  });
+
+  /* ---- entry/exit ---- */
+  window.__forgeActivityActivate = function () {
+    // BUG-2 fix: clear stale banners on entry; let the next fetch decide.
+    setError(null);
+    offlineBanner.hidden = true;
+    state.failStreak = 0;
+    if (state.rows.length === 0) {
+      loadInitial().then(() => schedulePoll());
+    } else {
+      renderList();
+      updateUnreadBadge();
+      schedulePoll();
+    }
+  };
+  window.__forgeActivityDeactivate = function () {
+    if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+  };
+  window.__forgeActivitySelect = function (tid) { selectThread(tid); };
+
+  // Background heartbeat for the icon-rail red dot (every 60s when not in Activity)
+  setInterval(async () => {
+    if (!view.hidden) return; // foreground poll handles it
+    try {
+      const r = await fetchActivity(true);
+      if (r && r.rows) { state.rows = r.rows; updateUnreadBadge(); }
+    } catch (_) {}
+  }, 60000);
 })();
