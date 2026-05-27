@@ -575,6 +575,10 @@ function markThreadSeen(threadId, atMs) {
 
 function isThreadUnread(t) {
   if (!t || !t.thread_id) return false;
+  // 正在看这个 thread → 从不计未读。避免 SSE 推新 post 进 currentThread
+  // 时、refreshThreadsForCurrentSquad 与 markThreadSeen 之间的 race 让
+  // squad badge 反复点亮。同时保证“打开后立刻减 1 / 为 0 时消失”。
+  if (t.thread_id === state.currentThreadId) return false;
   const lp = t.last_post_at || 0;
   if (!lp) return false;
   const seen = _lastSeen[t.thread_id] || 0;
@@ -792,7 +796,7 @@ function renderThreadList(threads) {
 
     const li = document.createElement('li');
     const closedCls = t.in_progress ? '' : ' thread-item--closed';
-    const unread = isThreadUnread(t) && t.thread_id !== state.currentThreadId;
+    const unread = isThreadUnread(t);
     li.className = 'thread-item' + closedCls
       + (t.thread_id === state.currentThreadId ? ' active' : '')
       + (unread ? ' thread-item--unread' : '');
