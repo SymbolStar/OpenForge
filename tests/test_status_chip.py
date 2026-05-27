@@ -163,3 +163,33 @@ def test_retry_endpoint_redispatches(store, monkeypatch):
     assert out["status"] == 200
     assert out["obj"]["phase"] == "thinking"
     assert calls == [(t["thread_id"], "milk", t["posts"][0]["id"], chip["post_id"])]
+
+
+def test_from_chip_post_id_in_wire_payload(server):
+    """Regression guard for PR #31 follow-up: dora caught that the field
+    was in events + projection but missing from _serializable_post, so
+    `GET /api/threads/:tid` returned null and the front-end chip→reply
+    pairing silently failed. Assert the field round-trips on the wire.
+    """
+    import urllib.request as _u
+
+    def post(url: str, body: dict):
+        req = _u.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
+            method="POST",
+        )
+        with _u.urlopen(req, timeout=2) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    post(f"{server}/api/squads", {"id": "sq", "name": "sq", "members": ["scott"], "chair": "scott"})
+    thread = post(f"{server}/api/squads/sq/threads", {"content": "hello", "created_by": "scott"})
+    tid = thread["thread_id"]
+    import forge_store as store
+    chip = store.add_thread_post(tid, "__router__", "milk thinking", post_type="status_chip", phase="thinking")
+    store.add_thread_post(tid, "milk", "real reply", from_chip_post_id=chip["post_id"])
+    with _u.urlopen(f"{server}/api/threads/{tid}", timeout=2) as r:
+        wire = json.loads(r.read().decode("utf-8"))
+    reply = next(p for p in wire["posts"] if p["speaker"] == "milk")
+    assert reply["from_chip_post_id"] == chip["post_id"]
