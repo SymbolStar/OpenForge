@@ -239,6 +239,85 @@ def _squad_with_validity(squad: dict | None) -> dict | None:
     return out
 
 
+# ─── Activity feed helpers (v0.5+) ─────────────────────────────────────
+_ROUTER_SPEAKER = "__router__"
+_IDLE_THRESHOLD_SEC = 60 * 60  # 1h → idle
+
+
+def _format_http_date(iso_ts: str | None) -> str | None:
+    if not iso_ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(iso_ts)
+        dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    except Exception:
+        return None
+
+
+def _activity_row_for_thread(thread_id: str, squad_name_by_id: dict[str, str]) -> dict | None:
+    m = store.project_thread(thread_id)
+    if m is None:
+        return None
+    posts = [p for p in m.get("posts") or [] if not p.get("superseded")]
+    if not posts:
+        return None
+    latest_human = None
+    for p in reversed(posts):
+        spk = p.get("speaker") or ""
+        if spk and spk != _ROUTER_SPEAKER:
+            latest_human = p
+            break
+    latest = latest_human or posts[-1]
+    snippet_src = (latest.get("content") or "").strip()
+    snippet = " ".join(snippet_src.split())[:120]
+    last_post_at = posts[-1].get("ts") or m.get("last_post_at") or m.get("started_at")
+    closed = m.get("closed_at") is not None
+    status = "in-progress"
+    if closed:
+        status = "resolved"
+    else:
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(last_post_at) if last_post_at else None
+            if dt is not None:
+                now = datetime.now(timezone.utc)
+                if (now - dt.astimezone(timezone.utc)).total_seconds() > _IDLE_THRESHOLD_SEC:
+                    status = "idle"
+        except Exception:
+            pass
+    return {
+        "thread_id": thread_id,
+        "title": m.get("title") or (m.get("preview") or "")[:60] or "(empty)",
+        "squad_id": m.get("squad_id"),
+        "squad_name": squad_name_by_id.get(m.get("squad_id") or "", m.get("squad_id") or ""),
+        "latest_post_at": last_post_at,
+        "latest_snippet": snippet,
+        "latest_author": latest.get("speaker") or "",
+        "latest_author_human": (latest_human or {}).get("speaker") or "",
+        "post_count": len(posts),
+        "participant_count": len(m.get("participants") or []),
+        "started_by": m.get("created_by"),
+        "status": status,
+        "closed": closed,
+    }
+
+
+def _build_activity_rows() -> tuple[list[dict], str | None]:
+    squad_name_by_id: dict[str, str] = {}
+    for sq in store.list_squads(include_archived=True):
+        squad_name_by_id[sq.get("id") or ""] = sq.get("name") or sq.get("id") or ""
+    rows: list[dict] = []
+    for tid in store.list_thread_ids():
+        row = _activity_row_for_thread(tid, squad_name_by_id)
+        if row is not None:
+            rows.append(row)
+    rows.sort(key=lambda r: r.get("latest_post_at") or "", reverse=True)
+    newest = rows[0]["latest_post_at"] if rows else None
+    return rows, _format_http_date(newest)
+
+
 # ─── HTTP handler ─────────────────────────────────────────────────────
 class OpenForgeHandler(BaseHTTPRequestHandler):
     server_version = "OpenForge/0.4"
@@ -436,6 +515,25 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             squads = store.list_squads(include_archived=include_archived)
             squads = [_squad_with_validity(s) for s in squads]
             self._json(squads)
+            return
+
+        # v0.5+: Activity feed — all threads across all squads, latest first.
+        # Supports If-Modified-Since for cheap 304s on the 10s poll loop.
+        if path == "/api/activity":
+            qs = parse_qs(url.query or "")
+            flt = (qs.get("filter") or ["all"])[0]
+            rows, last_mod = _build_activity_rows()
+            ims = self.headers.get("If-Modified-Since")
+            if ims and last_mod and ims.strip() == last_mod:
+                self.send_response(304)
+                self.send_header("Last-Modified", last_mod)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            # filter=me/unread/squads → v0.1 no backend data, return same as all
+            payload = {"filter": flt, "threads": rows}
+            extra = {"Last-Modified": last_mod} if last_mod else None
+            self._json(payload, extra_headers=extra)
             return
 
         if path == "/api/agents":
