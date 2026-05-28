@@ -554,12 +554,38 @@ async function apiJson(url, options) {
 // happens on selectThread and on every SSE refresh of the *currently
 // open* thread (user is looking at it right now).
 const LAST_SEEN_KEY = 'openforge:lastSeen:v1';
+
+// Backend ships `last_post_at` as an ISO-8601 *string* (forge_store.py:
+// `model["last_post_at"] = last_post["ts"]`). Some call sites pass
+// `Date.now()` ms when no better timestamp is available. Normalize every
+// timestamp through this helper before storing or comparing — mixing
+// strings and numbers makes `>` do lexicographic compare and breaks
+// unread completely (every thread looks unread forever, badge never
+// drops to 0). 2026-05-28 bug found by scott.
+function _normTs(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v > 0 ? v : 0;
+  if (typeof v === 'string') {
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  return 0;
+}
+
 let _lastSeen = (() => {
   try {
     const raw = localStorage.getItem(LAST_SEEN_KEY);
     if (!raw) return {};
     const obj = JSON.parse(raw);
-    return (obj && typeof obj === 'object') ? obj : {};
+    if (!obj || typeof obj !== 'object') return {};
+    // Migrate any legacy non-number entries (string/ISO) to ms so the
+    // comparison in isThreadUnread always sees number-vs-number.
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const n = _normTs(v);
+      if (n > 0) out[k] = n;
+    }
+    return out;
   } catch { return {}; }
 })();
 
@@ -567,9 +593,9 @@ function _persistLastSeen() {
   try { localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(_lastSeen)); } catch {}
 }
 
-function markThreadSeen(threadId, atMs) {
+function markThreadSeen(threadId, at) {
   if (!threadId) return;
-  const ts = (typeof atMs === 'number' && atMs > 0) ? atMs : Date.now();
+  const ts = _normTs(at) || Date.now();
   const prev = _lastSeen[threadId] || 0;
   if (ts > prev) {
     _lastSeen[threadId] = ts;
@@ -583,7 +609,7 @@ function isThreadUnread(t) {
   // 时、refreshThreadsForCurrentSquad 与 markThreadSeen 之间的 race 让
   // squad badge 反复点亮。同时保证“打开后立刻减 1 / 为 0 时消失”。
   if (t.thread_id === state.currentThreadId) return false;
-  const lp = t.last_post_at || 0;
+  const lp = _normTs(t.last_post_at);
   if (!lp) return false;
   const seen = _lastSeen[t.thread_id] || 0;
   return lp > seen;
@@ -626,7 +652,8 @@ async function loadSquads() {
       for (const squad of state.squads) {
         const d = state.squadDetails.get(squad.id);
         for (const t of (d?.threads || [])) {
-          if (t.thread_id && t.last_post_at) _lastSeen[t.thread_id] = t.last_post_at;
+          const lp = _normTs(t.last_post_at);
+          if (t.thread_id && lp) _lastSeen[t.thread_id] = lp;
         }
       }
       _persistLastSeen();
