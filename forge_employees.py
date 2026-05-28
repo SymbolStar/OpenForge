@@ -33,11 +33,18 @@ Public API:
     list_employees() -> list[str]   # sorted agent ids
     is_employee(agent_id) -> bool
     EMPLOYEE_WORKSPACE_PREFIX        # for tests and introspection
-    RUNTIME_EMPLOYEE_IDS             # the opt-in runtime allowlist
+    RUNTIME_EMPLOYEE_IDS             # legacy runtime allowlist, hotfixed empty
+    ACP_EMPLOYEE_OPT_IN              # ACP-capable employee ids OpenForge accepts
+    acp_employee_ids()               # ACP employees enabled in OpenClaw config
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import time
 from pathlib import Path
+
+from agent_runtime import _resolve_openclaw_bin
 
 EMPLOYEE_WORKSPACE_PREFIX = "workspace-"
 EMPLOYEE_MARKER = "SOUL.md"
@@ -47,7 +54,13 @@ AGENTS_DIRNAME = "agents"
 # workspace-<id>/SOUL.md. Keep this list tight: only generic LLM workers
 # the user might plausibly @ in a squad. NEVER include 'main' or
 # 'claude' — those are infrastructure.
-RUNTIME_EMPLOYEE_IDS: frozenset[str] = frozenset({"codex", "claude-code"})
+RUNTIME_EMPLOYEE_IDS: frozenset[str] = frozenset()
+ACP_EMPLOYEE_OPT_IN: frozenset[str] = frozenset({
+    "codex", "claude", "opencode", "gemini", "copilot", "qwen", "pi",
+})
+OPENCLAW_BIN = _resolve_openclaw_bin()
+_ACP_ALLOWED_CACHE_TTL_SECONDS = 60.0
+_acp_allowed_cache: tuple[float, frozenset[str]] | None = None
 
 
 def _openclaw_root() -> Path:
@@ -60,12 +73,49 @@ def _has_agent_runtime(root: Path, agent_id: str) -> bool:
     return agent_dir.exists() and agent_dir.is_dir()
 
 
+def _acp_allowed_from_openclaw() -> frozenset[str]:
+    """Mirror OpenClaw's acp.allowedAgents config with a short cache."""
+    global _acp_allowed_cache
+    now = time.monotonic()
+    if _acp_allowed_cache is not None:
+        cached_at, cached = _acp_allowed_cache
+        if now - cached_at < _ACP_ALLOWED_CACHE_TTL_SECONDS:
+            return cached
+    try:
+        raw = subprocess.check_output(
+            [OPENCLAW_BIN, "config", "get", "acp.allowedAgents", "--json"],
+            text=True,
+            timeout=5,
+        )
+        parsed = json.loads(raw)
+    except Exception:
+        allowed = frozenset()
+    else:
+        if isinstance(parsed, list):
+            allowed = frozenset(
+                str(item).strip().lower()
+                for item in parsed
+                if str(item).strip()
+            )
+        elif isinstance(parsed, str) and parsed.strip():
+            allowed = frozenset({parsed.strip().lower()})
+        else:
+            allowed = frozenset()
+    _acp_allowed_cache = (now, allowed)
+    return allowed
+
+
+def acp_employee_ids() -> frozenset[str]:
+    """Return ACP employee ids opted into both OpenForge and OpenClaw."""
+    return frozenset(ACP_EMPLOYEE_OPT_IN & _acp_allowed_from_openclaw())
+
+
 def list_employees() -> list[str]:
     """Return sorted list of agent ids that qualify as squad members.
 
     Includes:
       - Curated employees: workspace-<id>/SOUL.md + agents/<id>/ both present.
-      - Runtime LLM-CLI agents from RUNTIME_EMPLOYEE_IDS whose
+      - ACP CLI agents enabled in OpenClaw config whose
         agents/<id>/ exists (no SOUL.md required).
 
     Returns [] if ~/.openclaw doesn't exist (fresh install).
@@ -92,8 +142,8 @@ def list_employees() -> list[str]:
             # not an employee (e.g. workspace-clawdesign -> agent `designer`).
             continue
         out.add(agent_id)
-    # 2. Allowlisted runtime LLM-CLI agents (codex, claude-code, …).
-    for runtime_id in RUNTIME_EMPLOYEE_IDS:
+    # 2. ACP CLI agents enabled in OpenClaw config (codex, claude, …).
+    for runtime_id in acp_employee_ids():
         if _has_agent_runtime(root, runtime_id):
             out.add(runtime_id)
     return sorted(out)
@@ -103,14 +153,14 @@ def is_employee(agent_id: str) -> bool:
     """True iff `agent_id` qualifies as a squad member.
 
     Mirrors list_employees(): curated workspace + agents/ OR an
-    allowlisted runtime id with agents/<id>/.
+    ACP-enabled runtime id with agents/<id>/.
     """
     if not agent_id or not isinstance(agent_id, str):
         return False
     if "/" in agent_id or ".." in agent_id:
         return False
     root = _openclaw_root()
-    if agent_id in RUNTIME_EMPLOYEE_IDS:
+    if agent_id in acp_employee_ids():
         return _has_agent_runtime(root, agent_id)
     marker = root / f"{EMPLOYEE_WORKSPACE_PREFIX}{agent_id}" / EMPLOYEE_MARKER
     if not (marker.exists() and marker.is_file()):
