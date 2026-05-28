@@ -35,10 +35,17 @@ according to the contract.  Adapters never write to the socket directly.
 from __future__ import annotations
 
 import json as _json
+import re
 import secrets
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, datetime
 from typing import Any
+
+try:  # py3.9+
+    from zoneinfo import ZoneInfo  # type: ignore
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 
 # ── public types ────────────────────────────────────────────────────
 
@@ -83,6 +90,91 @@ def classify_intent(query: str) -> str:
     return "thread_search" if any(t in q for t in triggers) else "general_qa"
 
 
+# ── light general-QA built-ins ─────────────────────────────────────
+#
+# Until M2 plugs in codex, the stub still has to satisfy PRD A-4
+# ("asking the time must be answered in ≤5s"). We answer a small
+# closed set of trivially deterministic questions locally so the user
+# never sees a placeholder for things the agent obviously can do.
+# Anything we can't answer falls back to a *neutral* user-facing copy
+# — no "M1 / M2 / stub" leakage allowed in user-visible text (alice's
+# product red line, 2026-05-28).
+
+_TIME_QUERY_RE = re.compile(
+    r"(几点|什么时间|现在时间|当前时间|当前时刻|现在.*时刻|what.?s the time|current time|time now|date today|今天.*几号|今天.*日期|today.?s date)",
+    re.IGNORECASE,
+)
+
+# A tiny city → IANA tz map. Kept intentionally small; M2 wires the
+# real timezone resolver. Lowercased keys.
+_TZ_HINTS: dict[str, str] = {
+    "asia/shanghai": "Asia/Shanghai",
+    "shanghai": "Asia/Shanghai",
+    "上海": "Asia/Shanghai",
+    "北京": "Asia/Shanghai",
+    "beijing": "Asia/Shanghai",
+    "asia/tokyo": "Asia/Tokyo",
+    "tokyo": "Asia/Tokyo",
+    "东京": "Asia/Tokyo",
+    "america/new_york": "America/New_York",
+    "new york": "America/New_York",
+    "纽约": "America/New_York",
+    "europe/london": "Europe/London",
+    "london": "Europe/London",
+    "伦敦": "Europe/London",
+    "utc": "UTC",
+    "gmt": "UTC",
+}
+
+
+def _resolve_tz(query: str, client: Mapping[str, Any]) -> str | None:
+    """Pick a tz: explicit query mention > client.tz > None."""
+    q = query.lower()
+    for key, tz in _TZ_HINTS.items():
+        if key in q:
+            return tz
+    tz = client.get("tz") if isinstance(client, Mapping) else None
+    if isinstance(tz, str) and tz:
+        return tz
+    return None
+
+
+def answer_general_qa(query: str, client: Mapping[str, Any]) -> str | None:
+    """
+    Local quick-answer for a tiny closed set of general questions.
+
+    Returns the answer string, or None if we have no built-in handler
+    (caller then falls back to the neutral user-facing copy).
+    """
+    if not query:
+        return None
+    if _TIME_QUERY_RE.search(query):
+        tz_name = _resolve_tz(query, client) or "UTC"
+        try:
+            if ZoneInfo is None:
+                raise RuntimeError("zoneinfo unavailable")
+            now = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            # Unknown tz string — degrade to UTC rather than apologise.
+            tz_name = "UTC"
+            now = datetime.now(UTC)
+        return (
+            f"{tz_name} 当前时间是 "
+            f"{now.strftime('%Y-%m-%d %H:%M')} "
+            f"({now.strftime('%A')})."
+        )
+    return None
+
+
+# User-facing fallback copy. Intentionally neutral, no milestone /
+# implementation jargon. Two variants so general_qa and thread_search
+# read naturally to the user; both still produce identical wire shape
+# (empty chips) so the A-7.6 unauthorized-vs-no-match
+# indistinguishability is preserved.
+_FALLBACK_GENERAL = "暂时还回答不了这条问题。跨 thread 检索功能也正在接通中，稍后就能帮你找历史讨论。"
+_FALLBACK_SEARCH = "跨 thread 检索功能正在接通中，稍后就能帮你找到对应的历史讨论。临时问题可以直接问我。"
+
+
 # ── stub adapter ────────────────────────────────────────────────────
 
 def stub_adapter(
@@ -105,13 +197,26 @@ def stub_adapter(
     """
     started = now()
     request_id = new_request_id()
-    intent = classify_intent(str(payload.get("query") or ""))
+    query = str(payload.get("query") or "")
+    client = payload.get("client") if isinstance(payload, Mapping) else None
+    if not isinstance(client, Mapping):
+        client = {}
+    intent = classify_intent(query)
 
     yield ("meta", {"intent": intent, "request_id": request_id})
 
-    # Canned body — kept intentionally generic so it doubles as the
-    # zero-result fallback (see A-7.6 visual-indistinguishability rule).
-    body = "（M1 stub）暂未接入检索，先返回占位回答。后端 M2 上线后会返回真实匹配的 thread。"
+    # Pick body text:
+    #   1. general_qa with a local built-in answer (time / date) → use it.
+    #   2. otherwise neutral fallback copy, branched by intent so the
+    #      sentence reads naturally. NEVER include milestone / stub
+    #      jargon ("M1" / "M2" / "stub" / "adapter") in user-visible
+    #      text — alice's product red line, 2026-05-28.
+    body: str | None = None
+    if intent == "general_qa":
+        body = answer_general_qa(query, client)
+    if body is None:
+        body = _FALLBACK_SEARCH if intent == "thread_search" else _FALLBACK_GENERAL
+
     for chunk in _chunk_text(body, size=4):
         yield ("token", {"text": chunk})
 
@@ -124,7 +229,7 @@ def stub_adapter(
             "latency_ms": latency_ms,
             "chip_count": 0,
             "chip_total": 0,
-            "tokens_in": len(str(payload.get("query") or "")),
+            "tokens_in": len(query),
             "tokens_out": len(body),
         },
     )

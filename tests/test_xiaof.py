@@ -235,3 +235,53 @@ def test_http_ask_adapter_crash_maps_to_internal(server, monkeypatch):
     chips_event = next(e for e in events if e[0] == "chips")
     assert chips_event[1]["chips"] == []
     assert chips_event[1]["chip_total"] == 0
+
+
+# ── user-facing copy + general_qa built-ins ────────────────────────
+
+
+def _stub_body(query: str, client: dict | None = None) -> str:
+    import forge_xiaof
+    events = list(forge_xiaof.stub_adapter({"query": query, "client": client or {}}))
+    return "".join(p["text"] for k, p in events if k == "token")
+
+
+def test_stub_copy_has_no_engineering_jargon(fake_home):
+    """Product red line: no M1/M2/stub/adapter/milestone leakage."""
+    forbidden = ("M1", "M2", "stub", "Stub", "STUB", "adapter", "milestone", "占位")
+    for q in [
+        "你好",
+        "上次 hero 高度的决定在哪",
+        "今天 Asia/Shanghai 几点",
+        "what's the time",
+        "随便说点啥",
+    ]:
+        body = _stub_body(q)
+        for bad in forbidden:
+            assert bad not in body, f"forbidden token {bad!r} leaked in: {body!r}"
+
+
+def test_stub_answers_time_question_shanghai(fake_home):
+    body = _stub_body("现在 Asia/Shanghai 几点")
+    assert "Asia/Shanghai" in body
+    # Format: YYYY-MM-DD HH:MM
+    import re
+    assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", body), body
+
+
+def test_stub_answers_time_question_via_client_tz(fake_home):
+    body = _stub_body("现在几点", client={"tz": "Asia/Tokyo"})
+    assert "Asia/Tokyo" in body
+
+
+def test_stub_general_qa_fallback_when_no_builtin(fake_home):
+    body = _stub_body("你好")
+    # Neutral copy: mentions cross-thread retrieval coming online, not jargon.
+    assert "检索" in body
+    assert "M" not in body or "M1" not in body and "M2" not in body
+
+
+def test_stub_search_intent_fallback_copy(fake_home):
+    body = _stub_body("上次 hero 高度的决定在哪")
+    assert "检索" in body or "thread" in body.lower()
+    assert "占位" not in body
