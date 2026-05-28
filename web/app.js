@@ -831,10 +831,13 @@ function renderThreadList(threads) {
     li.className = 'thread-item' + closedCls
       + (t.thread_id === state.currentThreadId ? ' active' : '')
       + (unread ? ' thread-item--unread' : '');
-    // dora's call: live-dot 和 unread-dot 语义重合。in_progress 只显示绿点
-    // （已覆盖有动静），unread 仅在 closed thread 上加红点；in_progress 的 unread
-    // 靠 preview 加粗 + squad badge 传达。
-    const liveDot = t.in_progress ? '<span class="live-dot"></span>' : '';
+    // dora's v2 规则：dot 语义从“thread 活着”收敛成“有未读”。
+    //   open   + 未读 → 绿色 pulse dot
+    //   open   + 已读 → 无 dot
+    //   closed + 未读 → 红色实心 dot
+    //   closed + 已读 → 无 dot
+    // open/closed 这个状态本身靠 🔒 chip / 列表分组 表达，不需要再拼一层 dot。
+    const liveDot = (unread && t.in_progress) ? '<span class="live-dot"></span>' : '';
     const unreadDot = (unread && !t.in_progress) ? '<span class="unread-dot" title="有新消息"></span>' : '';
     const closedChip = t.in_progress
       ? ''
