@@ -176,6 +176,39 @@ cmd_status() {
   echo "Log:     $LOG_PATH"
 }
 
+# Wait until the configured port is free (no listener). Returns 0 on
+# success, 1 on timeout. Avoids the launchd race where the new server
+# tries to bind :PORT before the old process has released it, fails to
+# bind, exits, and (depending on plist KeepAlive) may not be retried.
+wait_port_free() {
+  local timeout="${1:-5}"
+  local i=0
+  while [ "$i" -lt "$((timeout * 10))" ]; do
+    if ! lsof -ti:"$PORT" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Wait until the configured port has a listener. Returns 0 on success,
+# 1 on timeout. Used after `bootstrap` so `forge status`/`forge update`
+# reflect the steady state rather than the half-booted launchd snapshot.
+wait_port_listening() {
+  local timeout="${1:-8}"
+  local i=0
+  while [ "$i" -lt "$((timeout * 10))" ]; do
+    if lsof -ti:"$PORT" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
 cmd_start() {
   require_repo
   [ -f "$PLIST_PATH" ] || { log "no plist yet, generating…"; write_plist; }
@@ -183,8 +216,20 @@ cmd_start() {
     log "already loaded; use 'forge restart' if you want a fresh process"
     return 0
   fi
+  # If a stray listener still holds :PORT, the freshly-bootstrapped agent
+  # will EADDRINUSE and exit before KeepAlive can rescue it. Wait briefly.
+  if ! wait_port_free 5; then
+    local pid; pid="$(port_pid || true)"
+    log "$(c_warn "port :${PORT} still busy after 5s (pid ${pid:-?}); killing")"
+    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+    sleep 0.3
+  fi
   launchctl bootstrap "$(domain)" "$PLIST_PATH"
-  sleep 1
+  # Block until the server actually binds the port (or give up after 8s
+  # and let cmd_status show the warning). Without this, `forge update`
+  # routinely printed `pid=N / Port: not listening` because we snapshot
+  # status before the python interpreter finishes import.
+  wait_port_listening 8 || true
   cmd_status
 }
 
@@ -195,17 +240,24 @@ cmd_stop() {
   else
     log "agent already stopped"
   fi
-  # If the loaded agent is gone, kill any orphan listener too.
-  local pid; pid="$(port_pid || true)"
-  if [ -n "$pid" ]; then
-    log "killing orphan listener on :${PORT} (pid ${pid})"
-    kill -9 "$pid" 2>/dev/null || true
+  # Wait for the SIGTERM-draining server to actually release the socket
+  # before we let cmd_start try to bind it again. SO_REUSEADDR + launchd
+  # ThrottleInterval don't help here — the old PID still owns :PORT for
+  # a few hundred ms after `bootout` returns.
+  if ! wait_port_free 5; then
+    local pid; pid="$(port_pid || true)"
+    if [ -n "$pid" ]; then
+      log "killing orphan listener on :${PORT} (pid ${pid})"
+      kill -9 "$pid" 2>/dev/null || true
+      wait_port_free 2 || true
+    fi
   fi
 }
 
 cmd_restart() {
   cmd_stop
-  sleep 0.5
+  # cmd_stop already blocks on port-free; the extra fixed sleep used to
+  # be a hopeful guess and is no longer needed.
   cmd_start
 }
 
