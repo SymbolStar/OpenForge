@@ -47,7 +47,7 @@ AGENTS_DIRNAME = "agents"
 # workspace-<id>/SOUL.md. Keep this list tight: only generic LLM workers
 # the user might plausibly @ in a squad. NEVER include 'main' or
 # 'claude' — those are infrastructure.
-RUNTIME_EMPLOYEE_IDS: frozenset[str] = frozenset({"codex", "claude-code"})
+RUNTIME_EMPLOYEE_IDS: frozenset[str] = frozenset()
 
 
 def _openclaw_root() -> Path:
