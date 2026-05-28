@@ -59,6 +59,7 @@ import forge_refs
 import forge_session_search
 import forge_store as store
 import forge_uploads
+import forge_xiaof
 import post_router
 
 FILE_NAME_ROUTE_RE = r"([A-Za-z0-9_.\-]+\.md)"
@@ -394,6 +395,89 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return True
         except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
             return False
+
+    # ─── 小F (global agent) — M1 ─────────────────────────────────
+    def _xiaof_open_sse(self) -> bool:
+        """Open SSE response headers. Returns False if the client dropped.
+
+        Uses Connection: close so simple HTTP clients (urllib, fetch with
+        a non-streaming reader) know the stream is done when the socket
+        closes after the final `done` event. Long-lived broadcast SSE
+        (see _sse_stream) keeps the socket open; xiaof streams are
+        bounded by `done` so closing the connection is the right signal.
+        """
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            return False
+        # Force the BaseHTTPRequestHandler to close the connection after
+        # this response so the client's blocking read() returns.
+        self.close_connection = True
+        return True
+
+    def _xiaof_ask(self) -> None:
+        """
+        POST /api/xiaof/ask — streaming SSE per API contract v0.1 §2.
+
+        Contract red lines enforced here:
+          - Event order: meta → token* → chips → done
+            (forge_xiaof.stream_to_sse_frames raises if an adapter
+            violates this; we surface the violation as `internal`.)
+          - Error codes: unauth | rate_limited | upstream_failed | internal.
+            `forbidden` MUST NOT appear (A-7.5).
+          - Validation errors before headers go out: respond as SSE
+            so the front-end has a single error path.
+        """
+        opts = self._read_json()
+        if opts is None:
+            # _read_json already wrote a 4xx for parse errors.
+            return
+        try:
+            normalised = forge_xiaof.validate_ask_request(opts)
+        except forge_xiaof.XiaofRequestError as e:
+            if not self._xiaof_open_sse():
+                return
+            self._sse_send_raw(
+                forge_xiaof.sse_frame(
+                    "error",
+                    {"code": e.code, "message": str(e)},
+                )
+            )
+            return
+
+        if not self._xiaof_open_sse():
+            return
+
+        adapter = forge_xiaof.get_adapter()
+        try:
+            stream = adapter(normalised)
+            for frame in forge_xiaof.stream_to_sse_frames(stream):
+                if not self._sse_send_raw(frame):
+                    return
+        except forge_xiaof.XiaofRequestError as e:
+            self._sse_send_raw(
+                forge_xiaof.sse_frame(
+                    "error",
+                    {"code": e.code, "message": str(e)},
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — adapter must not crash the route
+            # Map ANY adapter / framing failure to the contract's
+            # `internal` (never `forbidden`); details go to server log.
+            try:
+                self._sse_send_raw(
+                    forge_xiaof.sse_frame(
+                        "error",
+                        {"code": "internal", "message": "adapter failure"},
+                    )
+                )
+            finally:
+                sys.stderr.write(f"[xiaof] adapter failure: {e!r}\n")
 
     def _json(self, obj, status: int = 200, extra_headers: dict | None = None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -818,6 +902,14 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # 小F global agent — M1: SSE shell + stub adapter.
+        # Contract: [[alice/global-agent-API-contract-v0.1.md]] §2/§7.
+        # Event order is enforced by forge_xiaof.stream_to_sse_frames
+        # so adapter authors can't silently break the front-end parser.
+        if url.path == "/api/xiaof/ask":
+            self._xiaof_ask()
             return
 
         # Image upload (paste-image in composer): POST /api/uploads
