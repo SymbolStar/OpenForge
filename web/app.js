@@ -757,6 +757,33 @@ async function refreshThreadsForCurrentSquad() {
   }
 }
 
+// Refresh *all* loaded squads' detail so the unread badge on every squad
+// in the rail (not just the currently-selected one) reflects new posts.
+// Without this, badges only update when the user clicks into a squad —
+// scott repro 2026-05-28: a thread in another squad got a new post, the
+// squad's red dot didn't appear until he clicked it. Best-effort: per-
+// squad fetch errors are swallowed, the next poll will retry.
+async function refreshAllSquadsForUnread() {
+  if (!state.squads || !state.squads.length) return;
+  const results = await Promise.allSettled(
+    state.squads.map(s => apiJson(`/api/squads/${encodeURIComponent(s.id)}`))
+  );
+  let changed = false;
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value) {
+      state.squadDetails.set(state.squads[i].id, r.value);
+      changed = true;
+    }
+  });
+  if (!changed) return;
+  renderSquadRail();
+  // currently-open squad's middle rail already refreshed by
+  // refreshThreadsForCurrentSquad on the same tick; re-render anyway
+  // so dot/preview stays in sync if poll lapped that path.
+  renderThreadRail();
+  updateUnreadTitle();
+}
+
 // ─── thread rail (middle) ─────────────────────────────────────────────
 function renderThreadRail() {
   const detail = state.squadDetails.get(state.currentSquadId);
@@ -2220,7 +2247,10 @@ function startPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.pollTimer = setInterval(() => {
     if (state.currentThreadId) refreshCurrentThread();
-    if (state.currentSquadId) refreshThreadsForCurrentSquad();
+    // Refresh every squad's detail — unread badges on un-selected squads
+    // need to react to new posts too. This subsumes the per-current-squad
+    // refresh (it's a strict superset).
+    refreshAllSquadsForUnread();
   }, POLL_MS);
 }
 
