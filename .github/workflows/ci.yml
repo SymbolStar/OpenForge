@@ -104,7 +104,12 @@ jobs:
             http://127.0.0.1:17878/api/threads/$TID/posts >/dev/null
 
           # detail
-          curl -sf http://127.0.0.1:17878/api/threads/$TID | python -c 'import json,sys; d=json.load(sys.stdin); assert d["post_count"]==2, d; print("OK", d["post_count"], "posts")'
+          # Note: chair auto-dispatch (V1.1) fires status_chip posts for
+          # the 2 scott messages here even with no @mentions, because
+          # smoke's chair=milk. CI has no openclaw binary so the chips
+          # fail fast (phase=failed) — that's fine, we just need to count
+          # the actual message posts, not the chips.
+          curl -sf http://127.0.0.1:17878/api/threads/$TID | python -c 'import json,sys; d=json.load(sys.stdin); msgs=[p for p in d["posts"] if p["post_type"]=="message"]; assert len(msgs)==2, d; print("OK", len(msgs), "messages,", d["post_count"]-len(msgs), "chips")'
 
           # v0.6 files API smoke (no @ content; router stays out)
           curl -sf http://127.0.0.1:17878/api/files | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("files")==[], d; print("files-empty OK")'
