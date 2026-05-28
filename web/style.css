@@ -2578,3 +2578,9 @@ a.mini-avatar.avatar-link:focus-visible {
   #favorites-rail { padding: 0 12px; max-width: 100%; }
   .favorite-card-preview, .favorite-card-meta { padding-left: 0; }
 }
+
+/* PRD v1.1 nit (judy review #2): dark mode 下 --missing-warn 偏暗。
+   light 用 #D04A4A 在暗底对比度掉档。提到 #FF7A7A 走 WCAG AA。 */
+@media (prefers-color-scheme: dark) {
+  :root { --missing-warn: #FF7A7A; }
+}
