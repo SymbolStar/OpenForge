@@ -148,11 +148,36 @@ def test_read_content_blocked_mime(fake_home, tmp_path):
         forge_refs.read_content(ref["id"])
 
 
-def test_write_content_requires_writable(fake_home, tmp_md):
+def test_write_content_md_always_editable(fake_home, tmp_md):
+    # v1.1 PRD: .md files are editable regardless of writable flag.
     import forge_refs
     ref = forge_refs.register(label="note.md", abs_path=str(tmp_md), source_agent="milk")
+    out = forge_refs.write_content(ref["id"], b"new md\n")
+    assert out["size"] == len(b"new md\n")
+    assert tmp_md.read_bytes() == b"new md\n"
+    assert "etag" in out and len(out["etag"]) == 16
+
+
+def test_write_content_non_md_still_readonly(fake_home, tmp_path):
+    # Non-md falls back to legacy writable=False semantics (read-only).
+    import forge_refs
+    p = tmp_path / "data.txt"
+    p.write_text("hi")
+    ref = forge_refs.register(
+        label="data.txt", abs_path=str(p), source_agent="milk",
+        content_type="text/plain",
+    )
     with pytest.raises(forge_refs.RefReadOnlyError):
         forge_refs.write_content(ref["id"], b"new")
+
+
+def test_write_content_etag_conflict(fake_home, tmp_md):
+    import forge_refs
+    ref = forge_refs.register(label="note.md", abs_path=str(tmp_md), source_agent="milk")
+    with pytest.raises(forge_refs.RefConflictError) as ei:
+        forge_refs.write_content(ref["id"], b"new", if_match="deadbeefdeadbeef")
+    assert ei.value.current_etag
+    assert ei.value.current_content == tmp_md.read_text()
 
 
 def test_write_content_ok(fake_home, tmp_md):
@@ -283,7 +308,24 @@ def test_http_content_round_trip(server, tmp_path):
     assert headers.get("X-Ref-Source-Agent") == "milk"
 
 
-def test_http_put_content_403_when_not_writable(server, tmp_path):
+def test_http_put_content_non_md_400(server, tmp_path):
+    base = server
+    note = tmp_path / "data.txt"
+    note.write_text("v1\n")
+    _, body, _ = _call("POST", f"{base}/api/refs", {
+        "label": "data.txt", "abs_path": str(note), "source_agent": "milk",
+        "content_type": "text/plain",
+    })
+    rid = body["id"]
+    status, _, _ = _call(
+        "PUT", f"{base}/api/refs/{rid}/content", {"content": "v2"},
+    )
+    # Non-md is read-only via the new editable-md path.
+    assert status == 403
+
+
+def test_http_put_content_md_ok_no_writable_flag(server, tmp_path):
+    # v1.1: .md is always editable, no writable flag needed.
     base = server
     note = tmp_path / "note.md"
     note.write_text("v1\n")
@@ -291,29 +333,31 @@ def test_http_put_content_403_when_not_writable(server, tmp_path):
         "label": "note.md", "abs_path": str(note), "source_agent": "milk",
     })
     rid = body["id"]
-    status, _, _ = _call(
-        "PUT", f"{base}/api/refs/{rid}/content",
-        raw=b"v2", headers={"Content-Type": "text/plain"},
+    status, body, _ = _call(
+        "PUT", f"{base}/api/refs/{rid}/content", {"content": "v2\n"},
     )
-    assert status == 403
+    assert status == 200, body
+    assert body["size"] == 3
+    assert "etag" in body and len(body["etag"]) == 16
+    assert note.read_text() == "v2\n"
 
 
-def test_http_put_content_ok_when_writable(server, tmp_path):
+def test_http_put_content_etag_conflict(server, tmp_path):
     base = server
     note = tmp_path / "note.md"
     note.write_text("v1\n")
     _, body, _ = _call("POST", f"{base}/api/refs", {
-        "label": "note.md", "abs_path": str(note),
-        "source_agent": "milk", "writable": True,
+        "label": "note.md", "abs_path": str(note), "source_agent": "milk",
     })
     rid = body["id"]
     status, body, _ = _call(
         "PUT", f"{base}/api/refs/{rid}/content",
-        raw=b"v2", headers={"Content-Type": "text/plain"},
+        {"content": "v2\n"},
+        headers={"If-Match": "deadbeefdeadbeef"},
     )
-    assert status == 200, body
-    assert body["size"] == 2
-    assert note.read_text() == "v2"
+    assert status == 409, body
+    assert body["current_etag"]
+    assert body["current_content"] == "v1\n"
 
 
 def test_http_delete_then_404(server, tmp_path):

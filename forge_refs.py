@@ -30,6 +30,7 @@ Raises (typed):
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import mimetypes
@@ -75,6 +76,15 @@ class RefTooLargeError(ValueError):
 
 class RefBlockedError(PermissionError):
     pass
+
+
+class RefConflictError(PermissionError):
+    """PUT If-Match mismatch (etag changed underneath us)."""
+
+    def __init__(self, current_etag: str, current_content: str):
+        super().__init__("etag mismatch")
+        self.current_etag = current_etag
+        self.current_content = current_content
 
 
 class RefReadOnlyError(PermissionError):
@@ -367,6 +377,10 @@ def list_refs(
     return [r.to_dict() for r in out]
 
 
+def _compute_etag(body: bytes) -> str:
+    return hashlib.sha256(body).hexdigest()[:16]
+
+
 def read_content(ref_id: str) -> tuple[bytes, str, dict]:
     """Return (body_bytes, content_type, ref_dict).
 
@@ -400,8 +414,17 @@ def read_content(ref_id: str) -> tuple[bytes, str, dict]:
     return data, mime, ref.to_dict()
 
 
-def write_content(ref_id: str, body: bytes) -> dict:
-    """Overwrite the referenced file. Requires ref.writable=True."""
+def write_content(ref_id: str, body: bytes, *, if_match: str | None = None) -> dict:
+    """Overwrite the referenced file.
+
+    v1.1 behaviour: `.md` files are always editable regardless of
+    `ref.writable` (per PRD: 「所有人可编辑 / 只 .md」). Non-.md still
+    honours the legacy `writable` flag.
+
+    `if_match` is an ETag string from a prior GET. If supplied and the
+    file has changed underneath, raises RefConflictError carrying the
+    current etag + content so the UI can offer a 3-way decision.
+    """
     if not isinstance(body, (bytes, bytearray)):
         raise RefValidationError("body must be bytes")
     if len(body) > MAX_BYTES:
@@ -411,16 +434,70 @@ def write_content(ref_id: str, body: bytes) -> dict:
         ref = _active.get(ref_id)
     if not ref:
         raise RefNotFoundError(ref_id)
-    if not ref.writable:
-        raise RefReadOnlyError(ref_id)
     p = Path(ref.abs_path)
+    is_md = p.suffix.lower() == ".md"
+    if not is_md and not ref.writable:
+        raise RefReadOnlyError(ref_id)
+    if not is_md:
+        # v1: only .md is editable through this path (PRD AC). Non-md
+        # falls back to legacy writable semantics handled above; reject
+        # the rest defensively.
+        raise RefValidationError("only .md files are editable in v1")
     if p.is_symlink():
         raise RefBlockedError("symlinks not allowed")
     if not p.exists() or not p.is_file():
         raise RefMissingError(ref.abs_path)
-    p.write_bytes(bytes(body))
+    # Read current bytes to compute current etag (cheap for md).
+    try:
+        current = p.read_bytes()
+    except OSError as e:
+        raise RefMissingError(str(e)) from None
+    current_etag = _compute_etag(current)
+    if if_match is not None and if_match != current_etag:
+        try:
+            current_text = current.decode("utf-8", errors="replace")
+        except Exception:
+            current_text = ""
+        raise RefConflictError(current_etag, current_text)
+    # Atomic write: tmp → fsync → os.replace.
+    body_bytes = bytes(body)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with open(tmp, "wb") as fh:
+        fh.write(body_bytes)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp, p)
     st = p.stat()
-    return {"id": ref.id, "size": st.st_size, "mtime": st.st_mtime}
+    new_etag = _compute_etag(body_bytes)
+    # Compute line-diff (+N / -M) vs prior content.
+    try:
+        prev_lines = current.decode("utf-8", errors="replace").splitlines()
+        new_lines = body_bytes.decode("utf-8", errors="replace").splitlines()
+        sm = difflib.SequenceMatcher(a=prev_lines, b=new_lines, autojunk=False)
+        added = removed = 0
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "insert":
+                added += j2 - j1
+            elif tag == "delete":
+                removed += i2 - i1
+            elif tag == "replace":
+                added += j2 - j1
+                removed += i2 - i1
+        diff_summary = {"added": added, "removed": removed}
+    except Exception:
+        diff_summary = {"added": 0, "removed": 0}
+    return {
+        "id": ref.id,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "etag": new_etag,
+        "diff": diff_summary,
+        "label": ref.label,
+        "source_agent": ref.source_agent,
+    }
 
 
 def unregister(ref_id: str) -> bool:
