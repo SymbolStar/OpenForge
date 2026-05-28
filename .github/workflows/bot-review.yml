@@ -1,0 +1,154 @@
+name: bot-review
+
+# Phase 1 of "bot review / auto-approve" plan: comment-only.
+# Posts (or updates) ONE sticky PR review comment with:
+#   - diff stats
+#   - red-line checks (xiaof A-7.5, SSE event order, forge restart race)
+#   - "needs human review" flags for paths we never want auto-approved
+#     (server.py, migrations, bin/forge, .github/, plist)
+#
+# Does NOT call --approve. Promotion to auto-approve happens in a
+# follow-up PR once we have 1-2 weeks of clean review-comment runs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: bot-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: bot-review (comment-only)
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need base ref for diff
+
+      - name: Compute diff base
+        id: base
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            git diff --name-only "$BASE" "$HEAD"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          STATS=$(git diff --shortstat "$BASE" "$HEAD" || echo "(no diff)")
+          echo "stats=$STATS" >> "$GITHUB_OUTPUT"
+
+      - name: Run red-line checks
+        id: checks
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+          HEAD: ${{ steps.base.outputs.head }}
+        run: |
+          set +e  # we accumulate findings, never fail the job
+          findings=""
+          needs_human=""
+
+          add_finding() { findings="${findings}- ❌ $1"$'\n'; }
+          add_warn()    { findings="${findings}- ⚠️ $1"$'\n'; }
+          add_ok()      { findings="${findings}- ✅ $1"$'\n'; }
+          add_human()   { needs_human="${needs_human}- $1"$'\n'; }
+
+          # --- A-7.5: 'forbidden' must never appear as an error code ---
+          # Only flag NEW occurrences (in added lines) so we don't punish
+          # PRs that touch but don't introduce regressions.
+          added_forbidden=$(
+            git diff "$BASE" "$HEAD" -- forge_xiaof.py web/xiaof.js \
+              | grep -E '^\+' | grep -v '^\+\+\+' \
+              | grep -iE '\bforbidden\b' || true
+          )
+          if [ -n "$added_forbidden" ]; then
+            add_finding "A-7.5 red line: 'forbidden' added to xiaof code (must use unauth|rate_limited|upstream_failed|internal). Lines:\n\`\`\`\n$added_forbidden\n\`\`\`"
+          else
+            add_ok "A-7.5: no new 'forbidden' code in xiaof"
+          fi
+
+          # --- xiaof SSE event-order invariants: stream_to_sse_frames ---
+          if git diff "$BASE" "$HEAD" -- forge_xiaof.py | grep -q 'stream_to_sse_frames\|seen_meta\|seen_chips\|seen_done'; then
+            add_warn "xiaof SSE event-order code touched — confirm meta → token* → chips → done ordering is still enforced."
+          fi
+
+          # --- forge restart race regression: bin/forge stop/start ---
+          if git diff "$BASE" "$HEAD" -- bin/forge | grep -qE '^\+.*sleep (0\.5|1)\b'; then
+            add_warn "bin/forge: hopeful 'sleep 0.5'/'sleep 1' reintroduced. Use wait_port_free/wait_port_listening (judy PR #42 race fix)."
+          fi
+          if git diff "$BASE" "$HEAD" -- bin/forge | grep -qE '^-.*wait_port_(free|listening)'; then
+            add_finding "bin/forge: wait_port_free/listening removed — would re-open the EADDRINUSE race that killed prod on 2026-05-28."
+          fi
+
+          # --- 'needs human' paths ---
+          changed="${{ steps.base.outputs.files }}"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              server.py)               add_human "\`$f\` (HTTP routes / handler — never auto-approve)" ;;
+              migrations/*)            add_human "\`$f\` (data migration — never auto-approve)" ;;
+              bin/forge)               add_human "\`$f\` (service CLI — review process-lifecycle changes)" ;;
+              .github/workflows/*)     add_human "\`$f\` (CI workflow — review for token/permission scope)" ;;
+              *.plist|*Library*plist*) add_human "\`$f\` (launchd plist — review KeepAlive/permissions)" ;;
+              forge_xiaof.py)          add_human "\`$f\` (xiaof contract — verify A-7.5/7.6 invariants)" ;;
+            esac
+          done <<< "$changed"
+
+          # Persist outputs for the comment step.
+          {
+            echo "findings<<EOF"
+            printf '%s' "$findings"
+            echo
+            echo "EOF"
+            echo "needs_human<<EOF"
+            printf '%s' "$needs_human"
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post / update sticky review comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          STATS: ${{ steps.base.outputs.stats }}
+          FINDINGS: ${{ steps.checks.outputs.findings }}
+          NEEDS_HUMAN: ${{ steps.checks.outputs.needs_human }}
+          SHA: ${{ steps.base.outputs.head }}
+        run: |
+          set -euo pipefail
+          MARKER='<!-- openforge-bot-review:v1 -->'
+
+          needs_block=""
+          if [ -n "${NEEDS_HUMAN// }" ]; then
+            needs_block=$'\n**Needs human review** — these paths are not eligible for future auto-approve:\n'"${NEEDS_HUMAN}"
+          fi
+
+          # Build body with printf to dodge YAML's literal-block indentation
+          # rules (heredocs whose inner lines start at column 1 break the
+          # `run: |` parser).
+          body=$(printf '%s\n### \xf0\x9f\xa4\x96 bot-review (comment-only \xc2\xb7 phase 1)\n\n**Diff:** `%s` @ `%s`\n\n**Red-line checks:**\n%s\n%s\n\n---\n_Phase 1: this bot leaves comments only. Auto-approve will be enabled per-path after 1\xe2\x80\x932 weeks of clean runs. Promotion plan: judy PR #42 follow-up._\n' \
+            "$MARKER" "$STATS" "${SHA:0:7}" "$FINDINGS" "$needs_block")
+
+          # Find an existing sticky comment by marker, edit if present, else create.
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -1)
+
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${existing}" \
+              -f body="$body" >/dev/null
+            echo "Updated sticky comment ${existing}"
+          else
+            gh pr comment "${PR}" --body "$body"
+            echo "Created sticky comment on PR ${PR}"
+          fi
