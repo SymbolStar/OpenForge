@@ -582,6 +582,13 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._file(WEB_DIR / "app.js",
                        "application/javascript; charset=utf-8")
             return
+        if path == "/xiaof.js":
+            self._file(WEB_DIR / "xiaof.js",
+                       "application/javascript; charset=utf-8")
+            return
+        if path == "/xiaof.css":
+            self._file(WEB_DIR / "xiaof.css", "text/css; charset=utf-8")
+            return
         if path == "/src/avatar.js":
             self._file(WEB_DIR / "src" / "avatar.js",
                        "application/javascript; charset=utf-8")
