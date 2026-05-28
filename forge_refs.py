@@ -381,6 +381,19 @@ def _compute_etag(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()[:16]
 
 
+_write_locks: dict[str, threading.Lock] = {}
+_write_locks_guard = threading.Lock()
+
+
+def _per_ref_write_lock(ref_id: str) -> threading.Lock:
+    with _write_locks_guard:
+        lk = _write_locks.get(ref_id)
+        if lk is None:
+            lk = threading.Lock()
+            _write_locks[ref_id] = lk
+        return lk
+
+
 def read_content(ref_id: str) -> tuple[bytes, str, dict]:
     """Return (body_bytes, content_type, ref_dict).
 
@@ -415,15 +428,17 @@ def read_content(ref_id: str) -> tuple[bytes, str, dict]:
 
 
 def write_content(ref_id: str, body: bytes, *, if_match: str | None = None) -> dict:
-    """Overwrite the referenced file.
+    """Overwrite the referenced file (atomic, ETag-checked).
 
-    v1.1 behaviour: `.md` files are always editable regardless of
-    `ref.writable` (per PRD: 「所有人可编辑 / 只 .md」). Non-.md still
-    honours the legacy `writable` flag.
+    v1 only accepts `.md` files. Non-.md raises RefValidationError, even
+    when the ref was registered with `writable=True` (the editable-md
+    feature is intentionally narrow per PRD).
 
     `if_match` is an ETag string from a prior GET. If supplied and the
     file has changed underneath, raises RefConflictError carrying the
-    current etag + content so the UI can offer a 3-way decision.
+    current etag + content so the UI can offer a 3-way decision. The
+    re-read + replace happens under a per-ref lock to close the TOCTOU
+    window between If-Match check and os.replace.
     """
     if not isinstance(body, (bytes, bytearray)):
         raise RefValidationError("body must be bytes")
@@ -436,41 +451,95 @@ def write_content(ref_id: str, body: bytes, *, if_match: str | None = None) -> d
         raise RefNotFoundError(ref_id)
     p = Path(ref.abs_path)
     is_md = p.suffix.lower() == ".md"
-    if not is_md and not ref.writable:
-        raise RefReadOnlyError(ref_id)
     if not is_md:
-        # v1: only .md is editable through this path (PRD AC). Non-md
-        # falls back to legacy writable semantics handled above; reject
-        # the rest defensively.
         raise RefValidationError("only .md files are editable in v1")
     if p.is_symlink():
         raise RefBlockedError("symlinks not allowed")
     if not p.exists() or not p.is_file():
         raise RefMissingError(ref.abs_path)
-    # Read current bytes to compute current etag (cheap for md).
-    try:
-        current = p.read_bytes()
-    except OSError as e:
-        raise RefMissingError(str(e)) from None
-    current_etag = _compute_etag(current)
-    if if_match is not None and if_match != current_etag:
+    # Per-ref serialization: keeps If-Match -> replace TOCTOU window
+    # closed against other concurrent PUTs on the same ref.
+    write_lock = _per_ref_write_lock(ref_id)
+    with write_lock:
+        # Re-check size after lock; external growth shouldn't OOM us.
         try:
-            current_text = current.decode("utf-8", errors="replace")
+            st_before = p.stat()
+        except OSError as e:
+            raise RefMissingError(str(e)) from None
+        if st_before.st_size > MAX_BYTES:
+            raise RefTooLargeError(f"file too large: {st_before.st_size}")
+        try:
+            current = p.read_bytes()
+        except OSError as e:
+            raise RefMissingError(str(e)) from None
+        current_etag = _compute_etag(current)
+        if if_match is not None and if_match != current_etag:
+            try:
+                current_text = current.decode("utf-8", errors="replace")
+            except Exception:
+                current_text = ""
+            raise RefConflictError(current_etag, current_text)
+        # Atomic write: unique tmp + O_EXCL + fsync + os.replace.
+        body_bytes = bytes(body)
+        tmp = p.with_name(
+            f".{p.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(tmp, flags, 0o644)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(body_bytes)
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp, p)
         except Exception:
-            current_text = ""
-        raise RefConflictError(current_etag, current_text)
-    # Atomic write: tmp → fsync → os.replace.
-    body_bytes = bytes(body)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    with open(tmp, "wb") as fh:
-        fh.write(body_bytes)
-        fh.flush()
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            raise
+        # fsync parent dir so rename is durable (best-effort).
         try:
-            os.fsync(fh.fileno())
+            dfd = os.open(str(p.parent), os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
         except OSError:
             pass
-    os.replace(tmp, p)
-    st = p.stat()
+        st = p.stat()
+    new_etag = _compute_etag(body_bytes)
+    # Compute line-diff (+N / -M) vs prior content. Cheap for the
+    # 1MB-capped md files this feature accepts.
+    try:
+        prev_lines = current.decode("utf-8", errors="replace").splitlines()
+        new_lines = body_bytes.decode("utf-8", errors="replace").splitlines()
+        sm = difflib.SequenceMatcher(a=prev_lines, b=new_lines, autojunk=False)
+        added = removed = 0
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "insert":
+                added += j2 - j1
+            elif tag == "delete":
+                removed += i2 - i1
+            elif tag == "replace":
+                added += j2 - j1
+                removed += i2 - i1
+        diff_summary = {"added": added, "removed": removed}
+    except Exception:
+        diff_summary = {"added": 0, "removed": 0}
+    return {
+        "id": ref.id,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "etag": new_etag,
+        "diff": diff_summary,
+        "label": ref.label,
+        "source_agent": ref.source_agent,
+    }
     new_etag = _compute_etag(body_bytes)
     # Compute line-diff (+N / -M) vs prior content.
     try:

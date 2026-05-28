@@ -149,35 +149,62 @@ def test_read_content_blocked_mime(fake_home, tmp_path):
 
 
 def test_write_content_md_always_editable(fake_home, tmp_md):
-    # v1.1 PRD: .md files are editable regardless of writable flag.
+    # v1 PRD: .md files are editable.
     import forge_refs
     ref = forge_refs.register(label="note.md", abs_path=str(tmp_md), source_agent="milk")
     out = forge_refs.write_content(ref["id"], b"new md\n")
     assert out["size"] == len(b"new md\n")
     assert tmp_md.read_bytes() == b"new md\n"
     assert "etag" in out and len(out["etag"]) == 16
+    # ETag is exactly sha256(content)[:16].
+    import hashlib
+    assert out["etag"] == hashlib.sha256(b"new md\n").hexdigest()[:16]
 
 
-def test_write_content_non_md_still_readonly(fake_home, tmp_path):
-    # Non-md falls back to legacy writable=False semantics (read-only).
+def test_write_content_non_md_rejected(fake_home, tmp_path):
+    # v1: only .md is editable, even if writable=True is set.
     import forge_refs
     p = tmp_path / "data.txt"
     p.write_text("hi")
-    ref = forge_refs.register(
+    ref_ro = forge_refs.register(
         label="data.txt", abs_path=str(p), source_agent="milk",
         content_type="text/plain",
     )
-    with pytest.raises(forge_refs.RefReadOnlyError):
-        forge_refs.write_content(ref["id"], b"new")
+    with pytest.raises(forge_refs.RefValidationError):
+        forge_refs.write_content(ref_ro["id"], b"new")
+    # writable=True non-md is also rejected (v1 only allows .md).
+    q = tmp_path / "other.txt"
+    q.write_text("hi")
+    ref_rw = forge_refs.register(
+        label="other.txt", abs_path=str(q), source_agent="milk",
+        content_type="text/plain", writable=True,
+    )
+    with pytest.raises(forge_refs.RefValidationError):
+        forge_refs.write_content(ref_rw["id"], b"new")
 
 
-def test_write_content_etag_conflict(fake_home, tmp_md):
+def test_write_content_etag_conflict_no_write(fake_home, tmp_md):
     import forge_refs
+    original = tmp_md.read_bytes()
     ref = forge_refs.register(label="note.md", abs_path=str(tmp_md), source_agent="milk")
     with pytest.raises(forge_refs.RefConflictError) as ei:
         forge_refs.write_content(ref["id"], b"new", if_match="deadbeefdeadbeef")
     assert ei.value.current_etag
+    assert len(ei.value.current_etag) == 16
     assert ei.value.current_content == tmp_md.read_text()
+    # File on disk must NOT have changed on conflict.
+    assert tmp_md.read_bytes() == original
+
+
+def test_write_content_etag_match_succeeds(fake_home, tmp_md):
+    import forge_refs
+    ref = forge_refs.register(label="note.md", abs_path=str(tmp_md), source_agent="milk")
+    # GET path returns the etag the UI would use.
+    body0, _, _ = forge_refs.read_content(ref["id"])
+    etag0 = forge_refs._compute_etag(body0)
+    out = forge_refs.write_content(ref["id"], b"v2\n", if_match=etag0)
+    assert out["etag"] != etag0
+    assert tmp_md.read_bytes() == b"v2\n"
 
 
 def test_write_content_ok(fake_home, tmp_md):
@@ -309,6 +336,7 @@ def test_http_content_round_trip(server, tmp_path):
 
 
 def test_http_put_content_non_md_400(server, tmp_path):
+    # v1: non-md rejected at validation layer -> 400.
     base = server
     note = tmp_path / "data.txt"
     note.write_text("v1\n")
@@ -320,8 +348,7 @@ def test_http_put_content_non_md_400(server, tmp_path):
     status, _, _ = _call(
         "PUT", f"{base}/api/refs/{rid}/content", {"content": "v2"},
     )
-    # Non-md is read-only via the new editable-md path.
-    assert status == 403
+    assert status == 400
 
 
 def test_http_put_content_md_ok_no_writable_flag(server, tmp_path):
@@ -350,14 +377,18 @@ def test_http_put_content_etag_conflict(server, tmp_path):
         "label": "note.md", "abs_path": str(note), "source_agent": "milk",
     })
     rid = body["id"]
+    # Quoted If-Match (RFC compliant) should still be accepted after strip.
     status, body, _ = _call(
         "PUT", f"{base}/api/refs/{rid}/content",
         {"content": "v2\n"},
-        headers={"If-Match": "deadbeefdeadbeef"},
+        headers={"If-Match": '"deadbeefdeadbeef"'},
     )
     assert status == 409, body
     assert body["current_etag"]
+    assert len(body["current_etag"]) == 16
     assert body["current_content"] == "v1\n"
+    # File on disk untouched on conflict.
+    assert note.read_text() == "v1\n"
 
 
 def test_http_delete_then_404(server, tmp_path):

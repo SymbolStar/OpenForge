@@ -3281,6 +3281,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       state.content = data.content || '';
       state.dirty = false;
       state.mode = 'preview';
+      // Workspace-file mode: clear any ref-edit state so saveCurrent()
+      // doesn't mis-route a workspace save into the ref endpoint of a
+      // previously-opened ref (codex review PR#48 🔴).
+      state.currentRef = null;
+      state.refEtag = null;
+      state.isMdRef = false;
       const meta = currentRootMeta();
       const readOnly = meta && !meta.writable;
       titleEl.textContent = name + (readOnly ? '  🔒' : '');
@@ -3312,7 +3318,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   ]);
   function refAgentFromPath(absPath) {
     if (!absPath) return null;
-    const m = String(absPath).match(/workspace-([A-Za-z0-9_\-]+)/);
+    // Match a path segment like '/workspace-<agent>/...'. Agent ids
+    // mirror the server allowlist (letters/digits/_/-/.).
+    const m = String(absPath).match(/(?:^|\/)workspace-([A-Za-z0-9_.\-]+)(?=\/|$)/);
     return m ? m[1] : null;
   }
   function basenameOf(p) {
@@ -3492,8 +3500,11 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's' && !filesView.hidden && state.mode === 'edit') {
-      if (_imeComposing) return;  // IME composition: don't steal Enter/Save
+      // Always swallow ⌘/Ctrl+S so the browser's "save page" dialog
+      // never appears in this view. If the user is mid-IME composition
+      // we skip the actual save (don't commit half-typed Chinese).
       e.preventDefault();
+      if (_imeComposing) return;
       saveCurrent();
     }
   });
