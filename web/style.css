@@ -75,6 +75,13 @@ button { cursor: pointer; }
   justify-content: center;
   font-size: 22px;
   border-bottom: 1px solid rgba(255,255,255,0.06);
+  text-decoration: none;
+  color: inherit;
+}
+.icon-rail-logo img {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 .icon-rail-item {
   appearance: none;

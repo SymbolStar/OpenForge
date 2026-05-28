@@ -47,6 +47,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).parent
 WEB_DIR = ROOT / "web"
+BRAND_DIR = ROOT / "branding"
 
 sys.path.insert(0, str(ROOT))
 import forge_avatar
@@ -590,6 +591,25 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         if m:
             self._file(WEB_DIR / "assets" / "avatars" / "default" / m.group(1),
                        "image/png")
+            return
+
+        # Brand assets (Forge F logo, favicon, OG cards). Whitelisted file
+        # names only — branding/ holds in-repo design assets and we don't
+        # want it to act as an arbitrary file server.
+        m = re.match(r"^/branding/([A-Za-z0-9._-]+)$", path)
+        if m:
+            fname = m.group(1)
+            ext = fname.rsplit(".", 1)[-1].lower()
+            mime = {
+                "svg": "image/svg+xml",
+                "png": "image/png",
+                "ico": "image/x-icon",
+            }.get(ext)
+            if mime:
+                self._file(BRAND_DIR / fname, mime)
+                return
+        if path == "/favicon.ico":
+            self._file(BRAND_DIR / "favicon.ico", "image/x-icon")
             return
 
         # api endpoints
