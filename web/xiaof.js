@@ -239,46 +239,134 @@
     }
   });
 
+  // A-7.6 — error / empty / zero-result must be visually indistinguishable.
+  // Any of the four contract errors (unauth | rate_limited | upstream_failed
+  // | internal) and any genuine zero-result render this exact same string.
+  const NO_MATCH_BODY = '没找到匹配的 thread。';
+
   async function submit() {
     const text = input.value.trim();
     if (!text || state.pending) return;
     input.value = '';
     state.history.push({ role: 'user', text });
     state.pending = true;
-    renderStream();
 
+    // Push the bot message, render the whole stream ONCE so the bubble
+    // DOM exists, then mutate only that bubble for token / chips updates.
+    // This is the §9b rule: SSE token append must not re-render the world.
     const botIdx = state.history.push({ role: 'bot', text: '', chips: [], pending: true }) - 1;
     renderStream();
+    const bubble = stream.lastElementChild;
+    const textNode = document.createTextNode('');
+    bubble.innerHTML = '';
+    bubble.appendChild(textNode);
+    const chipsHost = document.createElement('div');
+    bubble.appendChild(chipsHost);
+
+    const appendToken = (t) => {
+      if (!t) return;
+      state.history[botIdx].text += t;
+      textNode.data = state.history[botIdx].text;
+      stream.scrollTop = stream.scrollHeight;
+    };
+    const setChips = (chips, chipTotal) => {
+      const list = Array.isArray(chips) ? chips : [];
+      state.history[botIdx].chips = list;
+      chipsHost.innerHTML = '';
+      if (list.length) {
+        chipsHost.appendChild(renderChips(list, chipTotal));
+      }
+    };
+    const finalize = (failed) => {
+      state.history[botIdx].pending = false;
+      if (failed || !state.history[botIdx].text) {
+        state.history[botIdx].text = NO_MATCH_BODY;
+        textNode.data = NO_MATCH_BODY;
+      }
+      state.pending = false;
+    };
 
     try {
-      const ask = window.xiaofAsk || stubAsk;
-      const result = await ask({ query: text });
-      state.history[botIdx] = {
-        role: 'bot',
-        text: result.text || '',
-        chips: Array.isArray(result.chips) ? result.chips : [],
-      };
+      const ask = window.xiaofAsk || sseAsk;
+      await ask({ query: text }, { onToken: appendToken, onChips: setChips });
+      finalize(false);
     } catch (err) {
-      state.history[botIdx] = {
-        role: 'bot',
-        text: '小F 暂时打不通，稍后再试。',
-        chips: [],
-        error: true,
-      };
-      console.error('[xiaof] ask failed', err);
-    } finally {
-      state.pending = false;
-      renderStream();
+      // A-7.6: never branch on error kind; always the same body.
+      console.warn('[xiaof] ask failed', err);
+      finalize(true);
     }
   }
 
-  // Stub backend — real wiring lands when the thread-search API contract closes.
-  async function stubAsk({ query }) {
-    await new Promise(r => setTimeout(r, 300));
-    return {
-      text: `（开发占位）已收到「${query}」，等后端 thread 检索 API 接上。`,
-      chips: [],
-    };
+  // Default backend: POST /api/xiaof/ask, parse SSE per contract v0.1 §2.
+  // Event order: meta → token* → chips → done. Any error event terminates
+  // and is mapped uniformly to NO_MATCH_BODY by submit()'s catch.
+  async function sseAsk(payload, hooks) {
+    const body = JSON.stringify({
+      query: payload.query,
+      session_id: payload.session_id || sessionId(),
+      client: { url: location.href, tz: tzGuess() },
+    });
+    const res = await fetch('/api/xiaof/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body,
+      credentials: 'same-origin',
+    });
+    if (!res.ok || !res.body) {
+      throw new Error('xiaof http ' + res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    let sawError = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Split on SSE frame separator (blank line).
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const parsed = parseSseFrame(frame);
+        if (!parsed) continue;
+        if (parsed.event === 'token') {
+          hooks.onToken(parsed.data.text || '');
+        } else if (parsed.event === 'chips') {
+          hooks.onChips(parsed.data.chips, parsed.data.chip_total);
+        } else if (parsed.event === 'error') {
+          sawError = parsed.data.code || 'internal';
+        }
+        // meta / done are observed but require no UI hook in M1.
+      }
+    }
+    if (sawError) throw new Error('xiaof error ' + sawError);
+  }
+
+  function parseSseFrame(frame) {
+    const lines = frame.split(/\r?\n/);
+    let event = 'message';
+    const dataLines = [];
+    for (const line of lines) {
+      if (!line || line.startsWith(':')) continue;
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
+    }
+    if (!dataLines.length) return null;
+    try { return { event, data: JSON.parse(dataLines.join('\n')) }; }
+    catch (_) { return null; }
+  }
+
+  // Per-tab session id (D-2: no persistence across tabs / reloads).
+  let _sid = null;
+  function sessionId() {
+    if (_sid) return _sid;
+    _sid = 'xf-' + (crypto?.randomUUID?.() || Math.random().toString(36).slice(2));
+    return _sid;
+  }
+  function tzGuess() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+    catch (_) { return ''; }
   }
 
   // --- Render -------------------------------------------------------------
@@ -313,11 +401,14 @@
         const el = document.createElement('div');
         el.className = 'xf-msg-bot';
         if (msg.pending) {
-          el.innerHTML = '<span class="xf-dots">···</span>';
+          // submit() takes over this node after the initial render — see
+          // appendToken / setChips closures. We leave it empty so the
+          // first incoming token appears immediately without a flash.
+          el.textContent = '';
         } else {
           el.textContent = msg.text;
           if (msg.chips && msg.chips.length) {
-            el.appendChild(renderChips(msg.chips));
+            el.appendChild(renderChips(msg.chips, msg.chips.length));
           }
         }
         stream.appendChild(el);
@@ -327,17 +418,21 @@
   }
 
   // chips: [{ thread_id, post_id, title, squad, author, time, snippet, url }]
-  function renderChips(chips) {
+  // chipTotal comes from the server `done.chip_total` (>= chips.length).
+  // Per contract §2: backend caps the wire to 5; we render those 5 and
+  // surface the overflow count from chipTotal rather than chips.length.
+  function renderChips(chips, chipTotal) {
     const wrap = document.createElement('div');
     wrap.className = 'xf-chips';
     const VISIBLE = 5;
     const shown = chips.slice(0, VISIBLE);
     shown.forEach(c => wrap.appendChild(renderChip(c)));
-    if (chips.length > VISIBLE) {
+    const total = (typeof chipTotal === 'number' && chipTotal > chips.length) ? chipTotal : chips.length;
+    if (total > VISIBLE) {
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'xf-chips-more';
-      more.textContent = `还有 ${chips.length - VISIBLE} 条相关 thread →`;
+      more.textContent = `还有 ${total - VISIBLE} 条相关 thread →`;
       more.addEventListener('click', () => {
         more.remove();
         chips.slice(VISIBLE).forEach(c => wrap.appendChild(renderChip(c)));
