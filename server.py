@@ -915,10 +915,13 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         except forge_refs.RefBlockedError as e:
             self._json({"error": str(e) or "blocked"}, 403)
             return
+        etag = forge_refs._compute_etag(data)
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("ETag", etag)
+        self.send_header("X-Ref-Etag", etag)
         self.send_header("X-Ref-Label", ref.get("label", ""))
         self.send_header("X-Ref-Source-Agent", ref.get("source_agent", ""))
         self.send_header("X-Ref-Id", ref.get("id", ""))
@@ -1368,18 +1371,44 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         # v0.8: PUT /api/refs/<id>/content
         m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}/content$", url.path)
         if m:
-            length = int(self.headers.get("Content-Length") or 0)
-            if length > forge_refs.MAX_BYTES:
+            ref_id = m.group(1)
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            content = opts.get("content")
+            if not isinstance(content, str):
+                self._json({"error": "content (string) required"}, 400)
+                return
+            body_bytes = content.encode("utf-8")
+            if len(body_bytes) > forge_refs.MAX_BYTES:
                 self._json({"error": "body too large"}, 413)
                 return
-            body = self.rfile.read(length) if length else b""
+            if_match = self.headers.get("If-Match") or opts.get("if_match")
+            if isinstance(if_match, str):
+                if_match = if_match.strip().strip('"') or None
+            else:
+                if_match = None
+            actor_raw = opts.get("actor")
+            actor = actor_raw.strip() if isinstance(actor_raw, str) and actor_raw.strip() else "__editor__"
+            thread_id_raw = opts.get("thread_id")
+            thread_id = thread_id_raw.strip() if isinstance(thread_id_raw, str) and thread_id_raw.strip() else None
             try:
-                out = forge_refs.write_content(m.group(1), body)
+                out = forge_refs.write_content(ref_id, body_bytes, if_match=if_match)
             except forge_refs.RefNotFoundError:
                 self._json({"error": "not found"}, 404)
                 return
             except forge_refs.RefMissingError:
                 self._json({"error": "file gone"}, 404)
+                return
+            except forge_refs.RefConflictError as e:
+                self._json({
+                    "error": "etag mismatch",
+                    "current_etag": e.current_etag,
+                    "current_content": e.current_content,
+                }, 409)
                 return
             except forge_refs.RefReadOnlyError:
                 self._json({"error": "ref is read-only"}, 403)
@@ -1393,7 +1422,35 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except forge_refs.RefValidationError as e:
                 self._json({"error": str(e) or "invalid"}, 400)
                 return
-            self._json(out)
+            # AC-10: if a thread_id was provided, append a system post so
+            # the forge process stays traceable. We deliberately bypass
+            # the router (no mention fan-out) — it's a paper trail, not
+            # a trigger.
+            if thread_id:
+                try:
+                    label = out.get("label") or ref_id
+                    diff = out.get("diff") or {"added": 0, "removed": 0}
+                    when = time.strftime("%H:%M")
+                    line = (
+                        f"✏️ {actor} 于 {when} 编辑了 {label}"
+                        f"（+{diff.get('added', 0)} / -{diff.get('removed', 0)} 行）"
+                    )
+                    store.add_thread_post(
+                        thread_id,
+                        "__editor__",
+                        line,
+                        post_type="message",
+                    )
+                except Exception:
+                    # Never let a paper-trail failure block the save.
+                    pass
+            self._json({
+                "id": out.get("id"),
+                "etag": out.get("etag"),
+                "mtime": out.get("mtime"),
+                "size": out.get("size"),
+                "diff": out.get("diff"),
+            })
             return
         # v0.7: PUT /api/files/<root>/<name>
         m = re.match(rf"^/api/files/{ROOT_ID_ROUTE_RE}/{FILE_NAME_ROUTE_RE}$", url.path)

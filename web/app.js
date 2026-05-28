@@ -3118,7 +3118,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       state.current = null;
       state.dirty = false;
       state.mode = 'preview';
-      titleEl.textContent = ref.label + (ref.writable ? '' : '  🔒');
+      state.refEtag = null;
+      state.isMdRef = /\.md$/i.test(ref.label || '');
+      titleEl.textContent = ref.label;
       subEl.textContent = (ref.source_agent ? ref.source_agent + ' · ' : '')
         + fmtSize(ref.size_hint || 0) + ' · 注册于 ' + fmtTime(ref.registered_at)
         + ' · ' + ref.abs_path;
@@ -3128,12 +3130,14 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       btnSave.hidden = true;
       btnToggle.disabled = true;
       btnToggle.textContent = '编辑';
+      btnToggle.title = state.isMdRef ? '' : 'v1 仅支持 .md 文件编辑';
       const r = await fetch('/api/refs/' + encodeURIComponent(refId) + '/content');
       if (!r.ok) {
         previewEl.innerHTML = '<p class="meta">加载失败: HTTP ' + r.status + '</p>';
         renderRefsList();
         return;
       }
+      state.refEtag = r.headers.get('ETag') || r.headers.get('X-Ref-Etag') || null;
       const ctype = (r.headers.get('Content-Type') || '').toLowerCase();
       const buf = await r.arrayBuffer();
       if (ctype.startsWith('image/')) {
@@ -3155,9 +3159,8 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
           previewEl.innerHTML = '<pre>' + escapeHtml(text) + '</pre>';
         }
         editorEl.value = text;
-        if (ref.writable) {
+        if (state.isMdRef) {
           btnToggle.disabled = false;
-          btnToggle.title = '';
         }
       }
       renderRefsList();
@@ -3308,6 +3311,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       state.content = data.content || '';
       state.dirty = false;
       state.mode = 'preview';
+      // Workspace-file mode: clear any ref-edit state so saveCurrent()
+      // doesn't mis-route a workspace save into the ref endpoint of a
+      // previously-opened ref (codex review PR#48 🔴).
+      state.currentRef = null;
+      state.refEtag = null;
+      state.isMdRef = false;
       const meta = currentRootMeta();
       const readOnly = meta && !meta.writable;
       titleEl.textContent = name + (readOnly ? '  🔒' : '');
@@ -3332,6 +3341,119 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     }
   }
 
+  // ── v1.1: ref edit (.md only) ────────────────────────────────────
+  const DANGER_BASENAMES = new Set([
+    'STATUS.md', 'MEMORY.md', 'AGENTS.md',
+    'SOUL.md', 'IDENTITY.md', 'USER.md',
+  ]);
+  function refAgentFromPath(absPath) {
+    if (!absPath) return null;
+    // Match a path segment like '/workspace-<agent>/...'. Agent ids
+    // mirror the server allowlist (letters/digits/_/-/.).
+    const m = String(absPath).match(/(?:^|\/)workspace-([A-Za-z0-9_.\-]+)(?=\/|$)/);
+    return m ? m[1] : null;
+  }
+  function basenameOf(p) {
+    if (!p) return '';
+    const s = String(p).split('/');
+    return s[s.length - 1];
+  }
+  function ensureDangerBanner() {
+    let el = document.getElementById('ref-danger-banner');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'ref-danger-banner';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'background:#FEF3C7;color:#92400E;border-top:1px solid #FBBF24;border-bottom:1px solid #FBBF24;padding:10px 16px;font-size:13px;line-height:1.4;display:none';
+    editorEl.parentNode.insertBefore(el, editorEl);
+    return el;
+  }
+  function updateDangerBanner() {
+    const banner = ensureDangerBanner();
+    const ref = state.currentRef;
+    if (!ref || !state.isMdRef || state.mode !== 'edit') {
+      banner.style.display = 'none';
+      return;
+    }
+    const base = basenameOf(ref.abs_path || ref.label || '');
+    if (!DANGER_BASENAMES.has(base)) {
+      banner.style.display = 'none';
+      return;
+    }
+    const agent = refAgentFromPath(ref.abs_path) || ref.source_agent || 'agent';
+    banner.textContent = `⚠ 这是 ${agent} 的自维护文件（${base}），保存会让 ${agent} 下一 turn 行为漂移。确认要改。`;
+    banner.style.display = 'block';
+  }
+
+  async function saveRef() {
+    const ref = state.currentRef;
+    if (!ref || !state.dirty || !state.isMdRef) return;
+    btnSave.disabled = true;
+    const origLabel = btnSave.textContent;
+    btnSave.textContent = '保存中…';
+    editorEl.readOnly = true;
+    const actor = 'scott';
+    const threadId = state.currentThreadId || null;
+    const body = { content: state.content, actor, thread_id: threadId };
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.refEtag) headers['If-Match'] = state.refEtag;
+    let resp;
+    try {
+      resp = await fetch('/api/refs/' + encodeURIComponent(ref.id) + '/content', {
+        method: 'PUT', headers, body: JSON.stringify(body),
+      });
+    } catch (e) {
+      editorEl.readOnly = false;
+      btnSave.disabled = false;
+      btnSave.textContent = origLabel || '保存';
+      toast('网络错误，未保存（本地改动已保留）');
+      return;
+    }
+    editorEl.readOnly = false;
+    btnSave.textContent = origLabel || '保存';
+    if (resp.status === 409) {
+      const data = await resp.json().catch(() => ({}));
+      const remote = data.current_etag || '?';
+      const local = state.refEtag || '?';
+      const choice = confirm(
+        `文件在远端已变更：\n  远端 etag ${remote}\n  本地 etag ${local}\n\n点「确定」= 用我的改动强制覆盖；点「取消」= 放弃我的改动，加载远端版本。`
+      );
+      if (choice) {
+        state.refEtag = remote;
+        btnSave.disabled = false;
+        state.dirty = true;
+        return saveRef();
+      } else {
+        state.content = data.current_content || '';
+        state.refEtag = remote;
+        editorEl.value = state.content;
+        state.dirty = false;
+        btnSave.disabled = true;
+        renderPreview();
+        return;
+      }
+    }
+    if (resp.status === 413) { toast('文件超过 1MB，本编辑器不支持。请用 IDE 改。'); btnSave.disabled = false; return; }
+    if (resp.status === 404) { toast('文件已不存在（404）'); btnSave.disabled = false; return; }
+    if (resp.status === 403) { toast('此文件不可编辑（403）'); btnSave.disabled = false; return; }
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      toast('保存失败 ' + resp.status + ' ' + (err.error || ''));
+      btnSave.disabled = false;
+      return;
+    }
+    const data = await resp.json();
+    state.refEtag = data.etag || null;
+    state.dirty = false;
+    subEl.textContent = (ref.source_agent ? ref.source_agent + ' · ' : '')
+      + fmtSize(data.size || 0) + ' · 修改于 ' + fmtTime(data.mtime)
+      + ' · ' + (ref.abs_path || '');
+    ref.size_hint = data.size;
+    toast('✓ 已保存 ' + new Date().toLocaleTimeString());
+    setMode('preview');
+    renderPreview();
+  }
+
   function setMode(mode) {
     state.mode = mode;
     if (mode === 'edit') {
@@ -3347,11 +3469,14 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       btnToggle.textContent = '编辑';
       btnSave.hidden = true;
     }
+    if (typeof updateDangerBanner === 'function') updateDangerBanner();
   }
 
   btnToggle.addEventListener('click', () => {
-    if (!state.current) return;
+    // Either editing a workspace file (state.current) or a ref (state.currentRef).
+    if (!state.current && !state.currentRef) return;
     setMode(state.mode === 'preview' ? 'edit' : 'preview');
+    updateDangerBanner();
   });
 
   editorEl.addEventListener('input', () => {
@@ -3361,7 +3486,17 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     renderPreview();
   });
 
+  // IME guard: ⌘/Ctrl+S during a composition should NOT submit (avoid
+  // saving half-typed Chinese input).
+  let _imeComposing = false;
+  editorEl.addEventListener('compositionstart', () => { _imeComposing = true; });
+  editorEl.addEventListener('compositionend', () => { _imeComposing = false; });
+
   async function saveCurrent() {
+    // Ref path takes precedence when the right pane is showing a ref.
+    if (state.currentRef && state.isMdRef) {
+      return saveRef();
+    }
     if (!state.current || !state.dirty) return;
     const meta = currentRootMeta();
     if (meta && !meta.writable) { toast('该目录只读'); return; }
@@ -3395,7 +3530,11 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's' && !filesView.hidden && state.mode === 'edit') {
+      // Always swallow ⌘/Ctrl+S so the browser's "save page" dialog
+      // never appears in this view. If the user is mid-IME composition
+      // we skip the actual save (don't commit half-typed Chinese).
       e.preventDefault();
+      if (_imeComposing) return;
       saveCurrent();
     }
   });
