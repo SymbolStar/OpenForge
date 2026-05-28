@@ -293,6 +293,11 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
     helper script (PR-C1) can locate the target repo without the agent
     needing to know the path. Keys with None values are dropped.
     """
+    from forge_employees import acp_employee_ids
+    if agent_id in acp_employee_ids():
+        from acp_runtime import call_acp_agent
+        return call_acp_agent(agent_id, session_id, prompt, extra_env)
+
     argv = [
         OPENCLAW_BIN, "agent",
         "--local", "--json",
