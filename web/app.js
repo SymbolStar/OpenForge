@@ -487,8 +487,13 @@ function renderBody(text) {
     if (c.kind === 'ref') {
       const href = `#/files/refs/${encodeURIComponent(c.ref.id)}`;
       const agentTag = c.ref.source_agent ? ` <span class="file-chip-agent">${escapeHtml(c.ref.source_agent)}</span>` : '';
-      return `<a class="file-chip file-chip-ref" href="${href}" title="${escapeAttr(c.ref.label + ' · ' + (c.ref.source_agent || ''))}" data-file-chip="1" data-ref-id="${escapeAttr(c.ref.id)}">`
-        + `<span class="file-chip-icon">📄</span>${escapeHtml(c.display)}${agentTag}</a>`;
+      const absPath = c.ref.abs_path || '';
+      const fav = absPath && window._forgeFavSet && window._forgeFavSet.has(absPath);
+      const favBtn = absPath
+        ? `<button type="button" class="file-chip-fav${fav ? ' is-favorited' : ''}" data-fav-toggle="1" data-fav-abs="${escapeAttr(absPath)}" data-fav-ref="${escapeAttr(c.ref.id)}" data-fav-agent="${escapeAttr(c.ref.source_agent || '')}" data-fav-thread="${escapeAttr(c.ref.thread_id || '')}" aria-pressed="${fav ? 'true' : 'false'}" title="${fav ? '取消收藏' : '收藏'} ${escapeAttr(c.ref.label)}" aria-label="${fav ? '取消收藏' : '收藏'} ${escapeAttr(c.ref.label)}">${fav ? '★' : '☆'}</button>`
+        : '';
+      return `<span class="file-chip-wrap"><a class="file-chip file-chip-ref" href="${href}" title="${escapeAttr(c.ref.label + ' · ' + (c.ref.source_agent || ''))}" data-file-chip="1" data-ref-id="${escapeAttr(c.ref.id)}">`
+        + `<span class="file-chip-icon">📄</span>${escapeHtml(c.display)}${agentTag}</a>${favBtn}</span>`;
     }
     if (c.kind === 'unresolved') {
       return `<span class="file-chip file-chip-missing" title="未注册的引用: ${escapeAttr(c.target)}">`
@@ -2881,11 +2886,13 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     items.forEach(it => it.classList.toggle('is-active', it.dataset.view === view));
     const agentsView = document.getElementById('agents-view');
     const activityView = document.getElementById('activity-view');
+    const favoritesView = document.getElementById('favorites-view');
     const hideAll = () => {
       homeView.hidden = true;
       filesView.hidden = true;
       if (agentsView) agentsView.hidden = true;
       if (activityView) activityView.hidden = true;
+      if (favoritesView) favoritesView.hidden = true;
     };
     if (view === 'files') {
       hideAll();
@@ -2898,6 +2905,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       hideAll();
       if (activityView) activityView.hidden = false;
       if (window.__forgeActivityActivate) window.__forgeActivityActivate();
+    } else if (view === 'favorites') {
+      hideAll();
+      if (favoritesView) favoritesView.hidden = false;
+      if (window.__forgeFavoritesActivate) window.__forgeFavoritesActivate();
     } else {
       hideAll();
       homeView.hidden = false;
@@ -2911,6 +2922,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       setActive('activity');
       const m = h.match(/^#\/activity\/(th_[A-Za-z0-9_]+)$/);
       if (m && window.__forgeActivitySelect) window.__forgeActivitySelect(decodeURIComponent(m[1]));
+      return;
+    }
+    if (h.startsWith('#/favorites')) {
+      setActive('favorites');
       return;
     }
     if (h.startsWith('#/agents')) {
@@ -2964,6 +2979,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         if (v === 'files') location.hash = '#/files';
         else if (v === 'agents') location.hash = '#/agents';
         else if (v === 'activity') location.hash = '#/activity';
+        else if (v === 'favorites') location.hash = '#/favorites';
         else location.hash = '#/squads';
       } else {
         toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
@@ -4340,4 +4356,277 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (r && r.rows) { state.rows = r.rows; updateUnreadBadge(); }
     } catch (_) {}
   }, 60000);
+})();
+
+/* ─── PRD v1.1 Favorites ─────────────────────────────────────────────── */
+/* State machine (designer §4, 11 states):
+   idle / loading / ready{empty,filled,partial-missing} /
+   error / retry / optimistic / confirmed / rollback / filtering / empty-result.
+   We track a single `view` string + a `searching` boolean; chip-side
+   optimistic updates round-trip through the same set so the chip ★ and
+   the list stay in sync without SSE (PRD §3 跨 tab is V2). */
+(function () {
+  window._forgeFavSet = window._forgeFavSet || new Set(); // abs_path strings
+  window._forgeFavLoaded = false;
+
+  const root = document.getElementById('favorites-view');
+  if (!root) return;
+
+  const els = {
+    list: document.getElementById('favorites-list'),
+    search: document.getElementById('favorites-search'),
+    empty: document.getElementById('favorites-empty'),
+    emptySearch: document.getElementById('favorites-empty-search'),
+    error: document.getElementById('favorites-error'),
+    loading: document.getElementById('favorites-loading'),
+    retry: document.getElementById('favorites-retry'),
+    refresh: document.getElementById('btn-favorites-refresh'),
+    total: document.getElementById('favorites-total'),
+    railCount: document.getElementById('favorites-rail-count'),
+    status: document.getElementById('favorites-status'),
+  };
+
+  let state = {
+    items: [],          // full list from server
+    filtered: [],
+    view: 'idle',
+    searching: false,
+    error: null,
+  };
+
+  function setView(v) { state.view = v; render(); }
+
+  function render() {
+    const hide = el => { if (el) el.hidden = true; };
+    [els.list, els.empty, els.emptySearch, els.error, els.loading].forEach(hide);
+    if (els.status) els.status.hidden = true;
+
+    if (state.view === 'loading' || state.view === 'idle') {
+      els.loading.hidden = false;
+      return;
+    }
+    if (state.view === 'error' || state.view === 'retry') {
+      els.error.hidden = false;
+      return;
+    }
+    // ready
+    const q = (els.search.value || '').trim().toLowerCase();
+    state.filtered = q
+      ? state.items.filter(it =>
+          (it.label || '').toLowerCase().includes(q) ||
+          (it.preview || '').toLowerCase().includes(q))
+      : state.items.slice();
+
+    if (state.filtered.length === 0) {
+      (q ? els.emptySearch : els.empty).hidden = false;
+      return;
+    }
+    els.list.hidden = false;
+    const someMissing = state.items.some(it => it.missing_state === 'missing');
+    const someUnknown = state.items.some(it => it.missing_state === 'unknown');
+    if ((someMissing || someUnknown) && els.status) {
+      const parts = [];
+      if (someMissing) parts.push('部分文件已不在原位置');
+      if (someUnknown) parts.push('部分文件状态未知（可能在 sleep 中的外置盘）');
+      els.status.textContent = parts.join(' · ');
+      els.status.hidden = false;
+    }
+    els.list.innerHTML = state.filtered.map(renderCard).join('');
+  }
+
+  function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return `今天 ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+    return d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function threadShort(tid) {
+    if (!tid) return '—';
+    // th_19e6f1781c0_77d68a → th_…68a
+    const tail = tid.slice(-6);
+    return `th_…${tail}`;
+  }
+
+  function renderCard(it) {
+    const isMissing = it.missing_state === 'missing';
+    const isUnknown = it.missing_state === 'unknown';
+    const cls = 'favorite-card'
+      + (isMissing ? ' is-missing' : '')
+      + (isUnknown ? ' is-unknown' : '');
+    const icon = isMissing ? '⚠️' : '📄';
+    const agent = it.source_agent || '—';
+    const thread = it.source_thread_id ? threadShort(it.source_thread_id) : '—';
+    const time = formatTime(it.favorited_at);
+    const preview = isMissing
+      ? '<strong>文件已不在原位置</strong>'
+      : (isUnknown
+          ? '<em>状态未知</em>'
+          : escapeHtml(it.preview || '(无预览)'));
+    const absAttr = escapeAttr(it.abs_path);
+    const labelEsc = escapeHtml(it.label || it.abs_path);
+    return `
+      <li class="${cls}" data-abs="${absAttr}">
+        <div class="favorite-card-head">
+          <span class="favorite-card-icon">${icon}</span>
+          <button type="button" class="favorite-card-title" data-fav-open="1">${labelEsc}</button>
+          <div class="favorite-card-actions">
+            <button type="button" class="fav-star" data-fav-unstar="1" title="取消收藏" aria-label="取消收藏 ${escapeAttr(it.label)}">★</button>
+            <button type="button" data-fav-copy="1" title="复制路径" aria-label="复制路径">⧉</button>
+          </div>
+        </div>
+        <p class="favorite-card-preview">${preview}</p>
+        <div class="favorite-card-meta">
+          <span>${escapeHtml(agent)}</span>
+          <span class="dot-sep">·</span>
+          <span>${escapeHtml(thread)}</span>
+          <span class="dot-sep">·</span>
+          <span>收藏于 ${escapeHtml(time)}</span>
+        </div>
+      </li>`;
+  }
+
+  async function load() {
+    setView('loading');
+    try {
+      const r = await fetch('/api/favorites');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const items = Array.isArray(data.favorites) ? data.favorites : [];
+      state.items = items;
+      window._forgeFavSet = new Set(items.map(x => x.abs_path));
+      window._forgeFavLoaded = true;
+      if (els.total) els.total.textContent = `(${items.length})`;
+      updateRailBadge(items.length);
+      setView('ready');
+    } catch (e) {
+      state.error = e.message || String(e);
+      setView('error');
+    }
+  }
+
+  function updateRailBadge(n) {
+    if (!els.railCount) return;
+    if (n > 0) {
+      els.railCount.hidden = false;
+      els.railCount.textContent = n > 99 ? '99+' : String(n);
+    } else {
+      els.railCount.hidden = true;
+    }
+  }
+
+  els.refresh && (els.refresh.onclick = load);
+  els.retry && (els.retry.onclick = load);
+  els.search && els.search.addEventListener('input', () => {
+    clearTimeout(els.search._t);
+    els.search._t = setTimeout(render, 300);
+  });
+
+  // Card actions delegation
+  els.list && els.list.addEventListener('click', async (e) => {
+    const li = e.target.closest('.favorite-card');
+    if (!li) return;
+    const abs = li.dataset.abs;
+    if (e.target.matches('[data-fav-unstar]')) {
+      if (li.classList.contains('is-missing')) {
+        if (!confirm('文件已不在原位置 — 移除这条收藏？\n保留 = 取消')) return;
+      }
+      await toggleFavorite(abs, false, {});
+      // remove from local + re-render
+      state.items = state.items.filter(x => x.abs_path !== abs);
+      window._forgeFavSet.delete(abs);
+      if (els.total) els.total.textContent = `(${state.items.length})`;
+      updateRailBadge(state.items.length);
+      render();
+      refreshChipStars();
+      return;
+    }
+    if (e.target.matches('[data-fav-copy]')) {
+      try { await navigator.clipboard.writeText(abs); showToast('路径已复制'); } catch { showToast('复制失败'); }
+      return;
+    }
+    if (e.target.matches('[data-fav-open]')) {
+      // Try to navigate to the matching ref if known.
+      const idx = window._forgeRefs;
+      if (idx && idx.all) {
+        const hit = idx.all.find(r => r.abs_path === abs);
+        if (hit) { location.hash = `#/files/refs/${encodeURIComponent(hit.id)}`; return; }
+      }
+      showToast('未找到对应 ref（可能已注销）');
+    }
+  });
+
+  // chip ⭐ delegation — global, fires for any .file-chip-fav anywhere in
+  // the document (thread pane, file viewer, activity, …).
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.file-chip-fav');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const abs = btn.dataset.favAbs;
+    if (!abs) return;
+    const wasFav = btn.classList.contains('is-favorited');
+    // optimistic flip
+    setStarUI(btn, !wasFav);
+    btn.classList.add('is-flipping');
+    setTimeout(() => btn.classList.remove('is-flipping'), 200);
+    try {
+      await toggleFavorite(abs, !wasFav, {
+        ref_id: btn.dataset.favRef || null,
+        source_agent: btn.dataset.favAgent || null,
+        thread_id: btn.dataset.favThread || null,
+      });
+      if (!wasFav) window._forgeFavSet.add(abs);
+      else window._forgeFavSet.delete(abs);
+    } catch (err) {
+      // rollback
+      setStarUI(btn, wasFav);
+      showToast(wasFav ? '取消收藏失败，已撤销' : '收藏失败，已撤销');
+    }
+  });
+
+  function setStarUI(btn, fav) {
+    btn.classList.toggle('is-favorited', !!fav);
+    btn.textContent = fav ? '★' : '☆';
+    btn.setAttribute('aria-pressed', fav ? 'true' : 'false');
+  }
+
+  function refreshChipStars() {
+    document.querySelectorAll('.file-chip-fav').forEach(btn => {
+      const abs = btn.dataset.favAbs;
+      if (!abs) return;
+      setStarUI(btn, window._forgeFavSet.has(abs));
+    });
+  }
+
+  async function toggleFavorite(abs_path, favorited, extra) {
+    const body = { abs_path, favorited, ...extra };
+    const r = await fetch('/api/favorites', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  // Public: activate (called when entering the view)
+  window.__forgeFavoritesActivate = function () { load(); };
+
+  // Public: bootstrap favorites cache so chip ★ states render on first
+  // load too. Fire and forget; chip renderer is safe with empty set.
+  (async function bootstrap() {
+    try {
+      const r = await fetch('/api/favorites');
+      if (!r.ok) return;
+      const data = await r.json();
+      const items = Array.isArray(data.favorites) ? data.favorites : [];
+      window._forgeFavSet = new Set(items.map(x => x.abs_path));
+      window._forgeFavLoaded = true;
+      updateRailBadge(items.length);
+      if (els.total) els.total.textContent = `(${items.length})`;
+    } catch (_) { /* swallow */ }
+  })();
 })();

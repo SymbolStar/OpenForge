@@ -32,6 +32,10 @@
       <button class="icon-rail-item" type="button" data-view="agents" data-enabled="1" title="Agents">
         <span class="icon">🧑</span><span class="label">Agents</span>
       </button>
+      <button class="icon-rail-item" type="button" data-view="favorites" data-enabled="1" title="Favorites">
+        <span class="icon">⭐</span><span class="label">Favorites</span>
+        <span id="favorites-rail-count" class="icon-rail-badge" hidden aria-label="favorites count"></span>
+      </button>
       <button class="icon-rail-item is-dim" type="button" data-view="dms" title="DMs">
         <span class="icon">💬</span><span class="label">DMs</span>
       </button>
@@ -208,6 +212,30 @@
         <button type="button" data-retry>重试</button>
       </div>
     </main>
+  </section>
+
+  <section id="favorites-view" class="view-shell" hidden>
+    <aside id="favorites-rail">
+      <header class="files-rail-head">
+        <span class="section-label">⭐ FAVORITES <span id="favorites-total" class="favorites-total"></span></span>
+        <button id="btn-favorites-refresh" type="button" class="new-squad-btn" title="刷新">↻</button>
+      </header>
+      <input id="favorites-search" type="search" placeholder="搜索 label / preview…" class="refs-search" />
+      <div id="favorites-status" class="favorites-status" hidden></div>
+      <ul id="favorites-list" class="favorites-list" role="list"></ul>
+      <div id="favorites-empty" class="favorites-empty" hidden>
+        <p class="favorites-empty-title">还没有收藏的文件</p>
+        <p class="favorites-empty-hint">在 thread 里点 📄 旁的 ☆ 收藏</p>
+      </div>
+      <div id="favorites-empty-search" class="favorites-empty" hidden>
+        <p class="favorites-empty-title">没有匹配的收藏</p>
+        <p class="favorites-empty-hint">换个关键词试试</p>
+      </div>
+      <div id="favorites-error" class="favorites-error" hidden>
+        <p>加载失败 <button id="favorites-retry" type="button" class="ghost-btn">重试</button></p>
+      </div>
+      <div id="favorites-loading" class="favorites-loading" hidden>加载中…</div>
+    </aside>
   </section>
 
   <section id="agents-view" class="view-shell" hidden>

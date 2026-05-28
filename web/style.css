@@ -16,6 +16,10 @@
   --ok: #2bac76;
   --warn: #de9e32;
   --closed: #8d8d8d;
+  /* PRD v1.1 — Favorites tokens (designer §7: ★ color locked, no dark fallback) */
+  --favorite: #F5A623;
+  --favorite-empty: #c5c5c5;
+  --missing-warn: #D04A4A;
 }
 
 * { box-sizing: border-box; }
@@ -2480,4 +2484,97 @@ a.mini-avatar.avatar-link:focus-visible {
 @media (max-width: 800px) {
   #activity-view.view-shell { grid-template-columns: 1fr; }
   #activity-pane { display: none; }
+}
+
+/* ─── PRD v1.1 Favorites ───────────────────────────────────────────────── */
+.file-chip { position: relative; }
+.file-chip-fav {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 4px; width: 18px; height: 18px;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 13px; color: var(--favorite-empty);
+  opacity: 0; transition: opacity 120ms ease, transform 180ms ease;
+  border-radius: 4px; padding: 0; line-height: 1;
+}
+.file-chip:hover .file-chip-fav,
+.file-chip-fav:focus-visible { opacity: 1; }
+.file-chip-fav.is-favorited {
+  /* AC-8 dark-mode no fallback — literal hex on purpose */
+  color: #F5A623; opacity: 1;
+}
+.file-chip-fav:focus-visible {
+  outline: 2px solid #F5A623; outline-offset: 1px;
+}
+.file-chip-fav.is-flipping { transform: scale(1.25); }
+@media (hover: none) { .file-chip-fav { opacity: 1; } }
+
+/* Favorites view — single-column, NOT a portal (designer §7 blood lesson) */
+#favorites-view {
+  display: grid; grid-template-columns: 1fr;
+  height: 100vh; overflow: hidden;
+}
+#favorites-rail {
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+  max-width: 920px; margin: 0 auto; width: 100%; padding: 0 24px;
+}
+#favorites-rail .files-rail-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 4px 8px;
+}
+#favorites-rail .section-label {
+  font-size: 13px; color: var(--text-mute); letter-spacing: 0.04em; font-weight: 600;
+}
+.favorites-total { color: var(--text-soft); font-weight: 400; margin-left: 4px; }
+#favorites-search.refs-search { margin: 4px 4px 12px; width: calc(100% - 8px); }
+.favorites-list { list-style: none; margin: 0; padding: 0 4px; overflow-y: auto; flex: 1; }
+.favorite-card {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 10px; background: var(--bg);
+  display: flex; flex-direction: column; gap: 6px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.favorite-card:hover { background: var(--accent-soft); }
+.favorite-card.is-missing { opacity: 0.55; }
+.favorite-card.is-unknown { opacity: 0.8; }
+.favorite-card-head { display: flex; align-items: center; gap: 8px; }
+.favorite-card-icon { font-size: 16px; flex-shrink: 0; }
+.favorite-card-title {
+  font-weight: 600; flex: 1; cursor: pointer; color: var(--text);
+  background: none; border: none; text-align: left; padding: 0;
+  font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.favorite-card-title:hover { text-decoration: underline; }
+.favorite-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.favorite-card-actions button {
+  background: transparent; border: none; cursor: pointer;
+  padding: 2px 6px; border-radius: 4px; font-size: 14px; color: var(--text-mute);
+}
+.favorite-card-actions button:hover { background: var(--accent-soft); }
+.favorite-card-actions .fav-star { color: #F5A623; font-size: 15px; }
+.favorite-card-preview {
+  color: var(--text-mute); font-size: 13px; margin: 0; padding-left: 24px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.favorite-card-meta {
+  color: var(--text-soft); font-size: 12px; padding-left: 24px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.favorite-card-meta .dot-sep { color: var(--text-soft); }
+.favorite-card.is-missing .favorite-card-preview { color: var(--missing-warn); }
+.favorite-card.is-missing .favorite-card-meta strong { color: var(--missing-warn); }
+.favorite-card.is-unknown .favorite-card-meta em { color: var(--text-soft); font-style: normal; }
+.favorites-empty, .favorites-error, .favorites-loading {
+  padding: 32px 16px; text-align: center; color: var(--text-mute);
+}
+.favorites-empty-title { font-weight: 600; margin: 0 0 4px; color: var(--text); }
+.favorites-empty-hint { margin: 0; color: var(--text-soft); font-size: 13px; }
+.favorites-status {
+  background: var(--accent-soft); border-radius: 6px;
+  padding: 6px 10px; font-size: 12px; color: var(--text-mute); margin: 0 4px 8px;
+}
+@media (max-width: 1280px) { #favorites-rail { padding: 0 16px; } }
+@media (max-width: 1024px) {
+  #favorites-rail { padding: 0 12px; max-width: 100%; }
+  .favorite-card-preview, .favorite-card-meta { padding-left: 0; }
 }
