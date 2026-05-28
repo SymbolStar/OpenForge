@@ -4531,7 +4531,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     const abs = li.dataset.abs;
     if (e.target.matches('[data-fav-unstar]')) {
       if (li.classList.contains('is-missing')) {
-        if (!confirm('文件已不在原位置 — 移除这条收藏？\n保留 = 取消')) return;
+        if (!confirm('文件已不存在，是否从收藏移除？')) return;
       }
       await toggleFavorite(abs, false, {});
       // remove from local + re-render
@@ -4548,6 +4548,21 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       return;
     }
     if (e.target.matches('[data-fav-open]')) {
+      // designer §3.2: missing 卡 title click 不进 viewer，弹 confirm 让 scott 决定
+      if (li.classList.contains('is-missing')) {
+        if (confirm('文件已不存在，是否从收藏移除？')) {
+          try {
+            await toggleFavorite(abs, false, {});
+            state.items = state.items.filter(x => x.abs_path !== abs);
+            window._forgeFavSet.delete(abs);
+            if (els.total) els.total.textContent = `(${state.items.length})`;
+            updateRailBadge(state.items.length);
+            render();
+            refreshChipStars();
+          } catch (_) { showToast('移除失败，已撤销'); }
+        }
+        return;
+      }
       // Try to navigate to the matching ref if known.
       const idx = window._forgeRefs;
       if (idx && idx.all) {
