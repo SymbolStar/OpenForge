@@ -619,6 +619,31 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._file(BRAND_DIR / "favicon.ico", "image/x-icon")
             return
 
+        # PWA shell: web app manifest + service worker. Both are needed for
+        # Chrome/Edge to surface the "Install app" affordance and turn the
+        # browser tab into a standalone Dock app. /sw.js MUST be served from
+        # site root (not /branding/) so its default scope covers everything,
+        # and we explicitly set Service-Worker-Allowed: / for clarity.
+        if path == "/manifest.webmanifest":
+            self._file(WEB_DIR / "manifest.webmanifest",
+                       "application/manifest+json; charset=utf-8")
+            return
+        if path == "/sw.js":
+            sw_path = WEB_DIR / "sw.js"
+            if not sw_path.exists():
+                self.send_error(404)
+                return
+            data = sw_path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "application/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Service-Worker-Allowed", "/")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         # api endpoints
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
