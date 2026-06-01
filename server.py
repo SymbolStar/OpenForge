@@ -54,6 +54,7 @@ import forge_avatar
 import forge_config
 import forge_context
 import forge_employees
+import forge_favorites
 import forge_files
 import forge_identity
 import forge_refs
@@ -824,6 +825,16 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"refs": refs})
             return
 
+        # ─── favorites (PRD v1.1) ─────────────────────────────
+        # GET /api/favorites — time-desc list with preview + missing_state.
+        # Concurrent stat with 100ms per-path timeout (AC-12); spun-down
+        # external disks fall to 'unknown' instead of 'missing' so the UI
+        # never tricks scott into deleting real favorites.
+        if path == "/api/favorites":
+            items = forge_favorites.list_with_status()
+            self._json({"favorites": items, "count": len(items)})
+            return
+
         # v0.9: GET /api/agents/<id>/status
         m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", path)
         if m:
@@ -1511,6 +1522,44 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+        # ─── PATCH /api/favorites ──────────────────────────────
+        # body: { abs_path, favorited: bool, ref_id?, thread_id?, source_agent? }
+        # AC-10: PK on abs_path guarantees one row per file.
+        if url.path == "/api/favorites":
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            abs_path = opts.get("abs_path")
+            favorited = opts.get("favorited")
+            if not isinstance(favorited, bool):
+                self._json({"error": "favorited (bool) required"}, 400)
+                return
+            try:
+                if favorited:
+                    rec = forge_favorites.set_favorite(
+                        abs_path,
+                        ref_id=opts.get("ref_id"),
+                        thread_id=opts.get("thread_id"),
+                        source_agent=opts.get("source_agent"),
+                    )
+                    self._json({
+                        "abs_path": rec["abs_path"],
+                        "favorited": True,
+                        "favorited_at": rec["favorited_at"],
+                    })
+                else:
+                    forge_favorites.unset_favorite(abs_path)
+                    self._json({
+                        "abs_path": (abs_path or "").strip(),
+                        "favorited": False,
+                        "favorited_at": None,
+                    })
+            except forge_favorites.FavoriteValidationError as e:
+                self._json({"error": str(e)}, 400)
             return
         m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}$", url.path)
         if m:
