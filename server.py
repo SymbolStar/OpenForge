@@ -54,9 +54,9 @@ import forge_avatar
 import forge_config
 import forge_context
 import forge_employees
+import forge_favorites
 import forge_files
 import forge_identity
-import forge_favorites
 import forge_refs
 import forge_session_search
 import forge_store as store

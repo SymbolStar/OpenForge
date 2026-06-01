@@ -79,8 +79,10 @@ def test_persists_across_reload(fake_home, tmp_md):
 
 def test_list_sorted_by_time_desc(fake_home, tmp_path):
     import forge_favorites
-    a = tmp_path / "a.md"; a.write_text("# A\n")
-    b = tmp_path / "b.md"; b.write_text("# B\n")
+    a = tmp_path / "a.md"
+    a.write_text("# A\n")
+    b = tmp_path / "b.md"
+    b.write_text("# B\n")
     forge_favorites.set_favorite(str(a))
     time.sleep(0.01)
     forge_favorites.set_favorite(str(b))
@@ -102,7 +104,8 @@ def test_list_with_status_present(fake_home, tmp_md):
 def test_list_with_status_missing(fake_home, tmp_path):
     """AC-7: deleted file → missing_state='missing'."""
     import forge_favorites
-    p = tmp_path / "gone.md"; p.write_text("# X\n")
+    p = tmp_path / "gone.md"
+    p.write_text("# X\n")
     forge_favorites.set_favorite(str(p))
     p.unlink()
     out = forge_favorites.list_with_status()
@@ -167,7 +170,7 @@ def test_http_patch_unfavorite(server, tmp_md):
 def test_http_patch_rejects_relative(server):
     try:
         _patch_favorites(server, {"abs_path": "relative.md", "favorited": True})
-        assert False, "expected 400"
+        raise AssertionError("expected 400")
     except urllib.error.HTTPError as e:
         assert e.code == 400
 
@@ -175,6 +178,6 @@ def test_http_patch_rejects_relative(server):
 def test_http_patch_rejects_missing_favorited(server, tmp_md):
     try:
         _patch_favorites(server, {"abs_path": str(tmp_md)})
-        assert False, "expected 400"
+        raise AssertionError("expected 400")
     except urllib.error.HTTPError as e:
         assert e.code == 400

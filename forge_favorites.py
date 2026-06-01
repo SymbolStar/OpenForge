@@ -36,7 +36,6 @@ import re
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 
 class FavoriteValidationError(ValueError):
@@ -236,7 +235,7 @@ def _compute_preview(path: str) -> str:
     Reads at most ~16KB / 200 lines. Returns plain text trimmed to 80 chars.
     """
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             head = []
             for i, line in enumerate(fh):
                 if i >= 200:
@@ -282,7 +281,7 @@ async def _stat_one(path: str, timeout_s: float) -> str:
             return "unknown"
     try:
         return await asyncio.wait_for(loop.run_in_executor(None, _do), timeout=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "unknown"
     except Exception:
         return "unknown"
@@ -315,7 +314,7 @@ def list_with_status(*, stat_timeout_ms: int = 100) -> list[dict]:
         states = ["unknown"] * len(rows)
 
     out = []
-    for r, state in zip(rows, states):
+    for r, state in zip(rows, states, strict=False):
         ap = r["abs_path"]
         label = os.path.basename(ap) or ap
         preview = _compute_preview(ap) if state == "present" else ""
