@@ -256,13 +256,6 @@ def list_file_roots() -> list[dict]:
 
 
 def list_files(root_id: str | None = None) -> list[dict]:
-    # PRD v1.2 follow-up (judy): bump v0.7 chip telemetry whenever the
-    # workspace file index is queried.
-    try:
-        import forge_v07_telemetry
-        forge_v07_telemetry.bump("list_files")
-    except Exception:
-        pass
     root = get_root(root_id) if root_id else default_root()
     if root is None:
         raise NotFoundError("unknown root")
@@ -283,14 +276,6 @@ def list_files(root_id: str | None = None) -> list[dict]:
 
 
 def read_file(name: str, root_id: str | None = None) -> dict:
-    # PRD v1.2 follow-up (judy): observable v0.7 chip usage. Every chip
-    # render that resolves through `[[root/name.md]]` ends up here, so a
-    # bump per read gives us a real number to decide the audit on.
-    try:
-        import forge_v07_telemetry
-        forge_v07_telemetry.bump("read_file")
-    except Exception:
-        pass
     root = get_root(root_id) if root_id else default_root()
     if root is None:
         raise NotFoundError("unknown root")

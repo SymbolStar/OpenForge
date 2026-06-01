@@ -102,6 +102,26 @@ function setStatus(text, ok = true) {
   els.statusDot.className = 'dot ' + (ok ? 'dot-ok' : 'dot-warn');
 }
 
+// PRD v1.2 follow-up (judy review #2): observable v0.7 chip usage.
+// Best-effort POST; failures are swallowed (telemetry must never block
+// render). Debounced per source so one re-render burst doesn't inflate
+// the counter — we want "a v0.7 chip was visible to the user" semantics.
+const _v07RecentlySent = new Set();
+function v07Bump(source) {
+  try {
+    const key = source || 'chip';
+    if (_v07RecentlySent.has(key)) return;
+    _v07RecentlySent.add(key);
+    setTimeout(() => _v07RecentlySent.delete(key), 1500);
+    fetch('/api/v07-chip-hits/bump', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: key }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) { /* never throw from telemetry */ }
+}
+
 function showToast(msg, ms = 2000) {
   const t = document.getElementById('toast');
   if (!t) return;
@@ -456,6 +476,11 @@ function renderBody(text) {
     }
     const display = (label || name).trim();
     chips.push({ kind: 'workspace', root, name, display, target });
+    // PRD v1.2 follow-up (judy review #2): a v0.7 [[root/name.md]] chip
+    // actually rendered to a user. This is the cleanest signal of v0.7
+    // exposure (back-end forge_files.read_file was caught firing for
+    // unrelated callers). Fire-and-forget; never blocks render.
+    try { v07Bump('chip_workspace'); } catch (_) { /* no-op */ }
     return `\u0001CHIP${chips.length - 1}\u0001`;
   });
   // Render markdown (bold/italic/lists/headings/links/code…) via marked when
@@ -2918,8 +2943,11 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (m && window.__forgeActivitySelect) window.__forgeActivitySelect(decodeURIComponent(m[1]));
       return;
     }
-    // v2: legacy #/favorites → redirect to FILES → Favorites tab
     if (h.startsWith('#/favorites')) {
+      // PRD v1.2 follow-up (judy review #2): record that a legacy v1
+      // bookmark still points at /favorites. Separate source so audit
+      // can tell chip exposure apart from stale-bookmark hits.
+      try { v07Bump('legacy_favorites_hash'); } catch (_) { /* no-op */ }
       location.replace('#/files/favorites');
       return;
     }
