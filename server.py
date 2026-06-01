@@ -835,6 +835,15 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"favorites": items, "count": len(items)})
             return
 
+        # PRD v1.2 follow-up: observability for v0.7 chip usage.
+        if path == "/api/v07-chip-hits":
+            try:
+                import forge_v07_telemetry
+                self._json(forge_v07_telemetry.snapshot())
+            except Exception:
+                self._json({})
+            return
+
         # v0.9: GET /api/agents/<id>/status
         m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", path)
         if m:

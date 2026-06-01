@@ -2886,18 +2886,16 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     items.forEach(it => it.classList.toggle('is-active', it.dataset.view === view));
     const agentsView = document.getElementById('agents-view');
     const activityView = document.getElementById('activity-view');
-    const favoritesView = document.getElementById('favorites-view');
     const hideAll = () => {
       homeView.hidden = true;
       filesView.hidden = true;
       if (agentsView) agentsView.hidden = true;
       if (activityView) activityView.hidden = true;
-      if (favoritesView) favoritesView.hidden = true;
     };
     if (view === 'files') {
       hideAll();
       filesView.hidden = false;
-      if (state.activeTab === 'workspace') loadFileList();
+      if (state.activeTab === 'favorites' && window.__forgeFavoritesActivate) window.__forgeFavoritesActivate();
     } else if (view === 'agents') {
       hideAll();
       if (agentsView) agentsView.hidden = false;
@@ -2905,10 +2903,6 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       hideAll();
       if (activityView) activityView.hidden = false;
       if (window.__forgeActivityActivate) window.__forgeActivityActivate();
-    } else if (view === 'favorites') {
-      hideAll();
-      if (favoritesView) favoritesView.hidden = false;
-      if (window.__forgeFavoritesActivate) window.__forgeFavoritesActivate();
     } else {
       hideAll();
       homeView.hidden = false;
@@ -2924,8 +2918,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (m && window.__forgeActivitySelect) window.__forgeActivitySelect(decodeURIComponent(m[1]));
       return;
     }
+    // v2: legacy #/favorites → redirect to FILES → Favorites tab
     if (h.startsWith('#/favorites')) {
-      setActive('favorites');
+      location.replace('#/files/favorites');
       return;
     }
     if (h.startsWith('#/agents')) {
@@ -2948,21 +2943,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         switchTab('refs');
         return;
       }
-      // New: #/files/<root>/<name>
-      m = h.match(/^#\/files\/([A-Za-z0-9_\-]{1,32})\/([A-Za-z0-9_.\-]+\.md)$/);
-      if (m) {
-        switchTab('workspace');
-        selectFile(decodeURIComponent(m[2]), decodeURIComponent(m[1]));
+      // v2: #/files/favorites — Favorites tab inside FILES panel
+      if (h === '#/files/favorites' || h.startsWith('#/files/favorites?')) {
+        switchTab('favorites');
         return;
       }
-      // Legacy: #/files/<name> — fall back to first known root or default
-      m = h.match(/^#\/files\/([A-Za-z0-9_.\-]+\.md)$/);
-      if (m) {
-        switchTab('workspace');
-        selectFile(decodeURIComponent(m[1]), null);
-        return;
-      }
-      // Bare /#/files → default to refs tab
+      // Bare /#/files → default tab
       switchTab(state.activeTab || 'refs');
     } else {
       setActive('home');
@@ -2979,7 +2965,6 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         if (v === 'files') location.hash = '#/files';
         else if (v === 'agents') location.hash = '#/agents';
         else if (v === 'activity') location.hash = '#/activity';
-        else if (v === 'favorites') location.hash = '#/favorites';
         else location.hash = '#/squads';
       } else {
         toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
@@ -3010,15 +2995,18 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const subEl = document.getElementById('file-sub');
   const previewEl = document.getElementById('file-preview');
   const editorEl = document.getElementById('file-editor');
-  const btnToggle = document.getElementById('btn-toggle-edit');
-  const btnSave = document.getElementById('btn-save-file');
+  // v2: Workspace tab removed; btnNew + rootSelect not in DOM. Variables
+  // are nullable; the legacy loadFileList/selectFile path is dead but
+  // still imported for #/files/refs/<id> sibling helpers to compile.
   const btnNew = document.getElementById('btn-new-file');
   const rootSelect = document.getElementById('file-root-select');
+  const btnToggle = document.getElementById('btn-toggle-edit');
+  const btnSave = document.getElementById('btn-save-file');
   // v0.8
   const tabRefs = document.getElementById('files-tab-refs');
-  const tabWorkspace = document.getElementById('files-tab-workspace');
+  const tabFavorites = document.getElementById('files-tab-favorites');
   const refsPane = document.getElementById('files-refs-pane');
-  const wsPane = document.getElementById('files-workspace-pane');
+  const favPane = document.getElementById('files-favorites-pane');
   const refsListEl = document.getElementById('refs-list');
   const refsEmptyEl = document.getElementById('refs-empty');
   const refsSearchEl = document.getElementById('refs-search');
@@ -3026,23 +3014,20 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   function switchTab(tab) {
     state.activeTab = tab;
     const isRefs = tab === 'refs';
+    const isFav = tab === 'favorites';
     if (tabRefs) tabRefs.classList.toggle('is-active', isRefs);
-    if (tabWorkspace) tabWorkspace.classList.toggle('is-active', !isRefs);
+    if (tabFavorites) tabFavorites.classList.toggle('is-active', isFav);
     if (refsPane) refsPane.hidden = !isRefs;
-    if (wsPane) wsPane.hidden = isRefs;
-    if (btnNew) btnNew.style.visibility = isRefs ? 'hidden' : '';
+    if (favPane) favPane.hidden = !isFav;
     if (isRefs) {
       loadRefs();
-    } else {
-      loadFileList();
+    } else if (isFav && window.__forgeFavoritesActivate) {
+      window.__forgeFavoritesActivate();
     }
   }
 
   if (tabRefs) tabRefs.addEventListener('click', () => { location.hash = '#/files/refs'; });
-  if (tabWorkspace) tabWorkspace.addEventListener('click', () => {
-    const root = state.currentRoot || (state.roots[0]?.id) || 'files';
-    location.hash = '#/files/' + encodeURIComponent(root);
-  });
+  if (tabFavorites) tabFavorites.addEventListener('click', () => { location.hash = '#/files/favorites'; });
   if (refsSearchEl) refsSearchEl.addEventListener('input', () => {
     state.refSearch = refsSearchEl.value || '';
     renderRefsList();
@@ -3559,7 +3544,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
   });
 
-  btnNew.addEventListener('click', async () => {
+  if (btnNew) btnNew.addEventListener('click', async () => {
     const meta = currentRootMeta();
     if (meta && !meta.writable) { toast('此目录只读'); return; }
     let name = prompt('新文件名（必须以 .md 结尾，只能是字母数字 _ - .）：', 'untitled.md');
@@ -3588,7 +3573,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   });
 
   // initial routing
-  loadRoots().then(() => loadRefIndex()).then(routeFromHash);
+  // v2: Workspace tab removed — no need to preload fileRoots at boot.
+  // Just warm the ref index for chip resolution + run router.
+  loadRefIndex().then(routeFromHash);
 })();
 
 /* ─── v0.9: Agents view (STATUS + context-bundle preview) ────────────────── */
@@ -4369,7 +4356,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   window._forgeFavSet = window._forgeFavSet || new Set(); // abs_path strings
   window._forgeFavLoaded = false;
 
-  const root = document.getElementById('favorites-view');
+  const root = document.getElementById('favorites-list');
   if (!root) return;
 
   const els = {
@@ -4380,9 +4367,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     error: document.getElementById('favorites-error'),
     loading: document.getElementById('favorites-loading'),
     retry: document.getElementById('favorites-retry'),
-    refresh: document.getElementById('btn-favorites-refresh'),
-    total: document.getElementById('favorites-total'),
-    railCount: document.getElementById('favorites-rail-count'),
+    refresh: document.getElementById('btn-favorites-refresh'),  // null in v2
+    total: document.getElementById('favorites-total'),         // null in v2
+    tabCount: document.getElementById('files-tab-favorites-count'),
     status: document.getElementById('favorites-status'),
   };
 
@@ -4508,12 +4495,13 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   }
 
   function updateRailBadge(n) {
-    if (!els.railCount) return;
+    // v2: ⭐ rail entry removed; show count next to the Favorites tab label.
+    if (!els.tabCount) return;
     if (n > 0) {
-      els.railCount.hidden = false;
-      els.railCount.textContent = n > 99 ? '99+' : String(n);
+      els.tabCount.hidden = false;
+      els.tabCount.textContent = n > 99 ? '99+' : String(n);
     } else {
-      els.railCount.hidden = true;
+      els.tabCount.hidden = true;
     }
   }
 

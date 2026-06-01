@@ -2508,26 +2508,15 @@ a.mini-avatar.avatar-link:focus-visible {
 .file-chip-fav.is-flipping { transform: scale(1.25); }
 @media (hover: none) { .file-chip-fav { opacity: 1; } }
 
-/* Favorites view — single-column, NOT a portal (designer §7 blood lesson) */
-#favorites-view {
-  display: grid; grid-template-columns: 1fr;
-  height: 100vh; overflow: hidden;
-}
-#favorites-rail {
-  background: var(--bg); color: var(--text);
+/* Favorites tab (PRD v1.2) — lives inside #files-favorites-pane.
+   Card body, dark-mode ★ literal, missing/unknown styling all preserved
+   from v1 (designer §7 blood lesson — no portal, no ★ var fallback). */
+#files-favorites-pane {
   display: flex; flex-direction: column; min-width: 0; overflow: hidden;
-  max-width: 920px; margin: 0 auto; width: 100%; padding: 0 24px;
+  flex: 1;
 }
-#favorites-rail .files-rail-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 4px 8px;
-}
-#favorites-rail .section-label {
-  font-size: 13px; color: var(--text-mute); letter-spacing: 0.04em; font-weight: 600;
-}
-.favorites-total { color: var(--text-soft); font-weight: 400; margin-left: 4px; }
-#favorites-search.refs-search { margin: 4px 4px 12px; width: calc(100% - 8px); }
-.favorites-list { list-style: none; margin: 0; padding: 0 4px; overflow-y: auto; flex: 1; }
+#favorites-search.refs-search { margin: 8px 12px 8px; width: calc(100% - 24px); }
+.favorites-list { list-style: none; margin: 0; padding: 0 12px; overflow-y: auto; flex: 1; }
 .favorite-card {
   border: 1px solid var(--border); border-radius: 8px;
   padding: 14px 16px; margin-bottom: 10px; background: var(--bg);
@@ -2567,16 +2556,15 @@ a.mini-avatar.avatar-link:focus-visible {
 .favorites-empty, .favorites-error, .favorites-loading {
   padding: 32px 16px; text-align: center; color: var(--text-mute);
 }
-.favorites-empty-title { font-weight: 600; margin: 0 0 4px; color: var(--text); }
-.favorites-empty-hint { margin: 0; color: var(--text-soft); font-size: 13px; }
+.favorites-empty-title { display: block; font-weight: 600; margin: 0 0 4px; color: var(--text); }
+.favorites-empty-hint { display: block; margin: 0; color: var(--text-soft); font-size: 13px; }
 .favorites-status {
   background: var(--accent-soft); border-radius: 6px;
-  padding: 6px 10px; font-size: 12px; color: var(--text-mute); margin: 0 4px 8px;
+  padding: 6px 10px; font-size: 12px; color: var(--text-mute); margin: 8px 12px 4px;
 }
-@media (max-width: 1280px) { #favorites-rail { padding: 0 16px; } }
-@media (max-width: 1024px) {
-  #favorites-rail { padding: 0 12px; max-width: 100%; }
-  .favorite-card-preview, .favorite-card-meta { padding-left: 0; }
+.files-tab-star { color: #F5A623; margin-right: 2px; }
+.files-tab-count {
+  color: var(--text-soft); font-weight: 400; font-size: 12px; margin-left: 2px;
 }
 
 /* PRD v1.1 nit (judy review #2): dark mode 下 --missing-warn 偏暗。
