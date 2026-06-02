@@ -21,6 +21,14 @@
 <link rel="stylesheet" href="/style.css" />
 <link rel="stylesheet" href="/xiaof.css" />
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- Mermaid: render ```mermaid code fences as SVG diagrams (flowchart / sequence / gantt / class / state / ER …). Loaded as ESM. -->
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: isDark ? 'dark' : 'default' });
+  window.mermaid = mermaid;
+  window.dispatchEvent(new Event('mermaid-ready'));
+</script>
 </head>
 <body>
 <div id="app">

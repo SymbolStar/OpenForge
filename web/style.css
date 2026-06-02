@@ -2611,3 +2611,28 @@ a.mini-avatar.avatar-link:focus-visible {
 }
 @keyframes viewer-fav-spin { to { transform: rotate(360deg); } }
 .btn-viewer-fav[disabled] { cursor: progress; }
+
+/* ─── mermaid diagrams ───────────────────────────────────────────── */
+.mermaid-block {
+  display: block;
+  margin: 8px 0;
+  padding: 12px;
+  background: var(--surface-2, #fafafa);
+  border: 1px solid var(--border, #eaeaea);
+  border-radius: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid-block svg { max-width: 100%; height: auto; }
+.mermaid-error {
+  background: #2a1414;
+  color: #ff9e9e;
+  border: 1px solid #6b2a2a;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  .mermaid-block { background: #1b1b1b; border-color: #2a2a2a; }
+}

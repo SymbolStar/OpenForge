@@ -1121,6 +1121,56 @@ function renderPosts(posts) {
       els.postList.appendChild(renderPostNode(p, false));
     }
   });
+  // Mermaid: turn ```mermaid fenced blocks (rendered by marked as
+  // <pre><code class="language-mermaid">…</code></pre>) into live SVG.
+  renderMermaidIn(els.postList);
+}
+
+// ─── mermaid renderer ──────────────────────────────────────────────
+// Idempotent: each block gets a stable id and we skip already-rendered
+// nodes (marked with data-mermaid-rendered="1"). Safe to re-run after
+// every SSE-driven renderPosts pass.
+let _mermaidSeq = 0;
+function renderMermaidIn(root) {
+  if (!root) return;
+  const blocks = root.querySelectorAll('pre > code.language-mermaid, pre > code.lang-mermaid');
+  if (!blocks.length) return;
+  const run = () => {
+    if (typeof window.mermaid === 'undefined' || !window.mermaid.render) return;
+    blocks.forEach(code => {
+      const pre = code.parentElement;
+      if (!pre || pre.dataset.mermaidRendered === '1') return;
+      const src = code.textContent || '';
+      if (!src.trim()) return;
+      const id = 'mmd-' + (Date.now().toString(36)) + '-' + (++_mermaidSeq);
+      const host = document.createElement('div');
+      host.className = 'mermaid-block';
+      host.setAttribute('role', 'img');
+      pre.dataset.mermaidRendered = '1';
+      // Replace the <pre> with the host; keep a hidden source copy so
+      // copy-paste / fallback still works if render throws.
+      pre.replaceWith(host);
+      try {
+        window.mermaid.render(id, src).then(({ svg, bindFunctions }) => {
+          host.innerHTML = svg;
+          if (bindFunctions) bindFunctions(host);
+        }).catch(err => {
+          host.innerHTML = '<pre class="mermaid-error"><code></code></pre>';
+          const codeEl = host.querySelector('code');
+          if (codeEl) codeEl.textContent = '[mermaid] ' + (err && err.message || err) + '\n\n' + src;
+        });
+      } catch (err) {
+        host.innerHTML = '<pre class="mermaid-error"><code></code></pre>';
+        const codeEl = host.querySelector('code');
+        if (codeEl) codeEl.textContent = '[mermaid] ' + (err && err.message || err) + '\n\n' + src;
+      }
+    });
+  };
+  if (typeof window.mermaid === 'undefined') {
+    window.addEventListener('mermaid-ready', run, { once: true });
+  } else {
+    run();
+  }
 }
 
 // ─── agent status chip (router placeholder replacement) ─────────────────
@@ -3185,6 +3235,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         state.content = text;
         if ((ctype.startsWith('text/markdown') || /\.md$/i.test(ref.label)) && typeof marked !== 'undefined' && marked.parse) {
           previewEl.innerHTML = openExternalLinksInNewTab(marked.parse(text));
+          renderMermaidIn(previewEl);
         } else if (ctype.includes('json')) {
           try {
             previewEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(JSON.parse(text), null, 2)) + '</pre>';
@@ -3373,6 +3424,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   function renderPreview() {
     if (typeof marked !== 'undefined' && marked.parse) {
       previewEl.innerHTML = openExternalLinksInNewTab(marked.parse(state.content || ''));
+      renderMermaidIn(previewEl);
     } else {
       previewEl.textContent = state.content || '';
     }
@@ -3721,6 +3773,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         const md = d.content || '';
         if (typeof marked !== 'undefined' && marked.parse) {
           statusCard.innerHTML = openExternalLinksInNewTab(marked.parse(md));
+          renderMermaidIn(statusCard);
         } else {
           statusCard.textContent = md;
         }
