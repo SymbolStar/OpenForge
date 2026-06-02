@@ -9,6 +9,12 @@
 <link rel="icon" type="image/png" sizes="48x48" href="/branding/logo-forge-f-48.png" />
 <link rel="apple-touch-icon" sizes="256x256" href="/branding/logo-forge-f-256.png" />
 <link rel="alternate icon" href="/favicon.ico" />
+<!-- PWA: installable Dock app via Chrome/Edge "Install app" -->
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#0a0a0a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="OpenForge" />
 <meta property="og:title" content="OpenForge" />
 <meta property="og:description" content="用 agent，锻造你的产品。" />
 <meta property="og:image" content="/branding/logo-forge-f-og.png" />
@@ -422,5 +428,15 @@
 <script src="/src/avatar.js"></script>
 <script src="/app.js"></script>
 <script src="/xiaof.js" defer></script>
+<script>
+  // Register the PWA service worker. Failure is non-fatal — the app must
+  // still work as a plain web tab without it.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .catch(function (err) { console.warn('[pwa] sw register failed:', err); });
+    });
+  }
+</script>
 </body>
 </html>
