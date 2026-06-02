@@ -2572,3 +2572,42 @@ a.mini-avatar.avatar-link:focus-visible {
 @media (prefers-color-scheme: dark) {
   :root { --missing-warn: #FF7A7A; }
 }
+
+/* PRD v1.2 viewer ⭐ button (alice 20:32 / designer 20:38) — lives in
+   #files-toolbar .files-toolbar-actions, left of 编辑. Three states:
+   未收藏 ☆ 灰 · 已收藏 ★ 字面量 #F5A623 · loading ★ + 淡显 + 同色 spinner. */
+.btn-viewer-fav {
+  position: relative;
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 18px; line-height: 1;
+  color: var(--favorite-empty);
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.btn-viewer-fav:hover { background: var(--accent-soft); }
+.btn-viewer-fav:focus-visible { outline: 2px solid #F5A623; outline-offset: 1px; }
+.btn-viewer-fav.is-favorited {
+  /* AC-8 dark-mode no fallback — literal hex on purpose */
+  color: #F5A623;
+}
+.btn-viewer-fav.is-busy {
+  opacity: 0.55;
+  cursor: progress;
+}
+.btn-viewer-fav.is-busy::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid transparent;
+  border-top-color: #F5A623;
+  border-radius: 50%;
+  animation: viewer-fav-spin 700ms linear infinite;
+  pointer-events: none;
+}
+@keyframes viewer-fav-spin { to { transform: rotate(360deg); } }
+.btn-viewer-fav[disabled] { cursor: progress; }
