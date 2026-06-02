@@ -835,6 +835,15 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"favorites": items, "count": len(items)})
             return
 
+        # PRD v1.2 follow-up: observability for v0.7 chip usage.
+        if path == "/api/v07-chip-hits":
+            try:
+                import forge_v07_telemetry
+                self._json(forge_v07_telemetry.snapshot())
+            except Exception:
+                self._json({})
+            return
+
         # v0.9: GET /api/agents/<id>/status
         m = re.match(rf"^/api/agents/{AGENT_ID_ROUTE_RE}/avatar$", path)
         if m:
@@ -943,6 +952,24 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # PRD v1.2 follow-up (judy review #2 of PR #53): observable v0.7
+        # chip usage. Bumped by web/app.js renderBody when a v0.7-shaped
+        # [[root/name.md]] chip is rendered. This is the *only* path that
+        # really reflects v0.7 chip exposure — binding to forge_files.read
+        # caught References + tests too, which judy flagged as virtual.
+        if url.path == "/api/v07-chip-hits/bump":
+            opts = self._read_json() or {}
+            source = opts.get("source") if isinstance(opts, dict) else None
+            if not isinstance(source, str) or not source.strip():
+                source = "chip"
+            try:
+                import forge_v07_telemetry
+                forge_v07_telemetry.bump(source.strip()[:64])
+            except Exception:
+                pass
+            self._json({"ok": True})
             return
 
         # 小F global agent — M1: SSE shell + stub adapter.
