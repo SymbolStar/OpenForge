@@ -4557,14 +4557,15 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       if (li.classList.contains('is-missing')) {
         if (!confirm('文件已不存在，是否从收藏移除？')) return;
       }
-      await toggleFavorite(abs, false, {});
-      // remove from local + re-render
-      state.items = state.items.filter(x => x.abs_path !== abs);
-      window._forgeFavSet.delete(abs);
-      if (els.total) els.total.textContent = `(${state.items.length})`;
-      updateRailBadge(state.items.length);
-      render();
-      refreshChipStars();
+      try {
+        await toggleFavorite(abs, false, {});
+        window._forgeFavSet.delete(abs);
+        // PRD v1.3 AC-14 reverse direction (judy review): unstar from
+        // Favorites tab must also flip viewer ★ + chip ★ in lock-step.
+        // syncAllStarsAfterToggle handles list filter + badge + render +
+        // chip refresh + viewer refresh in one go.
+        syncAllStarsAfterToggle(abs, false);
+      } catch (_) { showToast('取消收藏失败，已撤销'); }
       return;
     }
     if (e.target.matches('[data-fav-copy]')) {
@@ -4577,12 +4578,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         if (confirm('文件已不存在，是否从收藏移除？')) {
           try {
             await toggleFavorite(abs, false, {});
-            state.items = state.items.filter(x => x.abs_path !== abs);
             window._forgeFavSet.delete(abs);
-            if (els.total) els.total.textContent = `(${state.items.length})`;
-            updateRailBadge(state.items.length);
-            render();
-            refreshChipStars();
+            // AC-14 reverse: keep three views in sync.
+            syncAllStarsAfterToggle(abs, false);
           } catch (_) { showToast('移除失败，已撤销'); }
         }
         return;
