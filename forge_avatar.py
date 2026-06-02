@@ -38,7 +38,8 @@ def _validate_agent_id(agent_id: str) -> str:
 
 
 def workspace_dir(agent_id: str) -> Path:
-    return Path.home() / ".openclaw" / f"workspace-{_validate_agent_id(agent_id)}"
+    import forge_paths
+    return forge_paths.openclaw_workspace_dir(_validate_agent_id(agent_id))
 
 
 def avatar_path(agent_id: str) -> Path:

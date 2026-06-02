@@ -146,7 +146,8 @@ _active: dict[str, Ref] = {}
 
 
 def forge_dir() -> Path:
-    p = Path.home() / ".openclaw" / "openforge"
+    import forge_paths
+    p = forge_paths.openforge_home()
     p.mkdir(parents=True, exist_ok=True)
     return p
 

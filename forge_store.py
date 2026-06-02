@@ -51,15 +51,23 @@ from typing import Any
 # v0.5: OPENFORGE_DIR env var overrides the default location so `forge dev`
 # (or any other isolated invocation) can run against a throw-away fixture
 # tree without touching real user state.
+#
+# Path resolution (in order): OPENFORGE_DIR (deprecated alias kept for one
+# release) → forge_paths.openforge_home() which honors OPENFORGE_HOME and
+# defaults to ~/.openforge.
+import forge_paths as _fp
+
 _env_forge_dir = os.environ.get("OPENFORGE_DIR")
 if _env_forge_dir:
     FORGE_DIR = Path(_env_forge_dir).expanduser()
 else:
-    FORGE_DIR = Path.home() / ".openclaw" / "openforge"
+    FORGE_DIR = _fp.openforge_home()
 THREADS_DIR = FORGE_DIR / "threads"
 
-# Legacy standup layout (read-only; kept for projection back-compat).
-STANDUP_DIR = Path.home() / ".openclaw" / "standups"
+# Legacy standup layout (read-only; kept for projection back-compat). This
+# lives in OpenClaw-land on purpose — the standups module predates
+# OpenForge and is owned by OpenClaw.
+STANDUP_DIR = _fp.openclaw_home() / "standups"
 DATA_DIR = STANDUP_DIR / "data"
 
 THREAD_ID_RE = re.compile(r"^th_[0-9a-f]+_[0-9a-f]+$")

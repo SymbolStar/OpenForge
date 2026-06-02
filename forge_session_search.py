@@ -40,7 +40,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-AGENTS_ROOT = Path.home() / ".openclaw" / "agents"
+import forge_paths
+
+AGENTS_ROOT = forge_paths.openclaw_agents_root()
 
 # Match agent_runtime.py — these prefixes denote "forge-spawned" sessions.
 _FORGE_PREFIXES = ("forge-", "standup-", "huddle-")
@@ -65,8 +67,8 @@ class SessionSearchError(ValueError):
 
 
 def _sessions_dir(agent_id: str) -> Path:
-    # Recompute AGENTS_ROOT lazily so HOME monkeypatch in tests works.
-    return Path.home() / ".openclaw" / "agents" / agent_id / "sessions"
+    # Recompute lazily so HOME monkeypatch / OPENCLAW_HOME (if added) works.
+    return forge_paths.openclaw_agents_root() / agent_id / "sessions"
 
 
 def _is_forge_stem(stem: str) -> bool:

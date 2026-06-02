@@ -18,7 +18,7 @@ def test_files_root_creates_dir(fake_home):
     import forge_files
     root = forge_files.files_root()
     assert root.exists() and root.is_dir()
-    assert root == fake_home / ".openclaw" / "openforge" / "files"
+    assert root == fake_home / ".openforge" / "files"
 
 
 def test_list_files_empty(fake_home):
