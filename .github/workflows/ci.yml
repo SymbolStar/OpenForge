@@ -134,9 +134,13 @@ jobs:
           # v0.7 multi-root with a configured docs root (read-only)
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
-          mkdir -p "$HOME/.openclaw/openforge" /tmp/docs-root
+          # PR #54 moved state from ~/.openclaw/openforge → ~/.openforge.
+          # Write the test config to the new root so the smoke server
+          # actually sees the docs fileRoot (otherwise only the seeded
+          # `files` root shows and the assertion below fails).
+          mkdir -p "$HOME/.openforge" /tmp/docs-root
           echo '# doc' > /tmp/docs-root/seed.md
-          python -c "import json,os; json.dump({'fileRoots':[{'id':'files','label':'Files','path':os.path.expanduser('~/.openclaw/openforge/files'),'writable':True},{'id':'docs','label':'Docs','path':'/tmp/docs-root','writable':False}]}, open(os.path.expanduser('~/.openclaw/openforge/config.json'),'w'))"
+          python -c "import json,os; json.dump({'fileRoots':[{'id':'files','label':'Files','path':os.path.expanduser('~/.openforge/files'),'writable':True},{'id':'docs','label':'Docs','path':'/tmp/docs-root','writable':False}]}, open(os.path.expanduser('~/.openforge/config.json'),'w'))"
           python -u server.py --port 17878 > /tmp/server2.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 50); do
