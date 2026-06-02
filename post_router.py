@@ -31,6 +31,7 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import forge_employees
@@ -512,6 +513,8 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict,
         try:
             if placeholder_id:
                 _patch_chip(thread_id, placeholder_id, phase="running")
+            if agent_id in forge_employees.acp_employee_ids():
+                prompt = _render_acp_preamble(thread_id, agent_id, trigger) + prompt
             reply = call_agent(agent_id, session_id, prompt, extra_env=spawn_env)
         except AgentError as e:
             if placeholder_id:
@@ -744,6 +747,37 @@ def _build_prompt(thread_id: str, agent_id: str, trigger: dict) -> str:
         f"  memory_search(query=\"...\")\n"
         f"未查就凭印象回答 = 黑线。\n"
     )
+
+
+def _render_acp_preamble(thread_id: str, agent_id: str, trigger: dict) -> str:
+    """Render identity/context for ACP CLI employees.
+
+    ACP CLIs are not OpenClaw agents, so they do not automatically receive
+    workspace identity. Keep the block conditional and compact.
+    """
+    trigger_text = (trigger.get("content") or "").strip()
+    trigger_speaker = (trigger.get("speaker") or "").strip() or "unknown"
+    parts = [
+        "[OpenForge ACP employee preamble]",
+        f"你的身份: {agent_id} ACP CLI employee",
+        f"thread_id: {thread_id}",
+    ]
+    soul_path = Path.home() / ".openclaw" / f"workspace-{agent_id}" / "SOUL.md"
+    try:
+        if soul_path.exists() and soul_path.is_file():
+            soul = soul_path.read_text(encoding="utf-8").strip()
+            if soul:
+                parts.extend(["", "[已注册 SOUL.md]", soul])
+    except Exception:
+        pass
+    parts.extend([
+        "",
+        f"[触发 post 原文 — from: {trigger_speaker}]",
+        trigger_text,
+        "[/OpenForge ACP employee preamble]",
+        "",
+    ])
+    return "\n".join(parts)
 
 
 def _render_bundle_preamble(thread_id: str, agent_id: str, trigger_preview: str) -> str:
