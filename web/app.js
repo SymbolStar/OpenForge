@@ -3153,6 +3153,13 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       subEl.textContent = (ref.source_agent ? ref.source_agent + ' · ' : '')
         + fmtSize(ref.size_hint || 0) + ' · 注册于 ' + fmtTime(ref.registered_at)
         + ' · ' + ref.abs_path;
+      // PRD v1.2 viewer entry (alice 20:32 / designer 20:38): viewer header
+      // ⭐ button. State pulled from window._forgeFavSet (already populated
+      // by Favorites tab bootstrap); no extra GET needed.
+      if (typeof setViewerFavTarget === 'function') {
+        setViewerFavTarget({ abs_path: ref.abs_path, ref_id: ref.id,
+          source_agent: ref.source_agent, thread_id: ref.thread_id });
+      }
       previewEl.innerHTML = '<p class="meta">加载中…</p>';
       editorEl.hidden = true;
       previewEl.hidden = false;
@@ -3315,6 +3322,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     btnToggle.textContent = '编辑';
     btnSave.hidden = true;
     btnSave.disabled = true;
+    if (typeof setViewerFavTarget === 'function') setViewerFavTarget(null);
   }
 
   async function selectFile(name, rootId) {
@@ -4611,6 +4619,9 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       });
       if (!wasFav) window._forgeFavSet.add(abs);
       else window._forgeFavSet.delete(abs);
+      // PRD v1.2 viewer entry: same-tab sync — keep viewer ★ + Favorites
+      // tab in lock-step with any chip toggle.
+      syncAllStarsAfterToggle(abs, !wasFav);
     } catch (err) {
       // rollback
       setStarUI(btn, wasFav);
@@ -4629,6 +4640,84 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       const abs = btn.dataset.favAbs;
       if (!abs) return;
       setStarUI(btn, window._forgeFavSet.has(abs));
+    });
+  }
+
+  /* ---- viewer ⭐ button (PRD v1.2, alice 20:32 / designer 20:38) ---- */
+  const viewerFavBtn = document.getElementById('btn-viewer-fav');
+  let viewerFavCtx = null;  // { abs_path, ref_id, source_agent, thread_id }
+
+  function setViewerFavUI(fav, busy) {
+    if (!viewerFavBtn) return;
+    viewerFavBtn.classList.toggle('is-favorited', !!fav);
+    viewerFavBtn.classList.toggle('is-busy', !!busy);
+    viewerFavBtn.textContent = fav ? '★' : '☆';
+    viewerFavBtn.setAttribute('aria-pressed', fav ? 'true' : 'false');
+    viewerFavBtn.setAttribute('aria-label', fav ? '取消收藏' : '收藏此文件');
+    viewerFavBtn.title = fav ? '取消收藏' : '收藏';
+    if (busy) viewerFavBtn.setAttribute('aria-busy', 'true');
+    else viewerFavBtn.removeAttribute('aria-busy');
+    viewerFavBtn.disabled = !!busy;
+  }
+
+  // Exposed to selectRef / clearSelection (above). target=null = hide.
+  window.setViewerFavTarget = function (target) {
+    if (!viewerFavBtn) return;
+    if (!target || !target.abs_path) {
+      viewerFavCtx = null;
+      viewerFavBtn.hidden = true;
+      return;
+    }
+    viewerFavCtx = target;
+    viewerFavBtn.hidden = false;
+    setViewerFavUI(window._forgeFavSet.has(target.abs_path), false);
+  };
+
+  function refreshViewerStar() {
+    if (!viewerFavBtn || !viewerFavCtx) return;
+    setViewerFavUI(window._forgeFavSet.has(viewerFavCtx.abs_path), false);
+  }
+
+  // Side-effect: same-tab sync. After any successful toggle, refresh chip
+  // stars + viewer button + Favorites tab list if it's currently rendered.
+  function syncAllStarsAfterToggle(abs, nowFav) {
+    refreshChipStars();
+    refreshViewerStar();
+    // Favorites tab in-memory state
+    if (nowFav) {
+      // Server is authoritative for the full row (preview, meta) — a stale
+      // reload happens next time the user opens the tab. Best effort: if we
+      // don't have it, leave it; if we do, keep it.
+    } else {
+      state.items = state.items.filter(x => x.abs_path !== abs);
+      if (els.total) els.total.textContent = `(${state.items.length})`;
+      updateRailBadge(state.items.length);
+      if (state.view === 'ready') render();
+    }
+  }
+
+  if (viewerFavBtn) {
+    viewerFavBtn.addEventListener('click', async () => {
+      if (!viewerFavCtx || !viewerFavCtx.abs_path) return;
+      const abs = viewerFavCtx.abs_path;
+      const wasFav = window._forgeFavSet.has(abs);
+      // optimistic
+      setViewerFavUI(!wasFav, true);
+      try {
+        await toggleFavorite(abs, !wasFav, {
+          ref_id: viewerFavCtx.ref_id || null,
+          source_agent: viewerFavCtx.source_agent || null,
+          thread_id: viewerFavCtx.thread_id || null,
+        });
+        if (!wasFav) window._forgeFavSet.add(abs);
+        else window._forgeFavSet.delete(abs);
+        setViewerFavUI(!wasFav, false);
+        syncAllStarsAfterToggle(abs, !wasFav);
+      } catch (_) {
+        // rollback
+        setViewerFavUI(wasFav, false);
+        showToast(wasFav ? '取消收藏失败，已撤销' : '收藏失败，已撤销');
+      }
     });
   }
 
