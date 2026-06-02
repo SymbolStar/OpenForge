@@ -54,7 +54,15 @@ def main() -> int:
     # (so the project_dir feature actually validates green out of the box),
     # plus a discussion-shaped squad with no project_dir (to exercise the
     # "rule-segment hidden" code path in PR-B).
-    dev_repo = Path("/Volumes/DevDisk/symbol/openforge")
+    #
+    # Resolves to (in priority): $OPENFORGE_REPO_ROOT/openforge, then the
+    # current repo (the script's parent dir). Used to be hard-coded to
+    # /Volumes/DevDisk/symbol/openforge — don't do that, exotic disks die.
+    repo_root_env = os.environ.get("OPENFORGE_REPO_ROOT")
+    if repo_root_env:
+        dev_repo = Path(repo_root_env).expanduser() / "openforge"
+    else:
+        dev_repo = Path(__file__).resolve().parent.parent
     fs.create_squad({
         "id": "dev_native",
         "name": "Dev · AI Native",

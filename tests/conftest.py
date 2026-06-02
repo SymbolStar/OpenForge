@@ -1,7 +1,7 @@
 """Shared pytest fixtures for OpenForge tests.
 
-Every test gets a fresh fake $HOME so forge_store's ~/.openclaw/openforge/
-tree is empty + isolated. We also stub OPENFORGE_OPENCLAW_BIN so post_router
+Every test gets a fresh fake $HOME so forge_store's ~/.openforge/ tree is
+empty + isolated. We also stub OPENFORGE_OPENCLAW_BIN so post_router
 never tries to shell out to a real openclaw binary.
 """
 from __future__ import annotations
@@ -35,14 +35,19 @@ def fake_home(monkeypatch, tmp_path):
     # Clear PR-A OPENFORGE_DIR override if the test environment inherited it
     # (e.g. dev shell). Tests must always resolve to fake $HOME.
     monkeypatch.delenv("OPENFORGE_DIR", raising=False)
+    # And the new OPENFORGE_HOME override — same reasoning.
+    monkeypatch.delenv("OPENFORGE_HOME", raising=False)
     monkeypatch.setenv("OPENFORGE_OPENCLAW_BIN", str(REPO_ROOT / "tests" / "fixtures" / "fake_openclaw.sh"))
     # Force reload so module-level Path.home() captures the new HOME.
     for name in [
+        "forge_paths",
         "forge_store",
         "forge_refs",
         "forge_context",
         "forge_employees",
         "forge_identity",
+        "forge_session_search",
+        "forge_uploads",
         "agent_runtime",
         "post_router",
     ]:

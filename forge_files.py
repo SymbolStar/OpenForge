@@ -83,7 +83,8 @@ class Root:
 
 def forge_dir() -> Path:
     """Root of the OpenForge data dir (always under $HOME, honors monkeypatch)."""
-    p = Path.home() / ".openclaw" / "openforge"
+    import forge_paths
+    p = forge_paths.openforge_home()
     p.mkdir(parents=True, exist_ok=True)
     return p
 

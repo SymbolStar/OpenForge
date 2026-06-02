@@ -23,9 +23,13 @@ Routes:
   POST   /api/threads/<id>/close          -> mark closed
   POST   /api/threads/<id>/posts/<pid>/reactions  -> toggle {emoji, actor?}
 
-Reads:  ~/.openclaw/openforge/squads.json,
-        ~/.openclaw/openforge/threads/<thread-id>/events.jsonl
-Writes: thread events (squads.json under openforge/).
+Reads:  ~/.openforge/squads.json,
+        ~/.openforge/threads/<thread-id>/events.jsonl
+Writes: thread events (squads.json under ~/.openforge/).
+
+Legacy: pre-refactor installs kept state at ~/.openclaw/openforge/. The first
+start after upgrade auto-migrates that directory to ~/.openforge/ (see
+`forge_paths.migrate_legacy_home_if_needed`).
 """
 
 from __future__ import annotations
@@ -57,6 +61,7 @@ import forge_employees
 import forge_favorites
 import forge_files
 import forge_identity
+import forge_paths
 import forge_refs
 import forge_session_search
 import forge_store as store
@@ -660,7 +665,7 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 for m in sq.get("members") or []:
                     if m:
                         ids.add(m)
-            agents_root = Path.home() / ".openclaw" / "agents"
+            agents_root = forge_paths.openclaw_agents_root()
             if agents_root.exists():
                 for child in agents_root.iterdir():
                     if child.is_dir() and (child / "sessions").exists():
@@ -1723,6 +1728,12 @@ def main():
     )
     args = p.parse_args()
 
+    # One-shot migration: ~/.openclaw/openforge/ → ~/.openforge/ for
+    # existing installs. Idempotent; no-op when OPENFORGE_HOME is set.
+    migrated = forge_paths.migrate_legacy_home_if_needed()
+    if migrated:
+        print(f"📦 migrated legacy state → {migrated}")
+
     OpenForgeHandler.bind_host = args.host
     if not _is_local(args.host):
         OpenForgeHandler.auth_token = args.token or secrets.token_urlsafe(24)
@@ -1740,7 +1751,7 @@ def main():
                 if m:
                     all_members.add(m)
         # also include every agent that has an on-disk session dir
-        agents_root = Path.home() / ".openclaw" / "agents"
+        agents_root = forge_paths.openclaw_agents_root()
         if agents_root.exists():
             for child in agents_root.iterdir():
                 if child.is_dir() and (child / "sessions" / "sessions.json").exists():

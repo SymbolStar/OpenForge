@@ -51,7 +51,8 @@ RUNTIME_EMPLOYEE_IDS: frozenset[str] = frozenset({"codex", "claude-code"})
 
 
 def _openclaw_root() -> Path:
-    return Path.home() / ".openclaw"
+    import forge_paths
+    return forge_paths.openclaw_home()
 
 
 def _has_agent_runtime(root: Path, agent_id: str) -> bool:

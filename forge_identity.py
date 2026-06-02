@@ -42,7 +42,8 @@ _EMOJI_RE = re.compile(r"^\s*-\s*\*\*Emoji:\*\*\s*(.+?)\s*$", re.MULTILINE)
 
 
 def _identity_path(agent_id: str) -> Path:
-    return Path.home() / ".openclaw" / f"workspace-{agent_id}" / "IDENTITY.md"
+    import forge_paths
+    return forge_paths.openclaw_workspace_dir(agent_id) / "IDENTITY.md"
 
 
 def _looks_like_placeholder(value: str) -> bool:

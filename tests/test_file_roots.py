@@ -15,7 +15,7 @@ pytest_plugins = ["tests.test_server"]
 
 
 def _write_config(fake_home, roots):
-    cfg_dir = fake_home / ".openclaw" / "openforge"
+    cfg_dir = fake_home / ".openforge"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.json").write_text(
         json.dumps({"fileRoots": roots}), encoding="utf-8"
@@ -28,7 +28,7 @@ def test_default_roots_when_no_config(fake_home):
     assert len(roots) == 1
     assert roots[0].id == "files"
     assert roots[0].writable is True
-    assert roots[0].path == fake_home / ".openclaw" / "openforge" / "files"
+    assert roots[0].path == fake_home / ".openforge" / "files"
 
 
 def test_custom_roots_load(fake_home, tmp_path):
@@ -39,7 +39,7 @@ def test_custom_roots_load(fake_home, tmp_path):
     extra.mkdir()
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "docs", "label": "Docs", "path": str(docs), "writable": True},
         {"id": "ro", "label": "ReadOnly", "path": str(extra),
@@ -65,7 +65,7 @@ def test_missing_root_path_skipped(fake_home, tmp_path):
     import forge_files
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "ghost", "label": "Ghost", "path": str(tmp_path / "nope")},
     ])
@@ -76,7 +76,7 @@ def test_missing_root_path_skipped(fake_home, tmp_path):
 
 def test_invalid_config_falls_back(fake_home):
     import forge_files
-    cfg_dir = fake_home / ".openclaw" / "openforge"
+    cfg_dir = fake_home / ".openforge"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.json").write_text("not json {{{", encoding="utf-8")
     roots = forge_files.load_roots()
@@ -133,7 +133,7 @@ def test_read_only_root_writes_rejected(fake_home, tmp_path):
     (d / "x.md").write_text("hi")
     _write_config(fake_home, [
         {"id": "files", "label": "F",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "ro", "label": "RO", "path": str(d), "writable": False},
     ])
@@ -183,7 +183,7 @@ def test_list_file_roots_counts(fake_home, tmp_path):
     (d / "c.txt").write_text("skip")
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "more", "label": "More", "path": str(d), "writable": True},
     ])
@@ -229,7 +229,7 @@ def test_http_file_roots_endpoint(server, fake_home):
 def test_http_list_files_with_root_param(server, fake_home):
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
     ])
     status, _hdr, body = _call("GET", f"{server}/api/files?root=files")
@@ -249,7 +249,7 @@ def test_http_per_root_crud(server, fake_home, tmp_path):
     docs.mkdir()
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "docs", "label": "Docs", "path": str(docs), "writable": True},
     ])
@@ -289,7 +289,7 @@ def test_http_read_only_root_rejects_writes(server, fake_home, tmp_path):
     (ro / "doc.md").write_text("hello")
     _write_config(fake_home, [
         {"id": "files", "label": "Files",
-         "path": str(fake_home / ".openclaw" / "openforge" / "files"),
+         "path": str(fake_home / ".openforge" / "files"),
          "writable": True},
         {"id": "ro", "label": "RO", "path": str(ro), "writable": False},
     ])

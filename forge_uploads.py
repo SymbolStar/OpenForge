@@ -18,15 +18,19 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import forge_paths
+
 # ─── config ──────────────────────────────────────────────────────────
 
-UPLOADS_DIR = Path.home() / ".openclaw" / "openforge" / "uploads"
+UPLOADS_DIR = forge_paths.uploads_dir()
 MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # v0.10: per-operator workspace upload dir (for ref-based thread-create paste).
 # Files are written here (not into the openforge git repo) and then registered
 # via forge_refs.register(), so multi-agent ref resolution works.
-WORKSPACE_BASE = Path.home() / ".openclaw"
+# The per-agent workspace dirs are owned by OpenClaw on purpose — OpenForge
+# carves an `openforge-uploads/` subdir into each so the agent's own tooling
+# can see uploaded files alongside its other state.
 
 
 def workspace_uploads_dir(operator: str) -> Path:
@@ -35,7 +39,7 @@ def workspace_uploads_dir(operator: str) -> Path:
     # be paranoid: forbid path traversal in the operator id
     if "/" in op or "\\" in op or ".." in op:
         raise UploadError(f"invalid operator id: {op!r}")
-    p = WORKSPACE_BASE / f"workspace-{op}" / "openforge-uploads"
+    p = forge_paths.openclaw_workspace_dir(op) / "openforge-uploads"
     p.mkdir(parents=True, exist_ok=True)
     return p
 

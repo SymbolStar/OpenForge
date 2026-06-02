@@ -22,7 +22,9 @@ import subprocess
 import time
 from pathlib import Path
 
-AGENTS_ROOT = Path.home() / ".openclaw" / "agents"
+import forge_paths
+
+AGENTS_ROOT = forge_paths.openclaw_agents_root()
 
 
 # ─── main-session snapshot / restore ─────────────────────────────────

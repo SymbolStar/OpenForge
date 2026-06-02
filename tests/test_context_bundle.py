@@ -23,7 +23,7 @@ def ctx(fake_home, monkeypatch):
 
 
 def _write_config(ctx, agents: dict) -> None:
-    """Write ~/.openclaw/openforge/config.json with an agents map."""
+    """Write ~/.openforge/config.json with an agents map."""
     p = ctx.forge_dir() / "config.json"
     p.write_text(json.dumps({"agents": agents}), encoding="utf-8")
 

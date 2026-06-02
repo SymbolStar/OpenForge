@@ -77,7 +77,8 @@ def _home() -> Path:
 
 
 def forge_dir() -> Path:
-    p = _home() / ".openclaw" / "openforge"
+    import forge_paths
+    p = forge_paths.openforge_home()
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -93,7 +94,8 @@ def _bundles_dir() -> Path:
 
 
 def _workspace_dir(agent_id: str) -> Path:
-    return _home() / ".openclaw" / f"workspace-{agent_id}"
+    import forge_paths
+    return forge_paths.openclaw_workspace_dir(agent_id)
 
 
 def _status_path(agent_id: str) -> Path:
