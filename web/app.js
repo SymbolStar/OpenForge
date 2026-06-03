@@ -664,6 +664,111 @@ function totalUnread() {
 function updateUnreadTitle() {
   const n = totalUnread();
   document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
+  maybeNotifyNewUnread();
+}
+
+// ─── OS notifications ─────────────────────────────────────────────────
+// Fire a Web Notification when a thread transitions from "read" → "unread"
+// (a new post landed in a thread you haven't caught up on). Guards:
+//   - permission granted (Settings toggle asks for it)
+//   - tab is hidden — visible tabs already show the red dot
+//   - notifications setting enabled
+//   - never notify for the currently-open thread
+//   - de-dupe via Notification tag on thread_id
+// Body: "<squad emoji+name> · <thread title>".
+const NOTIFY_PREFS_KEY = 'openforge.notifyPrefs.v1';
+function loadNotifyPrefs() {
+  try {
+    const raw = localStorage.getItem(NOTIFY_PREFS_KEY);
+    if (!raw) return { enabled: false };
+    const o = JSON.parse(raw);
+    return { enabled: !!o.enabled };
+  } catch { return { enabled: false }; }
+}
+function saveNotifyPrefs(p) {
+  try { localStorage.setItem(NOTIFY_PREFS_KEY, JSON.stringify(p)); } catch {}
+}
+let _notifyPrefs = loadNotifyPrefs();
+
+function notificationsSupported() {
+  return typeof window !== 'undefined' && 'Notification' in window;
+}
+function notificationsGranted() {
+  return notificationsSupported() && Notification.permission === 'granted';
+}
+async function requestNotificationPermission() {
+  if (!notificationsSupported()) return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  try { return await Notification.requestPermission(); }
+  catch { return Notification.permission || 'default'; }
+}
+
+// Snapshot of unread thread ids from the previous tick. On the next
+// refresh, anything in new\old is brand-new unread → ping. `null`
+// means "first pass, seed only" so loading the page doesn't blast the
+// user with the entire backlog.
+let _prevUnreadIds = null;
+
+function _collectUnreadIndex() {
+  const idx = new Map();
+  for (const squad of (state.squads || [])) {
+    const detail = state.squadDetails.get(squad.id);
+    const threads = detail?.threads || [];
+    for (const t of threads) {
+      if (!isThreadUnread(t)) continue;
+      idx.set(t.thread_id, { thread: t, squad });
+    }
+  }
+  return idx;
+}
+
+function _fireThreadNotification(squad, thread) {
+  if (!notificationsGranted() || !_notifyPrefs.enabled) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
+  if (thread.thread_id === state.currentThreadId) return;
+  const squadLabel = (squad?.emoji ? squad.emoji + ' ' : '') + (squad?.name || squad?.id || '');
+  const title = `OpenForge · ${squadLabel}`.trim();
+  const body = (thread.title || thread.preview || '(new activity)').slice(0, 140);
+  try {
+    const n = new Notification(title, {
+      body,
+      tag: 'openforge:' + thread.thread_id,
+      renotify: false,
+      silent: false,
+      icon: '/branding/logo-forge-f-256.png',
+    });
+    n.onclick = () => {
+      try { window.focus(); } catch {}
+      try {
+        if (squad?.id) state.currentSquadId = squad.id;
+        if (typeof selectThread === 'function') selectThread(thread.thread_id);
+      } catch {}
+      try { n.close(); } catch {}
+    };
+  } catch (err) {
+    console.warn('[notify] failed:', err);
+  }
+}
+
+function maybeNotifyNewUnread() {
+  const idx = _collectUnreadIndex();
+  const currentIds = new Set(idx.keys());
+  if (!notificationsGranted() || !_notifyPrefs.enabled) {
+    // Keep snapshot fresh so toggling on later doesn't replay backlog.
+    _prevUnreadIds = currentIds;
+    return;
+  }
+  if (_prevUnreadIds === null) {
+    _prevUnreadIds = currentIds;
+    return;
+  }
+  for (const id of currentIds) {
+    if (_prevUnreadIds.has(id)) continue;
+    const entry = idx.get(id);
+    if (entry) _fireThreadNotification(entry.squad, entry.thread);
+  }
+  _prevUnreadIds = currentIds;
 }
 
 // ─── squads ───────────────────────────────────────────────────────────
@@ -2279,6 +2384,7 @@ function openSettingsModal() {
     else el.value = val ?? '';
   }
   refreshAvatarPreview();
+  syncNotifyToggleUI();
   els.settingsModal.classList.add('open');
   els.settingsModal.setAttribute('aria-hidden', 'false');
 }
@@ -2307,6 +2413,64 @@ function closeSettingsModal() {
   els.settingsModal.classList.remove('open');
   els.settingsModal.setAttribute('aria-hidden', 'true');
 }
+// ─── settings: OS notification toggle ──────────────────────────────
+function syncNotifyToggleUI() {
+  const cb = document.getElementById('notify-toggle');
+  const status = document.getElementById('notify-status');
+  if (!cb) return;
+  if (!notificationsSupported()) {
+    cb.checked = false;
+    cb.disabled = true;
+    if (status) status.textContent = '不支持';
+    return;
+  }
+  cb.disabled = false;
+  const perm = Notification.permission;
+  cb.checked = !!_notifyPrefs.enabled && perm === 'granted';
+  if (status) {
+    if (perm === 'denied') status.textContent = '浏览器拒绝了权限';
+    else if (perm === 'granted') status.textContent = cb.checked ? '已启用' : '已授权，未启用';
+    else status.textContent = '未授权';
+  }
+}
+
+async function handleNotifyToggleChange(ev) {
+  const cb = ev.target;
+  if (!cb) return;
+  if (!cb.checked) {
+    _notifyPrefs.enabled = false;
+    saveNotifyPrefs(_notifyPrefs);
+    syncNotifyToggleUI();
+    return;
+  }
+  const result = await requestNotificationPermission();
+  if (result === 'granted') {
+    _notifyPrefs.enabled = true;
+    saveNotifyPrefs(_notifyPrefs);
+    // One-shot “you’re all set” ping so user sees what to expect.
+    try {
+      const t = new Notification('OpenForge', {
+        body: '系统通知已启用',
+        tag: 'openforge:test',
+        silent: false,
+        icon: '/branding/logo-forge-f-256.png',
+      });
+      setTimeout(() => { try { t.close(); } catch {} }, 4000);
+    } catch {}
+  } else {
+    _notifyPrefs.enabled = false;
+    saveNotifyPrefs(_notifyPrefs);
+    cb.checked = false;
+  }
+  syncNotifyToggleUI();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const cb = document.getElementById('notify-toggle');
+  if (cb) cb.addEventListener('change', handleNotifyToggleChange);
+  syncNotifyToggleUI();
+});
+
 els.btnSettings && (els.btnSettings.onclick = openSettingsModal);
 els.btnCloseSettings && (els.btnCloseSettings.onclick = closeSettingsModal);
 els.btnCloseSettings2 && (els.btnCloseSettings2.onclick = closeSettingsModal);
