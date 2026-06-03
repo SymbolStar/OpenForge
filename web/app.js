@@ -3236,6 +3236,17 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         if ((ctype.startsWith('text/markdown') || /\.md$/i.test(ref.label)) && typeof marked !== 'undefined' && marked.parse) {
           previewEl.innerHTML = openExternalLinksInNewTab(marked.parse(text));
           renderMermaidIn(previewEl);
+        } else if (ctype.includes('html') || /\.x?html?$/i.test(ref.label)) {
+          // Render HTML in a sandboxed iframe (no scripts/forms/top-nav).
+          // Fixes: HTML refs (e.g. designer mocks) were shown as escaped
+          // source instead of being previewed. sandbox="" = strictest.
+          const iframe = document.createElement('iframe');
+          iframe.setAttribute('sandbox', '');
+          iframe.setAttribute('srcdoc', text);
+          iframe.style.cssText = 'width:100%;height:calc(100vh - 180px);min-height:480px;border:1px solid var(--border);border-radius:6px;background:#fff;';
+          iframe.title = ref.label || 'html preview';
+          previewEl.innerHTML = '';
+          previewEl.appendChild(iframe);
         } else if (ctype.includes('json')) {
           try {
             previewEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(JSON.parse(text), null, 2)) + '</pre>';
