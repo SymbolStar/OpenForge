@@ -847,6 +847,41 @@ function renderThreadRail() {
   renderThreadList(detail?.threads || []);
 }
 
+function renderSidebarPresence(activeAgents) {
+  // v0.2 thread-list presence: 16px breathing avatars over the time stamp,
+  // max 3 + "+N" overflow. Empty list => zero-height (don't render). Per
+  // bugfix/designer 2026-06-03: sidebar layer only answers "who's running
+  // right now" — no fail/timeout dwell, no unread-badge semantics. Long-tail
+  // grey ring (v1.1) is driven by earliest started_at on the slot.
+  if (!Array.isArray(activeAgents) || activeAgents.length === 0) return '';
+  const STALE_MS = 5 * 60 * 1000;
+  const now = Date.now();
+  const cap = 3;
+  const head = activeAgents.slice(0, cap);
+  const extra = activeAgents.length - head.length;
+  const slots = head.map(a => {
+    const id = a && a.agent_id;
+    if (!id) return '';
+    const name = displayName(id) || id;
+    const tsMs = typeof a.started_at === 'number'
+      ? (a.started_at > 1e12 ? a.started_at : a.started_at * 1000)
+      : (typeof a.started_at === 'string' ? Date.parse(a.started_at) : NaN);
+    const stale = Number.isFinite(tsMs) && (now - tsMs) >= STALE_MS;
+    const ringCls = stale ? 'ring ring--stale' : 'ring';
+    const tip = stale
+      ? `${name} \u6267\u884c\u4e2d\uff08\u5df2 ${Math.floor((now - tsMs) / 60000)} \u5206\u949f\uff09`
+      : `${name} \u6b63\u5728\u6267\u884c\u2026`;
+    const avCls = avatarClass(id);
+    const avStyle = avatarStyle(id);
+    const letter = (name || '?').slice(0, 1).toUpperCase();
+    return `<span class="sb-presence-slot ${avCls}"${avStyle} role="status" aria-label="${escapeAttr(tip)}" title="${escapeAttr(tip)}">${escapeHtml(letter)}<span class="${ringCls}"></span></span>`;
+  }).join('');
+  const overflow = extra > 0
+    ? `<span class="sb-presence-slot sb-presence-plus" title="\u53e6\u6709 ${extra} \u4e2a agent \u5728\u8dd1">+${extra}</span>`
+    : '';
+  return `<span class="sb-presence" aria-label="\u8be5 thread \u6709 ${activeAgents.length} \u4e2a agent \u5728\u6267\u884c">${slots}${overflow}</span>`;
+}
+
 function renderThreadList(threads) {
   els.threadList.innerHTML = '';
   if (!threads.length) {
@@ -911,8 +946,10 @@ function renderThreadList(threads) {
           <span class="thread-by">${escapeHtml(t.created_by)}</span>
           <span class="dot-sep">·</span>
           <span>${t.post_count} ${t.post_count === 1 ? 'post' : 'posts'}</span>
-          <span class="dot-sep">·</span>
-          <span class="thread-time">${escapeHtml(formatRelative(t.last_post_at))}</span>
+          <span class="thread-meta-right">
+            ${renderSidebarPresence(t.active_agents)}
+            <span class="thread-time">${escapeHtml(formatRelative(t.last_post_at))}</span>
+          </span>
         </div>
       </button>
     `;

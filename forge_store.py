@@ -1107,6 +1107,38 @@ def summarize_thread(thread_id: str) -> dict | None:
     m = project_thread(thread_id)
     if m is None:
         return None
+    # Sidebar presence aggregation (v0.2): for each agent currently running
+    # in this thread, surface { agent_id, started_at } so the sidebar can
+    # show breathing avatars next to the time stamp. "Running" === any live
+    # status_chip in phase thinking|running. Reduced from the v0.1 per-item
+    # slots to thread-level: pick the EARLIEST started_at per agent so the
+    # v1.1 long-tail grey-ring threshold fires when any item in the thread
+    # has been stuck for >5min (per bugfix/designer 2026-06-03 spec).
+    active_by_agent: dict[str, float | int | str] = {}
+    for p in m["posts"]:
+        if p.get("superseded"):
+            continue
+        if p.get("post_type") != "status_chip":
+            continue
+        if p.get("phase") not in ("thinking", "running"):
+            continue
+        agent = p.get("agent_id")
+        if not agent:
+            # legacy chips: 'agent_id thinking' content
+            content = (p.get("content") or "").strip()
+            mm = re.match(r"^([a-z][a-z0-9_-]*)\s+thinking$", content, re.IGNORECASE)
+            if mm and mm.group(1) != "__router__":
+                agent = mm.group(1)
+        if not agent or agent == "__router__":
+            continue
+        ts = p.get("ts")
+        prev = active_by_agent.get(agent)
+        if prev is None or (ts is not None and ts < prev):
+            active_by_agent[agent] = ts
+    active_agents = [
+        {"agent_id": a, "started_at": ts}
+        for a, ts in sorted(active_by_agent.items(), key=lambda kv: kv[1] or "")
+    ]
     return {
         "thread_id": m["thread_id"],
         "squad_id": m["squad_id"],
@@ -1119,6 +1151,7 @@ def summarize_thread(thread_id: str) -> dict | None:
         "preview": m["preview"],
         "post_count": m["post_count"],
         "participants": m["participants"],
+        "active_agents": active_agents,
     }
 
 
