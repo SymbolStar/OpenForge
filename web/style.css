@@ -540,7 +540,72 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 }
 .dot-sep { color: var(--text-soft); }
 .thread-by { font-weight: 600; color: var(--text-mute); }
-.thread-time { margin-left: auto; }
+.thread-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Sidebar thread-row presence (v0.2): 16px breathing avatars stacked above
+   the time stamp, right-aligned. Aggregated to (thread_id, agent_id) by
+   the backend. No fail/timeout dwell here — sidebar is a navigation strip,
+   not a status board. v1.1 long-tail "stale" threshold renders a grey ring
+   when started_at is >5min ago (driven by .ring--stale below). */
+.thread-meta-right {
+  margin-left: auto;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.thread-meta-right .thread-time { margin-left: 0; }
+.sb-presence {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+}
+.sb-presence-slot {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 9px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--soft, #F3F4F6);
+  pointer-events: auto;
+}
+.sb-presence-slot + .sb-presence-slot { margin-left: -5px; }
+.sb-presence-plus {
+  color: var(--text-mute);
+  font-weight: 700;
+}
+.sb-presence .ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1.25px solid #3B82F6;
+  box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.22);
+  animation: sb-presence-breathe 1600ms ease-in-out infinite;
+  pointer-events: none;
+}
+.sb-presence .ring--stale {
+  /* v1.1 long-tail: any active run >=5min → static grey ring (no animation),
+     tooltip switches to "执行中（已 N 分钟）". */
+  animation: none;
+  border-color: var(--text-soft, #9CA3AF);
+  box-shadow: none;
+}
+@media (prefers-color-scheme: dark) {
+  .sb-presence .ring { border-color: #60A5FA; box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.25); }
+}
+@keyframes sb-presence-breathe {
+  0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.22); transform: scale(1); }
+  50%  { box-shadow: 0 0 0 3px transparent;            transform: scale(1.06); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.22); transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-presence .ring { animation: none !important; box-shadow: 0 0 0 0 transparent !important; }
+}
 
 /* Closed threads: muted + sunk to the bottom (sorting in JS). */
 .thread-item--closed { opacity: 0.55; }
