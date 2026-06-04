@@ -1114,6 +1114,34 @@ def summarize_thread(thread_id: str) -> dict | None:
     # slots to thread-level: pick the EARLIEST started_at per agent so the
     # v1.1 long-tail grey-ring threshold fires when any item in the thread
     # has been stuck for >5min (per bugfix/designer 2026-06-03 spec).
+    #
+    # 2026-06-04 (judy, bugfix th_19e8caef908_a726e3): add HARD cutoff to
+    # drop orphan chips left behind by past server restarts / crashes.
+    # If a chip's phase is still thinking|running but started_at is older
+    # than ACTIVE_CHIP_HARD_CUTOFF_SEC, the worker is definitively dead —
+    # we must NOT keep listing the agent as running, otherwise the sidebar
+    # presence avatar sticks forever (scott observed dora pinned to a 7-day-
+    # old thread). Front-end STALE_MS=5min only greys the ring; we need a
+    # server-side cull so the slot disappears.
+    from datetime import datetime, timezone
+    now_dt = datetime.now(timezone.utc)
+    ACTIVE_CHIP_HARD_CUTOFF_SEC = 30 * 60  # 30 min
+
+    def _is_chip_stale(ts_val) -> bool:
+        if ts_val is None:
+            return False
+        try:
+            if isinstance(ts_val, (int, float)):
+                ts_sec = ts_val / 1000.0 if ts_val > 1e12 else float(ts_val)
+                chip_dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            else:
+                chip_dt = datetime.fromisoformat(str(ts_val))
+                if chip_dt.tzinfo is None:
+                    chip_dt = chip_dt.replace(tzinfo=timezone.utc)
+            return (now_dt - chip_dt).total_seconds() > ACTIVE_CHIP_HARD_CUTOFF_SEC
+        except (ValueError, TypeError, OSError):
+            return False
+
     active_by_agent: dict[str, float | int | str] = {}
     for p in m["posts"]:
         if p.get("superseded"):
@@ -1121,6 +1149,10 @@ def summarize_thread(thread_id: str) -> dict | None:
         if p.get("post_type") != "status_chip":
             continue
         if p.get("phase") not in ("thinking", "running"):
+            continue
+        ts = p.get("ts")
+        if _is_chip_stale(ts):
+            # Orphan chip from a dead worker; do not count as active.
             continue
         agent = p.get("agent_id")
         if not agent:
@@ -1131,7 +1163,6 @@ def summarize_thread(thread_id: str) -> dict | None:
                 agent = mm.group(1)
         if not agent or agent == "__router__":
             continue
-        ts = p.get("ts")
         prev = active_by_agent.get(agent)
         if prev is None or (ts is not None and ts < prev):
             active_by_agent[agent] = ts
