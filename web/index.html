@@ -20,6 +20,17 @@
 <meta property="og:image" content="/branding/logo-forge-f-og.png" />
 <link rel="stylesheet" href="/style.css" />
 <link rel="stylesheet" href="/xiaof.css" />
+<!-- Theme bootstrap: apply persisted choice before first paint to avoid FOUC.
+     Values: "light" | "dark" | "system" (default). 见 designer/openforge-theme-tokens-v0.1 §3 -->
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('openforge.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      // 'system' or null: leave attribute unset → @media (prefers-color-scheme: dark) governs.
+    } catch (_) {}
+  })();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <!-- Mermaid: render ```mermaid code fences as SVG diagrams (flowchart / sequence / gantt / class / state / ER …). Loaded as ESM. -->
 <script type="module">
@@ -60,6 +71,13 @@
       <button class="icon-rail-item is-dim" type="button" data-view="more" title="More">
         <span class="icon">⋯</span><span class="label">More</span>
       </button>
+    </div>
+    <div class="icon-rail-bottom">
+      <div id="theme-toggle" class="theme-toggle" role="group" aria-label="主题切换">
+        <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="浅色" aria-label="浅色">☀️</button>
+        <button type="button" class="theme-toggle-btn" data-theme-choice="dark" title="深色" aria-label="深色">🌙</button>
+        <button type="button" class="theme-toggle-btn" data-theme-choice="system" title="跟随系统" aria-label="跟随系统">💻</button>
+      </div>
     </div>
   </nav>
 

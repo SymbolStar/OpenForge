@@ -2858,3 +2858,49 @@ a.mini-avatar.avatar-link:focus-visible {
 .notify-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .notify-toggle input[type="checkbox"] { margin: 0; }
 .notify-status { color: var(--text-mute); font-size: 12px; }
+
+/* ─── theme toggle (icon-rail bottom) ───────────────────────────
+   Three-state: ☀ light / 🌙 dark / 💻 system. Persisted via
+   localStorage.openforge.theme; bootstrap script in index.html
+   sets <html data-theme> before first paint. */
+.icon-rail-bottom {
+  margin-top: auto;
+  padding: 6px 0 4px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  justify-content: center;
+}
+.theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  padding: 2px;
+}
+.theme-toggle-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  color: #cfd2d8;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+.theme-toggle-btn:hover { opacity: 1; background: rgba(255,255,255,0.08); }
+.theme-toggle-btn.is-active {
+  background: rgba(255,255,255,0.16);
+  opacity: 1;
+}
+.theme-toggle-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
