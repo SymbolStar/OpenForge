@@ -5013,3 +5013,52 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     } catch (_) { /* swallow */ }
   })();
 })();
+
+/* ─── Theme toggle (designer/openforge-theme-tokens-v0.1 §3) ──────
+   Three-state: light | dark | system. Bootstrap (FOUC-safe) lives
+   inline in index.html <head>; this only wires the toolbar buttons
+   and persists user choice. */
+(function () {
+  const KEY = 'openforge.theme';
+  const root = document.documentElement;
+
+  function currentChoice() {
+    try { return localStorage.getItem(KEY) || 'system'; } catch (_) { return 'system'; }
+  }
+  function applyChoice(choice) {
+    if (choice === 'light' || choice === 'dark') {
+      root.setAttribute('data-theme', choice);
+    } else {
+      root.removeAttribute('data-theme');
+    }
+    try {
+      if (choice === 'system') localStorage.removeItem(KEY);
+      else localStorage.setItem(KEY, choice);
+    } catch (_) {}
+    syncButtons(choice);
+  }
+  function syncButtons(choice) {
+    const btns = document.querySelectorAll('#theme-toggle .theme-toggle-btn');
+    btns.forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.themeChoice === choice);
+      b.setAttribute('aria-pressed', String(b.dataset.themeChoice === choice));
+    });
+  }
+  function init() {
+    const wrap = document.getElementById('theme-toggle');
+    if (!wrap) return;
+    wrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('.theme-toggle-btn');
+      if (!btn) return;
+      const choice = btn.dataset.themeChoice;
+      if (choice !== 'light' && choice !== 'dark' && choice !== 'system') return;
+      applyChoice(choice);
+    });
+    syncButtons(currentChoice());
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+})();
