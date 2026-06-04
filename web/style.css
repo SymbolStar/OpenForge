@@ -61,8 +61,6 @@
   --shadow-pop: 0 12px 32px rgba(0,0,0,0.12);
 
   /* ── Legacy aliases (kept for compat with older selectors; do NOT add new uses) ── */
-  --slack-purple: var(--accent);
-  --slack-purple-hover: var(--accent-hover);
   --slack-active: #262626;
   --rail-bg: var(--surface-3);
 }
@@ -411,8 +409,19 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 
 /* ─── squad rail (left) ─────────────────────────────────────── */
 #squad-rail {
-  background: var(--slack-purple);
-  color: var(--text-on-accent);
+  /* Always-dark sidebar (per tokens-v0.1 §2: Portal/always-dark components
+     keep their own token island). Re-declare a few tokens locally so all
+     descendants inherit the fixed dark palette regardless of theme — in
+     particular --text-on-accent and --slack-active, otherwise dark theme
+     flips them to "on white" and the panel inverts (PR #61 review). */
+  --rail-bg: #0A0A0A;
+  --rail-fg: #F5F6F8;
+  --rail-hover: rgba(255,255,255,0.08);
+  --rail-active: #262626;
+  --text-on-accent: #F5F6F8;
+  --slack-active: #262626;
+  background: var(--rail-bg);
+  color: var(--rail-fg);
   display: flex;
   flex-direction: column;
   min-width: 0;
