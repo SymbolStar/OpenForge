@@ -347,8 +347,20 @@ cmd_dev_stop() {
 
 cmd_update() {
   require_repo
-  log "git pull in $REPO_DIR"
-  ( cd "$REPO_DIR" && git pull --ff-only )
+  # 2026-06-04 (judy): `forge update` is intended to land the latest
+  # released code, which lives on main. Without this, running `forge
+  # update` while a feature branch is checked out silently pulled the
+  # wrong branch and "why isn't my fix live?" hunts followed.
+  ( cd "$REPO_DIR" && \
+    git fetch --quiet origin main && \
+    current=$(git rev-parse --abbrev-ref HEAD) && \
+    if [ "$current" != "main" ]; then \
+      log "on branch '$current' — switching to main for update" ; \
+      git checkout main ; \
+    fi && \
+    log "git pull in $REPO_DIR (main)" && \
+    git pull --ff-only origin main \
+  )
   cmd_restart
 }
 
