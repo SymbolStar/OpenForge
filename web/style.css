@@ -2701,3 +2701,9 @@ a.mini-avatar.avatar-link:focus-visible {
 @media (prefers-color-scheme: dark) {
   .mermaid-block { background: #1b1b1b; border-color: #2a2a2a; }
 }
+
+/* settings: OS notification toggle */
+.notify-row { display: flex; align-items: center; gap: 12px; }
+.notify-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.notify-toggle input[type="checkbox"] { margin: 0; }
+.notify-status { color: var(--text-mute); font-size: 12px; }
