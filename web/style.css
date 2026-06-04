@@ -11,6 +11,7 @@
   --surface-1: #FAFAFA;
   --surface-2: #F4F4F4;
   --surface-3: #F8F8F8;
+  --surface-input: #FFFFFF;
   --surface-hover: #ECECEC;
   --surface-active: #E0E0E0;
   --surface-overlay: rgba(0,0,0,0.40);
@@ -74,6 +75,7 @@
     --surface-1: #16181D;
     --surface-2: #1C1F25;
     --surface-3: #14161B;
+    --surface-input: #22262E;
     --surface-hover: #232732;
     --surface-active: #2B3140;
     --surface-overlay: rgba(0,0,0,0.60);
@@ -126,6 +128,7 @@
   --surface-1: #16181D;
   --surface-2: #1C1F25;
   --surface-3: #14161B;
+  --surface-input: #22262E;
   --surface-hover: #232732;
   --surface-active: #2B3140;
   --surface-overlay: rgba(0,0,0,0.60);
@@ -802,6 +805,7 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 #thread-composer textarea {
   width: 100%;
   resize: none;
+  background: var(--surface-input);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 9px 10px;
@@ -1218,6 +1222,7 @@ a.mini-avatar.avatar-link:focus-visible {
 #post-composer textarea {
   width: 100%;
   resize: none;
+  background: var(--surface-input);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px 12px;
