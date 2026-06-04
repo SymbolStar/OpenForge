@@ -879,7 +879,10 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   height: 30px;
   color: var(--text);
 }
-.ghost-btn:hover:not([disabled]) { border-color: var(--text-soft); }
+.ghost-btn:hover:not([disabled]) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
 .ghost-btn[disabled] { opacity: 0.45; cursor: default; }
 
 .avatar-stack {
