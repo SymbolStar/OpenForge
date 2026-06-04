@@ -21,6 +21,9 @@
   --text-mute: #616061;
   --text-soft: #8d8d8d;
   --text-on-accent: #FFFFFF;
+  --text-on-ok: #FFFFFF;
+  --text-on-warn: #1D1C1D;
+  --text-on-danger: #FFFFFF;
   --text-link: #2563EB;
 
   /* ── Border / Divider ── */
@@ -84,6 +87,9 @@
     --text-mute: #A4ABB6;
     --text-soft: #6E7682;
     --text-on-accent: #0E1014;
+    --text-on-ok: #FFFFFF;
+    --text-on-warn: #1D1C1D;
+    --text-on-danger: #FFFFFF;
     --text-link: #60A5FA;
 
     --border: #2A2F38;
@@ -137,6 +143,9 @@
   --text-mute: #A4ABB6;
   --text-soft: #6E7682;
   --text-on-accent: #0E1014;
+  --text-on-ok: #FFFFFF;
+  --text-on-warn: #1D1C1D;
+  --text-on-danger: #FFFFFF;
   --text-link: #60A5FA;
 
   --border: #2A2F38;
@@ -614,7 +623,7 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   padding: 7px 12px;
   border-radius: 6px;
 }
-.btn-danger:hover { background: #c0392b; color: var(--text-on-accent); border-color: #c0392b; }
+.btn-danger:hover { background: #c0392b; color: var(--text-on-danger); border-color: #c0392b; }
 .flex-spacer { flex: 1; }
 
 .rail-list-head {
@@ -1244,7 +1253,7 @@ a.mini-avatar.avatar-link:focus-visible {
   border: 0;
   border-radius: 6px;
   background: var(--ok);
-  color: var(--text-on-accent);
+  color: var(--text-on-ok);
   padding: 0 16px;
   height: 38px;
   font-weight: 700;
@@ -1320,7 +1329,7 @@ a.mini-avatar.avatar-link:focus-visible {
   padding: 8px 12px;
 }
 .modal-actions button:hover { background: var(--rail-bg); }
-.modal-actions button[type="submit"] { background: var(--ok); color: var(--text-on-accent); border-color: var(--ok); }
+.modal-actions button[type="submit"] { background: var(--ok); color: var(--text-on-ok); border-color: var(--ok); }
 .modal-actions button[type="submit"]:hover { background: var(--ok-soft); }
 
 /* ─── agent avatar palettes ─────────────────────────────────── */
