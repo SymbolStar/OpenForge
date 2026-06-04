@@ -1,25 +1,176 @@
 :root {
-  --slack-purple: #0a0a0a;
-  --slack-purple-hover: #1a1a1a;
-  --slack-active: #262626;
+  /* ═══════════════════════════════════════════════════════════════
+     Theme System v0.1 (light defaults) — designer/openforge-theme-tokens-v0.1
+     Layered tokens: Primitive → Semantic → Component.
+     Components MUST reference only Semantic tokens; no hex literals.
+     Dark layer lives below in @media + [data-theme="dark"] blocks.
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ── Surface ── */
+  --bg: #ffffff;
+  --surface-1: #FAFAFA;
+  --surface-2: #F4F4F4;
+  --surface-3: #F8F8F8;
+  --surface-hover: #ECECEC;
+  --surface-active: #E0E0E0;
+  --surface-overlay: rgba(0,0,0,0.40);
+
+  /* ── Text ── */
   --text: #1d1c1d;
   --text-mute: #616061;
   --text-soft: #8d8d8d;
-  --border: #ddd;
-  --bg: #ffffff;
-  --rail-bg: #f8f8f8;
+  --text-on-accent: #FFFFFF;
+  --text-link: #2563EB;
+
+  /* ── Border / Divider ── */
+  --border: #dddddd;
+  --border-strong: #BFBFBF;
+  --divider: #EBEBEB;
+  --focus-ring: #3B82F6;
+
+  /* ── Accent / Brand ── */
   --accent: #0a0a0a;
-  --accent-soft: #f1f1f1;
-  --mention-bg: #ececec;
-  --mention-fg: #1d1c1d;
-  --code-bg: #f2f2f2;
-  --ok: #2bac76;
-  --warn: #de9e32;
-  --closed: #8d8d8d;
-  /* PRD v1.1 — Favorites tokens (designer §7: ★ color locked, no dark fallback) */
+  --accent-hover: #1A1A1A;
+  --accent-soft: #F1F1F1;
+  --brand-blue: #3B82F6;
+  --brand-blue-hover: #2563EB;
+  --brand-blue-soft: #EFF6FF;
+
+  /* ── Status ── */
+  --ok: #2BAC76;
+  --ok-soft: #E6F6EE;
+  --warn: #DE9E32;
+  --warn-soft: #FBF1DC;
+  --danger: #D04A4A;
+  --danger-soft: #FAE3E3;
+  --info: #3B82F6;
+  --info-soft: #EFF6FF;
+  --closed: #8D8D8D;
+
+  /* ── Locked / functional (not theme-inverted unless noted) ── */
   --favorite: #F5A623;
-  --favorite-empty: #c5c5c5;
+  --favorite-empty: #C5C5C5;
   --missing-warn: #D04A4A;
+  --mention-bg: #ECECEC;
+  --mention-fg: #1D1C1D;
+  --code-bg: #F2F2F2;
+
+  /* ── Shadow ── */
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-2: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-pop: 0 12px 32px rgba(0,0,0,0.12);
+
+  /* ── Legacy aliases (kept for compat with older selectors; do NOT add new uses) ── */
+  --slack-purple: var(--accent);
+  --slack-purple-hover: var(--accent-hover);
+  --slack-active: #262626;
+  --rail-bg: var(--surface-3);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Dark layer: follow system unless user explicitly chose light.
+   ═══════════════════════════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1014;
+    --surface-1: #16181D;
+    --surface-2: #1C1F25;
+    --surface-3: #14161B;
+    --surface-hover: #232732;
+    --surface-active: #2B3140;
+    --surface-overlay: rgba(0,0,0,0.60);
+
+    --text: #E6E8EB;
+    --text-mute: #A4ABB6;
+    --text-soft: #6E7682;
+    --text-on-accent: #0E1014;
+    --text-link: #60A5FA;
+
+    --border: #2A2F38;
+    --border-strong: #3A4150;
+    --divider: #1F232B;
+    --focus-ring: #60A5FA;
+
+    --accent: #F5F6F8;
+    --accent-hover: #E5E7EB;
+    --accent-soft: #232732;
+    --brand-blue: #60A5FA;
+    --brand-blue-hover: #93C5FD;
+    --brand-blue-soft: #1E2A3F;
+
+    --ok: #34D399;
+    --ok-soft: #0F2A1F;
+    --warn: #FBBF24;
+    --warn-soft: #2A1F0A;
+    --danger: #F87171;
+    --danger-soft: #2A1010;
+    --info: #60A5FA;
+    --info-soft: #1E2A3F;
+    --closed: #6E7682;
+
+    --favorite-empty: #3A4150;
+    --missing-warn: #FF7A7A;
+    --mention-bg: #1F2A3F;
+    --mention-fg: #BFDBFE;
+    --code-bg: #1A1D23;
+
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+    --shadow-2: 0 8px 24px rgba(0,0,0,0.5);
+    --shadow-pop: 0 16px 40px rgba(0,0,0,0.6);
+
+    --slack-active: #2B3140;
+  }
+}
+
+/* Explicit user override: data-theme="dark" wins regardless of system. */
+:root[data-theme="dark"] {
+  --bg: #0E1014;
+  --surface-1: #16181D;
+  --surface-2: #1C1F25;
+  --surface-3: #14161B;
+  --surface-hover: #232732;
+  --surface-active: #2B3140;
+  --surface-overlay: rgba(0,0,0,0.60);
+
+  --text: #E6E8EB;
+  --text-mute: #A4ABB6;
+  --text-soft: #6E7682;
+  --text-on-accent: #0E1014;
+  --text-link: #60A5FA;
+
+  --border: #2A2F38;
+  --border-strong: #3A4150;
+  --divider: #1F232B;
+  --focus-ring: #60A5FA;
+
+  --accent: #F5F6F8;
+  --accent-hover: #E5E7EB;
+  --accent-soft: #232732;
+  --brand-blue: #60A5FA;
+  --brand-blue-hover: #93C5FD;
+  --brand-blue-soft: #1E2A3F;
+
+  --ok: #34D399;
+  --ok-soft: #0F2A1F;
+  --warn: #FBBF24;
+  --warn-soft: #2A1F0A;
+  --danger: #F87171;
+  --danger-soft: #2A1010;
+  --info: #60A5FA;
+  --info-soft: #1E2A3F;
+  --closed: #6E7682;
+
+  --favorite-empty: #3A4150;
+  --missing-warn: #FF7A7A;
+  --mention-bg: #1F2A3F;
+  --mention-fg: #BFDBFE;
+  --code-bg: #1A1D23;
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.5);
+  --shadow-pop: 0 16px 40px rgba(0,0,0,0.6);
+
+  --slack-active: #2B3140;
 }
 
 * { box-sizing: border-box; }
