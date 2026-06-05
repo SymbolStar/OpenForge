@@ -6,6 +6,11 @@
      Dark layer lives below in @media + [data-theme="dark"] blocks.
      ═══════════════════════════════════════════════════════════════ */
 
+  /* Tell the UA to paint native form controls AND scrollbars in the
+     right theme. Without this, dark mode keeps light-painted scrollbars
+     (white track / light thumb) that stand out against dark surfaces. */
+  color-scheme: light;
+
   /* ── Surface ── */
   --bg: #ffffff;
   --surface-1: #FAFAFA;
@@ -74,6 +79,7 @@
    ═══════════════════════════════════════════════════════════════ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #0E1014;
     --surface-1: #16181D;
     --surface-2: #1C1F25;
@@ -130,6 +136,7 @@
 
 /* Explicit user override: data-theme="dark" wins regardless of system. */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0E1014;
   --surface-1: #16181D;
   --surface-2: #1C1F25;
