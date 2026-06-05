@@ -5053,6 +5053,14 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       const choice = btn.dataset.themeChoice;
       if (choice !== 'light' && choice !== 'dark' && choice !== 'system') return;
       applyChoice(choice);
+      // Always-on click feedback, decoupled from whether the theme actually flipped
+      // (e.g. clicking 🌙 while system is already dark would otherwise feel like a no-op).
+      btn.classList.remove('just-clicked');
+      // Force reflow so the animation restarts on rapid repeat clicks.
+      // eslint-disable-next-line no-unused-expressions
+      btn.offsetWidth;
+      btn.classList.add('just-clicked');
+      setTimeout(() => btn.classList.remove('just-clicked'), 360);
     });
     syncButtons(currentChoice());
   }
