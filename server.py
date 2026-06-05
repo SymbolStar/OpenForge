@@ -140,6 +140,7 @@ def _serializable_thread(m: dict) -> dict:
             }
             for p in m["posts"]
         ],
+        "pinned_refs": m.get("pinned_refs") or [],
     }
 
 
@@ -759,6 +760,20 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._sse_stream(tid)
             return
 
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/pinned-refs$", path)
+        if m:
+            # v0.10 thread-pin: list pinned refs for a thread (ordered, oldest first).
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "not found"}, 404)
+                return
+            self._json({
+                "thread_id": tid,
+                "pinned_refs": store.list_thread_pinned_refs(tid),
+                "cap": store.PIN_CAP,
+            })
+            return
+
         m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}$", path)
         if m:
             tid = m.group(1)
@@ -833,6 +848,11 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}/content$", path)
         if m:
             self._refs_get_content(m.group(1))
+            return
+        m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}/exists$", path)
+        if m:
+            # v0.10 thread-pin: single failure rule for chip greying.
+            self._json({"id": m.group(1), "exists": forge_refs.ref_exists(m.group(1))})
             return
         m = re.match(rf"^/api/refs/{REF_ID_ROUTE_RE}$", path)
         if m:
@@ -1357,6 +1377,69 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json(meta, 201)
             return
 
+        # v0.10 thread-pin: batch refs existence — POST /api/refs/exists
+        if url.path == "/api/refs/exists":
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            ids = opts.get("ids")
+            if not isinstance(ids, list) or any(not isinstance(x, str) for x in ids):
+                self._json({"error": "ids must be a list of strings"}, 400)
+                return
+            if len(ids) > 200:
+                self._json({"error": "too many ids (max 200)"}, 400)
+                return
+            self._json({"results": {rid: forge_refs.ref_exists(rid) for rid in ids}})
+            return
+
+        # v0.10 thread-pin: pin a ref to a thread — POST /api/threads/<id>/pinned-refs
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/pinned-refs$", url.path)
+        if m:
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            ref_id = (opts.get("ref_id") or "").strip()
+            actor = self._resolve_speaker(opts, field="actor")
+            if actor is None:
+                return
+            if not ref_id:
+                self._json({"error": "ref_id required"}, 400)
+                return
+            if forge_refs.get_ref(ref_id) is None:
+                self._json({"error": "unknown ref"}, 404)
+                return
+            try:
+                pinned = store.pin_thread_ref(tid, ref_id, actor)
+            except store.PinCapReached:
+                self._json({
+                    "error": "PIN_CAP_REACHED",
+                    "message": "请先 unpin 一个",
+                    "cap": store.PIN_CAP,
+                }, 409)
+                return
+            except store.PinAlreadyExistsError:
+                self._json({"error": "already pinned"}, 409)
+                return
+            except (store.PinError, ValueError) as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json({
+                "thread_id": tid,
+                "pinned_ref": pinned,
+                "pinned_refs": store.list_thread_pinned_refs(tid),
+            }, 201)
+            return
+
         # v0.8 refs: POST /api/refs (register)
         if url.path == "/api/refs":
             opts = self._read_json()
@@ -1733,6 +1816,31 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # v0.10 thread-pin: unpin — DELETE /api/threads/<tid>/pinned-refs/<ref_id>
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/pinned-refs/{REF_ID_ROUTE_RE}$", url.path)
+        if m:
+            tid, ref_id = m.group(1), m.group(2)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            # actor + optional label from query string (DELETE bodies are flaky)
+            qs = parse_qs(url.query or "")
+            actor = (qs.get("actor") or ["scott"])[0]
+            label = (qs.get("label") or [None])[0]
+            try:
+                store.unpin_thread_ref(tid, ref_id, actor=actor, label=label)
+            except store.PinNotFoundError:
+                self._json({"error": "not pinned"}, 404)
+                return
+            except (store.PinError, ValueError) as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json({
+                "thread_id": tid,
+                "pinned_refs": store.list_thread_pinned_refs(tid),
+            })
             return
 
         # v0.8: DELETE /api/refs/<id>

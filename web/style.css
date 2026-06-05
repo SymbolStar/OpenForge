@@ -2953,3 +2953,62 @@ a.mini-avatar.avatar-link:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
+
+/* ─── v0.10 thread-pin ─────────────────────────────────────────── */
+/* Self-owned tokens (xiaof Portal lesson: never fallback to host vars). */
+.pinned-area {
+  --pin-bg: #F5F7FA;
+  --pin-chip-bg: #FFFFFF;
+  --pin-chip-border: #E1E4E8;
+  --pin-meta-text: #6B7280;
+  --pin-accent: #FF7A45;
+  background: var(--pin-bg);
+  padding: 8px 16px;
+  border-bottom: 1px solid #E1E4E8;
+  margin: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .pinned-area {
+    --pin-bg: #1E2329;
+    --pin-chip-bg: #2A3038;
+    --pin-chip-border: #3A414B;
+    --pin-meta-text: #9AA0A6;
+    border-bottom-color: #3A414B;
+  }
+}
+.pinned-header { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pin-meta-text); margin-bottom: 6px; }
+.pinned-icon { color: var(--pin-accent); }
+.pinned-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pinned-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--pin-chip-bg); border: 1px solid var(--pin-chip-border);
+  border-radius: 8px; padding: 6px 10px; height: 40px;
+  font-size: 13px; cursor: pointer; position: relative;
+  animation: pinFadeIn 300ms ease-out;
+}
+.pinned-chip:focus { outline: 2px solid var(--pin-accent); outline-offset: 1px; }
+.pinned-chip-icon { font-size: 12px; }
+.pinned-chip-label { font-weight: 500; }
+.pinned-chip-meta { font-size: 12px; color: var(--pin-meta-text); }
+.pinned-chip-close {
+  border: 0; background: transparent; color: var(--pin-meta-text);
+  font-size: 16px; line-height: 1; padding: 2px 4px; cursor: pointer;
+  opacity: 0; transition: opacity 120ms;
+}
+.pinned-chip:hover .pinned-chip-close, .pinned-chip:focus-within .pinned-chip-close { opacity: 1; }
+.pinned-chip-close:hover { color: #d33; }
+.pinned-chip.is-stale .pinned-chip-label { text-decoration: line-through; opacity: 0.7; color: var(--pin-meta-text); }
+.pinned-chip.is-stale { opacity: 0.7; }
+@keyframes pinFadeIn { from { opacity: 0; transform: translateY(-4px);} to { opacity: 1; transform: none; } }
+
+.chip-ctx-menu {
+  position: fixed; z-index: 2000; min-width: 160px;
+  background: var(--pin-chip-bg, #fff); border: 1px solid var(--pin-chip-border, #E1E4E8);
+  border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 4px;
+}
+.chip-ctx-item {
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: 0; padding: 6px 10px; font-size: 13px;
+  cursor: pointer; border-radius: 4px;
+}
+.chip-ctx-item:hover { background: rgba(255,122,69,0.10); }
