@@ -194,6 +194,17 @@ button, input, textarea, select { font: inherit; }
 button, input, textarea, select {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
+/* dark-mode fix (2026-06-05): inputs/textarea/select don't inherit body color
+   from UA stylesheet — text comes out near-black on near-black. Bind them to
+   the semantic --text token and align caret. button color stays per-component. */
+input, textarea, select {
+  color: var(--text);
+  caret-color: var(--text);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--text-mute);
+  opacity: 1;
+}
 button { cursor: pointer; }
 
 #app {
