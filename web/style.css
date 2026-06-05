@@ -1174,14 +1174,19 @@ a.mini-avatar.avatar-link:focus-visible {
 .composer-preview-thumb {
   position: relative;
   display: inline-block;
+  min-width: 32px;
+  min-height: 32px;
 }
 .composer-preview-thumb img {
   display: block;
+  min-height: 32px;
+  min-width: 32px;
   max-height: 72px;
   max-width: 120px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--surface-2);
+  object-fit: contain;
 }
 .composer-preview-remove {
   position: absolute;
