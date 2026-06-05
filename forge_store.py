@@ -925,6 +925,93 @@ def set_thread_title(thread_id: str, title: str) -> dict:
     })
 
 
+# ─── thread-pin (v0.10) ─────────────────────────────────────────────
+# A thread can pin up to PIN_CAP refs to a top-of-thread Pinned area.
+# Stored as two event kinds — `thread_ref_pinned` / `thread_ref_unpinned` —
+# projected onto `model["pinned_refs"]` as an ordered list of
+# {ref_id, pinned_by, pinned_at}. Cap is HARD: caller gets PinCapReached
+# instead of squeeze-out (PRD v0.1 §4).
+PIN_CAP = 5
+SYSTEM_SPEAKER = "__system__"
+
+
+class PinError(ValueError):
+    pass
+
+
+class PinNotFoundError(PinError):
+    pass
+
+
+class PinAlreadyExistsError(PinError):
+    pass
+
+
+class PinCapReached(PinError):
+    pass
+
+
+def _pinned_refs(thread_id: str) -> list[dict]:
+    m = project_thread(thread_id)
+    if m is None:
+        raise ValueError(f"unknown thread: {thread_id!r}")
+    return list(m.get("pinned_refs") or [])
+
+
+def pin_thread_ref(thread_id: str, ref_id: str, actor: str = "scott") -> dict:
+    if not isinstance(ref_id, str) or not ref_id.strip():
+        raise PinError("ref_id required")
+    ref_id = ref_id.strip()
+    actor = (actor or "scott").strip() or "scott"
+    pins = _pinned_refs(thread_id)
+    if any(p["ref_id"] == ref_id for p in pins):
+        raise PinAlreadyExistsError(ref_id)
+    if len(pins) >= PIN_CAP:
+        raise PinCapReached(f"pin cap reached ({PIN_CAP})")
+    append_thread_event(thread_id, {
+        "kind": "thread_ref_pinned",
+        "thread_id": thread_id,
+        "ref_id": ref_id,
+        "actor": actor,
+    })
+    # v0.1 PRD: pin does NOT emit a system post (only unpin does). Pin's
+    # affordance is the chip appearing in the Pinned area — that's the
+    # feedback. Re-evaluate if scott flips the asymmetry rule.
+    return {"ref_id": ref_id, "pinned_by": actor, "pinned_at": None}
+
+
+def unpin_thread_ref(thread_id: str, ref_id: str, actor: str = "scott",
+                     label: str | None = None,
+                     emit_system_post: bool = True) -> dict:
+    if not isinstance(ref_id, str) or not ref_id.strip():
+        raise PinError("ref_id required")
+    ref_id = ref_id.strip()
+    actor = (actor or "scott").strip() or "scott"
+    pins = _pinned_refs(thread_id)
+    if not any(p["ref_id"] == ref_id for p in pins):
+        raise PinNotFoundError(ref_id)
+    append_thread_event(thread_id, {
+        "kind": "thread_ref_unpinned",
+        "thread_id": thread_id,
+        "ref_id": ref_id,
+        "actor": actor,
+    })
+    if emit_system_post:
+        nice_label = (label or ref_id).strip() or ref_id
+        # Fixed template per alice 2026-06-05: no "(xx pin 的)" suffix.
+        msg = f"{actor} 取消了 \U0001F4C4 {nice_label} 的 pin"
+        try:
+            add_thread_post(thread_id, SYSTEM_SPEAKER, msg)
+        except ValueError:
+            # don't fail the unpin if the post can't be added
+            pass
+    return {"ref_id": ref_id}
+
+
+def list_thread_pinned_refs(thread_id: str) -> list[dict]:
+    return _pinned_refs(thread_id)
+
+
 # Reactions: stored as discrete events; projection aggregates them onto the
 # post as {emoji: [actor, ...]}. Toggle semantics live in add_reaction below.
 _REACTION_EMOJI_RE = re.compile(r"^[\S\u200d]{1,16}$")
@@ -1008,6 +1095,7 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
         # v0.5 PR-A: store-only field. Not exposed via API/UI in this PR;
         # router will start reading it in PR-B.
         "extra_projects": [],
+        "pinned_refs": [],
         "raw_events": len(events),
     }
     seen_participants: list[str] = []
@@ -1087,6 +1175,19 @@ def project_thread(thread_id: str) -> dict[str, Any] | None:
             ep = ev.get("extra_projects")
             if isinstance(ep, list):
                 model["extra_projects"] = [str(p) for p in ep if isinstance(p, str)]
+        elif kind == "thread_ref_pinned":
+            rid = ev.get("ref_id")
+            if isinstance(rid, str) and rid:
+                if not any(p.get("ref_id") == rid for p in model["pinned_refs"]):
+                    model["pinned_refs"].append({
+                        "ref_id": rid,
+                        "pinned_by": ev.get("actor") or "scott",
+                        "pinned_at": ev.get("ts"),
+                    })
+        elif kind == "thread_ref_unpinned":
+            rid = ev.get("ref_id")
+            if isinstance(rid, str) and rid:
+                model["pinned_refs"] = [p for p in model["pinned_refs"] if p.get("ref_id") != rid]
         elif kind == "thread_closed":
             model["closed_at"] = ev.get("ts")
             model["closed_by"] = ev.get("closed_by")

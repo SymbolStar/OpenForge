@@ -359,6 +359,27 @@ def get_ref(ref_id: str) -> dict | None:
         return r.to_dict() if r else None
 
 
+def ref_exists(ref_id: str) -> bool:
+    """True iff ref is registered AND the underlying file is reachable.
+
+    Used by the thread-pin v0.1 single failure rule: chip greys when this
+    returns False. Symlinks and missing files both report False. Read errors
+    (permission denied, broken symlink target) also report False — the chip
+    should grey if scott can't actually open the thing.
+    """
+    with _lock:
+        _ensure_loaded()
+        r = _active.get(ref_id)
+    if not r:
+        return False
+    try:
+        p = Path(r.abs_path)
+        if p.is_symlink():
+            return False
+        return p.exists() and p.is_file()
+    except OSError:
+        return False
+
 def list_refs(
     *,
     agent: str | None = None,

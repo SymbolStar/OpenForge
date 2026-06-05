@@ -32,6 +32,7 @@ const els = {
   btnCloseThread: document.getElementById('btn-close-thread'),
   btnRefreshDetail: document.getElementById('btn-refresh-detail'),
   postList: document.getElementById('post-list'),
+  pinnedArea: document.getElementById('pinned-area'),
   postComposerInput: document.getElementById('post-composer-input'),
   btnSendPost: document.getElementById('btn-send-post'),
 
@@ -1141,6 +1142,7 @@ function renderDetail({ keepScroll = false } = {}) {
     els.detailStatus.textContent = 'idle';
     els.detailStatus.className = 'status-chip';
     els.detailParticipants.innerHTML = '';
+    if (els.pinnedArea) { els.pinnedArea.innerHTML = ''; els.pinnedArea.hidden = true; }
     els.btnCloseThread.disabled = true;
     els.postComposerInput.disabled = true;
     els.btnSendPost.disabled = true;
@@ -1154,6 +1156,7 @@ function renderDetail({ keepScroll = false } = {}) {
   els.detailStatus.textContent = t.in_progress ? 'open' : 'closed';
   els.detailStatus.className = 'status-chip ' + (t.in_progress ? 'chip-open' : 'chip-closed');
   renderParticipants(t.participants);
+  renderPinnedArea(t);
   els.btnCloseThread.disabled = !t.in_progress;
   els.btnCloseThread.textContent = t.in_progress ? 'Close' : 'Closed';
   els.postComposerInput.disabled = !t.in_progress;
@@ -1198,6 +1201,210 @@ function renderParticipants(members) {
     els.detailParticipants.appendChild(el);
   });
 }
+
+// ─── v0.10 thread-pin: Pinned area + chip context menu ──────────────
+const PIN_CAP = 5;
+const _refExistsCache = new Map(); // ref_id -> bool
+
+async function _resolveRefExistsBatch(ids) {
+  const need = ids.filter(id => !_refExistsCache.has(id));
+  if (!need.length) return;
+  try {
+    const r = await fetch('/api/refs/exists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: need }),
+    });
+    if (!r.ok) return;
+    const j = await r.json();
+    const results = j.results || {};
+    for (const id of need) {
+      _refExistsCache.set(id, !!results[id]);
+    }
+  } catch { /* offline; leave cache untouched */ }
+}
+
+function _findRefLabelFromThread(refId) {
+  // Scan posts for [[ref:id]] tokens we've already resolved into chips —
+  // fall back to ref_id when unknown.
+  const t = state.currentThread;
+  if (!t) return refId;
+  for (const p of t.posts || []) {
+    const re = new RegExp(`\\[\\[ref:${refId}\\]\\]`);
+    if (re.test(p.content || '')) {
+      // No reliable per-chip label here without re-resolving; reuse refId.
+      break;
+    }
+  }
+  return refId;
+}
+
+async function renderPinnedArea(t) {
+  const root = els.pinnedArea;
+  if (!root) return;
+  const pins = Array.isArray(t.pinned_refs) ? t.pinned_refs : [];
+  if (!pins.length) {
+    root.innerHTML = '';
+    root.hidden = true;
+    return;
+  }
+  root.hidden = false;
+  root.innerHTML =
+    `<div class="pinned-header"><span class="pinned-icon">📌</span>` +
+    `<span class="pinned-title">Pinned (${pins.length}/${PIN_CAP})</span></div>` +
+    `<div class="pinned-chips">` +
+    pins.map(p => {
+      const rid = p.ref_id;
+      const label = escapeHtml(_findRefLabelFromThread(rid));
+      const by = escapeHtml(p.pinned_by || 'scott');
+      const when = p.pinned_at ? escapeHtml(formatRelative(p.pinned_at)) : '';
+      const stale = _refExistsCache.get(rid) === false;
+      return `<div class="pinned-chip${stale ? ' is-stale' : ''}" data-ref-id="${escapeAttr(rid)}" tabindex="0" role="button" title="${stale ? '文件已失效，点击移除' : '打开 ' + escapeAttr(rid)}">` +
+        `<span class="pinned-chip-icon">📄</span>` +
+        `<span class="pinned-chip-label">${label}</span>` +
+        `<span class="pinned-chip-meta">pinned by ${by}${when ? ' · ' + when : ''}</span>` +
+        `<button type="button" class="pinned-chip-close" aria-label="unpin" data-unpin="1" data-ref-id="${escapeAttr(rid)}">×</button>` +
+        `</div>`;
+    }).join('') +
+    `</div>`;
+  // resolve existence lazily; re-render only on transition
+  const ids = pins.map(p => p.ref_id);
+  await _resolveRefExistsBatch(ids);
+  // re-mark stale state without full re-render to avoid focus loss
+  root.querySelectorAll('.pinned-chip').forEach(node => {
+    const rid = node.getAttribute('data-ref-id');
+    const stale = _refExistsCache.get(rid) === false;
+    node.classList.toggle('is-stale', stale);
+  });
+}
+
+async function _pinRef(refId) {
+  const tid = state.currentThreadId;
+  if (!tid || !refId) return;
+  try {
+    const r = await fetch(`/api/threads/${encodeURIComponent(tid)}/pinned-refs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref_id: refId, actor: 'scott' }),
+    });
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      if (j.error === 'PIN_CAP_REACHED') toast(j.message || '请先 unpin 一个');
+      else toast('已经 pin 过了');
+      return;
+    }
+    if (!r.ok) { toast('pin 失败'); return; }
+    refreshCurrentThread();
+  } catch { toast('pin 失败'); }
+}
+
+async function _unpinRef(refId) {
+  const tid = state.currentThreadId;
+  if (!tid || !refId) return;
+  try {
+    const r = await fetch(
+      `/api/threads/${encodeURIComponent(tid)}/pinned-refs/${encodeURIComponent(refId)}?actor=scott`,
+      { method: 'DELETE' }
+    );
+    if (!r.ok) { toast('unpin 失败'); return; }
+    _refExistsCache.delete(refId);
+    refreshCurrentThread();
+  } catch { toast('unpin 失败'); }
+}
+
+function _isRefPinned(refId) {
+  const t = state.currentThread;
+  if (!t || !Array.isArray(t.pinned_refs)) return false;
+  return t.pinned_refs.some(p => p.ref_id === refId);
+}
+
+// Local toast helper (some modules define their own scoped one; this one
+// lives at module-top so pin/unpin failures can surface anywhere).
+function toast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) return; // no toast slot in DOM
+  el.textContent = msg;
+  el.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.hidden = true; }, 2200);
+}
+
+// Context menu (right-click on file chips + pinned chips)
+let _ctxMenu = null;
+function _closeCtxMenu() { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }
+
+function _openCtxMenu(x, y, items) {
+  _closeCtxMenu();
+  const menu = document.createElement('div');
+  menu.className = 'chip-ctx-menu';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  items.forEach(it => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip-ctx-item';
+    btn.textContent = it.label;
+    btn.addEventListener('click', () => { _closeCtxMenu(); it.onClick(); });
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+  _ctxMenu = menu;
+}
+
+document.addEventListener('click', _closeCtxMenu);
+document.addEventListener('scroll', _closeCtxMenu, true);
+
+document.addEventListener('contextmenu', e => {
+  // Find a file-chip-ref OR pinned-chip target.
+  const refChip = e.target.closest('.file-chip-ref');
+  const pinChip = e.target.closest('.pinned-chip');
+  const node = refChip || pinChip;
+  if (!node) return;
+  const rid = node.getAttribute('data-ref-id');
+  if (!rid) return;
+  // Only in a thread context.
+  if (!state.currentThreadId) return;
+  e.preventDefault();
+  const items = [];
+  if (_isRefPinned(rid)) {
+    items.push({ label: '📌 Unpin (P)', onClick: () => _unpinRef(rid) });
+  } else {
+    items.push({ label: '📌 Pin to top (P)', onClick: () => _pinRef(rid) });
+  }
+  _openCtxMenu(e.clientX, e.clientY, items);
+});
+
+// × button on pinned chip
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.pinned-chip-close[data-unpin="1"]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const rid = btn.getAttribute('data-ref-id');
+  if (rid) _unpinRef(rid);
+});
+
+// Keyboard P toggle on focused chip (element-level, IME-safe).
+let _imeComposingPin = false;
+document.addEventListener('compositionstart', () => { _imeComposingPin = true; });
+document.addEventListener('compositionend',   () => { _imeComposingPin = false; });
+document.addEventListener('keydown', e => {
+  if (_imeComposingPin) return;
+  if (e.key !== 'p' && e.key !== 'P') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const active = document.activeElement;
+  if (!active) return;
+  // Don't hijack when focus is in any editable text field.
+  const tag = (active.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || active.isContentEditable) return;
+  const chip = active.closest && (active.closest('.file-chip-ref') || active.closest('.pinned-chip'));
+  if (!chip) return;
+  const rid = chip.getAttribute('data-ref-id');
+  if (!rid) return;
+  e.preventDefault();
+  if (_isRefPinned(rid)) _unpinRef(rid); else _pinRef(rid);
+});
+
 
 // Built fresh each render pass; renderPostNode reads it to look up
 // parent posts for the inline quote card. Avoids walking state.currentThread
