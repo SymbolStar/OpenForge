@@ -2027,7 +2027,7 @@ function wireComposer(input, submit, counter) {
   });
   input.addEventListener('keydown', event => {
     if (mentionPickerKeydown(input, event)) return;  // picker consumed it
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    if (event.key === 'Enter' && event.shiftKey && !event.isComposing) {
       event.preventDefault();
       submit();
     }
