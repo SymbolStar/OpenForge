@@ -2986,13 +2986,20 @@ a.mini-avatar.avatar-link:focus-visible {
   margin: 0;
 }
 @media (prefers-color-scheme: dark) {
-  .pinned-area {
+  :root:not([data-theme="light"]) .pinned-area {
     --pin-bg: #1E2329;
     --pin-chip-bg: #2A3038;
     --pin-chip-border: #3A414B;
     --pin-meta-text: #9AA0A6;
     border-bottom-color: #3A414B;
   }
+}
+:root[data-theme="dark"] .pinned-area {
+  --pin-bg: #1E2329;
+  --pin-chip-bg: #2A3038;
+  --pin-chip-border: #3A414B;
+  --pin-meta-text: #9AA0A6;
+  border-bottom-color: #3A414B;
 }
 .pinned-header { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pin-meta-text); margin-bottom: 6px; }
 .pinned-icon { color: var(--pin-accent); }
@@ -3021,12 +3028,16 @@ a.mini-avatar.avatar-link:focus-visible {
 
 .chip-ctx-menu {
   position: fixed; z-index: 2000; min-width: 160px;
-  background: var(--pin-chip-bg, #fff); border: 1px solid var(--pin-chip-border, #E1E4E8);
-  border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 4px;
+  /* Portal-style popover lives outside .pinned-area, so it can't read
+     --pin-chip-* vars. Use semantic theme tokens directly so light/dark
+     both work. (Bug found 2026-06-06: white tooltip on dark page.) */
+  background: var(--surface-1); color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.30); padding: 4px;
 }
 .chip-ctx-item {
   display: block; width: 100%; text-align: left;
-  background: transparent; border: 0; padding: 6px 10px; font-size: 13px;
+  background: transparent; color: var(--text); border: 0; padding: 6px 10px; font-size: 13px;
   cursor: pointer; border-radius: 4px;
 }
-.chip-ctx-item:hover { background: rgba(255,122,69,0.10); }
+.chip-ctx-item:hover { background: var(--surface-hover); }
