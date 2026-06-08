@@ -142,11 +142,11 @@ Auth: bound to `127.0.0.1` by default. When `--host` is non-loopback, a Bearer t
 ## Web UI (Slack three-pane)
 
 - **Left rail (dark)** — Squads list + `+ New Squad` modal + `☐ 归档` toggle.
-- **Middle rail** — `THREADS` for the current squad + bottom composer (Enter = new thread, Shift+Enter = newline). Draggable gutter resizes left/middle.
+- **Middle rail** — `THREADS` for the current squad + bottom composer (Cmd/Ctrl+Enter = new thread, Enter = newline). Draggable gutter resizes left/middle.
 - **Right pane** — Selected thread:
   - Header: preview · started by · post count · open/closed chip · **Close** button.
   - Post stream with `@mention` chips, inline `code`, hover reaction bar, optional reply-nesting (toggle in settings ⚙).
-  - Bottom composer (Enter to send, Shift+Enter for newline). Disabled when the thread is closed.
+  - Bottom composer (Cmd/Ctrl+Enter to send, Enter for newline). Disabled when the thread is closed.
 
 Avatars are color-coded per agent. New events ride SSE (~50 ms latency); an 8 s poll is kept as a fallback.
 
