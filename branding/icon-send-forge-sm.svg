@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" aria-label="发送">
+  <title>OpenForge · 发送 sm（28px 优化变体）</title>
+  <!-- 28px / 20px 极小尺寸优化：去 ember 渐变 + 去顶部小火星 + 主火星单粒强对比 + 砧形加粗 -->
+  <!-- 单粒主火星（菱形，居中放大） -->
+  <path d="M12 1.5 l1.8 2 -1.8 2 -1.8 -2 z" fill="#FF6B35"/>
+  <!-- 砧形（加粗轮廓，比 24px 版各段+0.4~0.8） -->
+  <path d="M2 12.6 H22 V15.6 H17 L16 17.8 H8 L7 15.6 H2 Z" fill="currentColor"/>
+  <rect x="8.6" y="17.8" width="6.8" height="3.8" fill="currentColor"/>
+  <rect x="4.4" y="21.2" width="15.2" height="2.6" rx="0.9" fill="currentColor"/>
+  <!-- 砧面工件：纯橙单色（不渐变） -->
+  <ellipse cx="12" cy="11.8" rx="3" ry="1.0" fill="#FF6B35"/>
+</svg>

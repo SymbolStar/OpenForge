@@ -1297,9 +1297,13 @@ a.mini-avatar.avatar-link:focus-visible {
 #post-composer > button#btn-send-post:active:not([disabled]) { transform: scale(0.96); }
 #post-composer > button#btn-send-post[disabled] {
   background: var(--rail-bg);
-  color: var(--text-muted, #9ca3af);
+  color: var(--text-muted, #6b7280);
   cursor: not-allowed;
-  opacity: 0.7;
+  opacity: 1;                  /* icon 不调透明度，靠 color 控灰度，避免砧形被抹平 */
+}
+#post-composer > button#btn-send-post[disabled] .send-icon__sparks,
+#post-composer > button#btn-send-post[disabled] .send-icon__ember {
+  display: none;               /* disabled 态隐藏彩色火星 / ember，只留灰色砧形 */
 }
 #post-composer > button#btn-send-post .send-icon { display: block; }
 
