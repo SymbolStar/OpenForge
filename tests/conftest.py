@@ -63,8 +63,15 @@ def store(fake_home):
 
 
 @pytest.fixture
-def router(fake_home):
+def router(fake_home, monkeypatch):
     import post_router
+    # Scott 2026-06-09: enqueue_if_needed now drops @mentions that aren't
+    # known employees. Tests use synthetic ids (milk, sherry, sentry, …)
+    # under a fake $HOME with no real agent runtimes, so is_employee
+    # would return False for everything. Stub it to True so routing tests
+    # continue to exercise dispatch; tests that specifically cover the
+    # unknown-mention path re-monkeypatch is_employee themselves.
+    monkeypatch.setattr(post_router.forge_employees, "is_employee", lambda _id: True)
     return post_router
 
 
