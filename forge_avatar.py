@@ -12,7 +12,7 @@ from pathlib import Path
 AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 AVATAR_LINE_RE = re.compile(r"^\s*-\s*\*\*Avatar:\*\*\s*.*$", re.MULTILINE)
 EMOJI_LINE_RE = re.compile(r"^\s*-\s*\*\*Emoji:\*\*\s*.*$", re.MULTILINE)
-MAX_BYTES = 2 * 1024 * 1024
+MAX_BYTES = 10 * 1024 * 1024
 
 
 class AvatarError(ValueError):

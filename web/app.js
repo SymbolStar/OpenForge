@@ -4288,10 +4288,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const btnConfirmClose = document.getElementById('btn-avatar-confirm-close');
   const btnConfirmCancel = document.getElementById('btn-avatar-confirm-cancel');
   const btnConfirmReset = document.getElementById('btn-avatar-confirm-reset');
-  const MAX_BYTES = 2 * 1024 * 1024;
+  const MAX_BYTES = 10 * 1024 * 1024;
   const TOASTS = {
     badFormat: '⚠️ 不支持的格式，仅支持 jpg / png / webp',
-    tooBig: (mb) => `⚠️ 图片超过 2MB（当前 ${mb}MB），请压缩后重试`,
+    tooBig: (mb) => `⚠️ 图片超过 10MB（当前 ${mb}MB），请压缩后重试`,
     loaded: '拖动调整位置，确认后保存',
     saved: '✅ 头像已更新',
     saveFailed: '❌ 写盘失败，UI 已回滚到旧头像',
@@ -4317,7 +4317,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     ctx.fillStyle = '#8d8d8d';
     ctx.font = '600 14px Inter, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('点击或拖入图片（jpg / png / webp、≤2MB）', 128, 132);
+    ctx.fillText('点击或拖入图片（jpg / png / webp、≤10MB）', 128, 132);
   }
 
   function drawImage() {
