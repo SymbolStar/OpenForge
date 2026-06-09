@@ -284,10 +284,14 @@ button { cursor: pointer; }
 }
 .icon-rail-item .icon { font-size: 20px; line-height: 1; }
 .icon-rail-item .label { font-size: 10.5px; letter-spacing: 0.02em; }
-.icon-rail-item:hover { background: rgba(255,255,255,0.06); color: var(--text-on-accent); }
-.icon-rail-item.is-active { background: #2a2f3a; color: var(--text-on-accent); }
-.icon-rail-item.is-dim { color: #6f7480; }
-.icon-rail-item.is-dim:hover { color: #cfd2d8; }
+/* icon-rail 是 always-dark 组件（背景写死 #1a1d24），
+   text 颜色必须自有；不可 fallback 到 --text-on-accent，
+   后者在 dark mode 下会翻转为 near-black 导致选中/hover 隐身。
+   参考 MEMORY.md「Portal 组件 CSS 隔离教训」。 */
+.icon-rail-item:hover { background: rgba(255,255,255,0.06); color: #F5F6F8; }
+.icon-rail-item.is-active { background: #2a2f3a; color: #FFFFFF; }
+.icon-rail-item.is-dim { color: #8a8f9b; }
+.icon-rail-item.is-dim:hover { color: #E6E8EB; }
 
 /* ─── files view (v0.6) ─────────────────────────────────────── */
 #files-rail {
