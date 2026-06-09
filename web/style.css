@@ -1275,7 +1275,10 @@ a.mini-avatar.avatar-link:focus-visible {
   background: var(--rail-bg);
   cursor: not-allowed;
 }
-#post-composer button {
+/* scope to the direct send-button child only; nested buttons like
+   .composer-preview-remove (× on attachment thumbs) must keep their
+   own 14×14 styling and not inherit this 38px green pill. */
+#post-composer > button {
   border: 0;
   border-radius: 6px;
   background: var(--ok);
@@ -1284,8 +1287,8 @@ a.mini-avatar.avatar-link:focus-visible {
   height: 38px;
   font-weight: 700;
 }
-#post-composer button:hover:not([disabled]) { background: var(--ok-soft); }
-#post-composer button[disabled] { background: var(--ok-soft); cursor: not-allowed; }
+#post-composer > button:hover:not([disabled]) { background: var(--ok-soft); }
+#post-composer > button[disabled] { background: var(--ok-soft); cursor: not-allowed; }
 
 /* ─── modal ─────────────────────────────────────────────────── */
 .modal-backdrop {
