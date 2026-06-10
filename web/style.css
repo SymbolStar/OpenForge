@@ -662,6 +662,30 @@ body.squad-collapsed #squad-rail .rail-collapse-btn {
 }
 body.squad-collapsed #squad-rail .rail-section { padding: 8px 0; }
 body.squad-collapsed #squad-rail .footer-help { justify-content: center; padding: 0; }
+/* Collapsed-mode settings entry — Settings is high-frequency, can't be
+   buried (designer call: option 2, IA: footer is the utility lane). */
+.footer-settings-btn {
+  background: transparent;
+  border: 0;
+  color: #B8BCC4;
+  font-size: 16px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.footer-settings-btn:hover { background: rgba(255,255,255,0.10); color: #FFFFFF; transform: rotate(20deg); }
+.footer-settings-btn:focus-visible { outline: 2px solid #4F8CFF; outline-offset: 2px; }
+body.squad-collapsed #squad-rail .footer-help #status-dot,
+body.squad-collapsed #squad-rail .footer-help #status-text { display: none; }
+body.squad-collapsed #squad-rail .footer-help { height: 48px; border-top: 1px solid rgba(255,255,255,0.12); }
+body.squad-collapsed .footer-settings-btn { display: inline-flex; }
 body.squad-collapsed #squad-rail #squad-list > li .squad-delete { display: none !important; }
 body.squad-collapsed #squad-rail .squad-item {
   grid-template-columns: 1fr;

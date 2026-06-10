@@ -5442,3 +5442,11 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   apply();
 })();
+
+/* ─── collapsed-mode settings entry (footer ⚙) ─── */
+(function squadRailCollapsedSettings() {
+  const collapsedBtn = document.getElementById('btn-settings-collapsed');
+  const realBtn = document.getElementById('btn-settings');
+  if (!collapsedBtn || !realBtn) return;
+  collapsedBtn.addEventListener('click', () => realBtn.click());
+})();
