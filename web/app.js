@@ -5277,3 +5277,168 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     init();
   }
 })();
+
+/* ─── squad-rail collapsible (feat/squad-rail-collapsible) ─────────────
+ *
+ * Two independent inputs, one derived state:
+ *   userPreference: 'collapsed' | 'expanded' | null   (localStorage)
+ *   autoCollapsed:  boolean                            (matchMedia < 1100px)
+ *   effective = userPreference ?? (autoCollapsed ? 'collapsed' : 'expanded')
+ *
+ * Once the user clicks the toggle, userPreference wins forever (no narrow→
+ * wide→narrow re-auto-collapse). bobby's call per thread th_19eb...; if dora
+ * wants re-arm semantics we'll add a reset entry-point later.
+ */
+(function squadRailCollapsible() {
+  const LS_KEY = 'openforge.sidebar.squad.collapsed';
+  const BREAKPOINT = '(max-width: 1099px)';
+
+  const body = document.body;
+  const toggleBtn = document.getElementById('btn-toggle-squad-collapse');
+  const rail = document.getElementById('squad-rail');
+  if (!toggleBtn || !rail) return;
+
+  // ── state ──────────────────────────────────────────────────────────
+  let userPreference = null;  // 'collapsed' | 'expanded' | null
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw === 'true' || raw === '"collapsed"' || raw === 'collapsed') userPreference = 'collapsed';
+    else if (raw === 'false' || raw === '"expanded"' || raw === 'expanded') userPreference = 'expanded';
+  } catch { /* ignore */ }
+
+  const mql = window.matchMedia(BREAKPOINT);
+  let autoCollapsed = mql.matches;
+
+  function effective() {
+    if (userPreference !== null) return userPreference === 'collapsed';
+    return autoCollapsed;
+  }
+
+  function apply() {
+    const collapsed = effective();
+    body.classList.toggle('squad-collapsed', collapsed);
+    toggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    toggleBtn.setAttribute('aria-label', collapsed ? '展开 Squad 栏' : '折叠 Squad 栏');
+    toggleBtn.setAttribute('title', collapsed ? '展开 Squad 栏 (⌘\\)' : '折叠 Squad 栏 (⌘\\)');
+    toggleBtn.textContent = collapsed ? '»' : '«';
+    if (collapsed) hideTooltip();
+  }
+
+  function setUserPreference(next) {
+    userPreference = next;
+    try { localStorage.setItem(LS_KEY, next); } catch { /* ignore */ }
+    apply();
+  }
+
+  // ── toggle handler ─────────────────────────────────────────────────
+  toggleBtn.addEventListener('click', () => {
+    setUserPreference(effective() ? 'expanded' : 'collapsed');
+  });
+
+  // ── breakpoint listener ────────────────────────────────────────────
+  const onMqlChange = (e) => {
+    autoCollapsed = e.matches;
+    apply();
+  };
+  if (mql.addEventListener) mql.addEventListener('change', onMqlChange);
+  else if (mql.addListener) mql.addListener(onMqlChange);
+
+  // ── keyboard: Cmd/Ctrl+\ ───────────────────────────────────────────
+  // (#N is taken by new-thread; Backslash is unused elsewhere — confirmed
+  //  by grep across web/app.js.) Use code='Backslash' to be layout-safe.
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey
+        && (e.code === 'Backslash' || e.key === '\\')) {
+      e.preventDefault();
+      setUserPreference(effective() ? 'expanded' : 'collapsed');
+    }
+  });
+
+  // ── tooltip for collapsed-mode icons ───────────────────────────────
+  let tooltipEl = null;
+  let hoverTimer = null;
+  let pressTimer = null;
+
+  function ensureTooltip() {
+    if (tooltipEl) return tooltipEl;
+    tooltipEl = document.createElement('div');
+    tooltipEl.id = 'squad-rail-tooltip';
+    tooltipEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(tooltipEl);
+    return tooltipEl;
+  }
+  function showTooltip(targetEl, text) {
+    if (!text) return;
+    const el = ensureTooltip();
+    el.textContent = text;
+    const r = targetEl.getBoundingClientRect();
+    el.style.left = (r.right + 8) + 'px';
+    el.style.top  = Math.round(r.top + (r.height / 2) - (el.offsetHeight / 2 || 12)) + 'px';
+    el.classList.add('visible');
+    // re-anchor now that we know real height
+    requestAnimationFrame(() => {
+      el.style.top = Math.round(r.top + (r.height / 2) - (el.offsetHeight / 2)) + 'px';
+    });
+  }
+  function hideTooltip() {
+    if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    if (tooltipEl) tooltipEl.classList.remove('visible');
+  }
+
+  function collapsedSquadItem(target) {
+    if (!body.classList.contains('squad-collapsed')) return null;
+    const item = target.closest && target.closest('.squad-item');
+    if (!item || !rail.contains(item)) return null;
+    return item;
+  }
+  function squadLabelFor(item) {
+    const nameEl = item.querySelector('.squad-name');
+    if (!nameEl) return '';
+    // Skip the inline '<span class="archived-tag">archived</span>' tail
+    return (nameEl.firstChild && nameEl.firstChild.nodeType === Node.TEXT_NODE
+              ? nameEl.firstChild.textContent
+              : nameEl.textContent || '').trim();
+  }
+
+  // Mouse hover (400ms delay so quick scans don't pop tooltips)
+  rail.addEventListener('mouseover', (e) => {
+    const item = collapsedSquadItem(e.target);
+    if (!item) return;
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => showTooltip(item, squadLabelFor(item)), 400);
+  });
+  rail.addEventListener('mouseout', (e) => {
+    if (collapsedSquadItem(e.target)) hideTooltip();
+  });
+  // Hide if rail scrolls or window resizes — avoid stale anchor.
+  rail.addEventListener('scroll', hideTooltip, true);
+  window.addEventListener('resize', hideTooltip);
+  window.addEventListener('blur', hideTooltip);
+
+  // Touch: long-press 300ms triggers tooltip
+  rail.addEventListener('touchstart', (e) => {
+    const item = collapsedSquadItem(e.target);
+    if (!item) return;
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => showTooltip(item, squadLabelFor(item)), 300);
+  }, { passive: true });
+  rail.addEventListener('touchend', hideTooltip);
+  rail.addEventListener('touchcancel', hideTooltip);
+
+  // Accessibility: when collapsed, give the squad button an aria-label
+  // (VoiceOver) — patch on render via a MutationObserver since renderSquadRail
+  // wipes/rebuilds the list.
+  function annotateAriaLabels() {
+    rail.querySelectorAll('.squad-item').forEach((btn) => {
+      const label = squadLabelFor(btn);
+      if (label) btn.setAttribute('aria-label', label);
+    });
+  }
+  const obs = new MutationObserver(annotateAriaLabels);
+  const listEl = document.getElementById('squad-list');
+  if (listEl) obs.observe(listEl, { childList: true, subtree: true });
+  annotateAriaLabels();
+
+  apply();
+})();
