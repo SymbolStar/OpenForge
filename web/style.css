@@ -840,7 +840,9 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
   line-height: 1.45;
   max-height: 200px;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox: hide scrollbar (still scrollable) */
 }
+#thread-composer textarea::-webkit-scrollbar { display: none; } /* WebKit */
 #thread-composer textarea:focus {
   border-color: var(--brand-blue-hover);
   box-shadow: 0 0 0 1px var(--brand-blue-hover);
@@ -1272,7 +1274,9 @@ a.mini-avatar.avatar-link:focus-visible {
   line-height: 1.45;
   max-height: 200px;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox: hide scrollbar (still scrollable) */
 }
+#post-composer textarea::-webkit-scrollbar { display: none; } /* WebKit */
 #post-composer textarea:focus {
   border-color: var(--brand-blue-hover);
   box-shadow: 0 0 0 1px var(--brand-blue-hover);
