@@ -1293,12 +1293,12 @@ a.mini-avatar.avatar-link:focus-visible {
 /* scope to the direct send-button child only; nested buttons like
    .composer-preview-remove (× on attachment thumbs) must keep their
    own 14×14 styling and not inherit this 38px green pill. */
-/* Forge 发送按钮：方形 icon-only，铁砧+火星承担含义 */
+/* Forge 发送按钮：透明底 + ember 描边（V2 1.5px），铁砧靠 ember 色填充、不靠实底填充 */
 #post-composer > button#btn-send-post {
-  border: 0;
+  border: 1.5px solid #FF6B35;
   border-radius: 10px;
-  background: #FF6B35;
-  color: #0E0F11;
+  background: transparent;
+  color: #FF6B35;              /* 铁砧剖面/立柱/底座 currentColor = ember */
   width: 44px;
   height: 44px;
   padding: 0;
@@ -1306,12 +1306,16 @@ a.mini-avatar.avatar-link:focus-visible {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.05s ease;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
 }
-#post-composer > button#btn-send-post:hover:not([disabled]) { background: #FF7D4D; }
+#post-composer > button#btn-send-post:hover:not([disabled]) {
+  background: rgba(255, 107, 53, 0.10);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.28);  /* hover 借 V4 火烉余温 glow */
+}
 #post-composer > button#btn-send-post:active:not([disabled]) { transform: scale(0.96); }
 #post-composer > button#btn-send-post[disabled] {
-  background: var(--rail-bg);
+  border-color: var(--border);
+  background: transparent;
   color: var(--text-muted, #6b7280);
   cursor: not-allowed;
   opacity: 1;                  /* icon 不调透明度，靠 color 控灰度，避免砧形被抹平 */
