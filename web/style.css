@@ -228,6 +228,10 @@ button { cursor: pointer; }
 }
 #home-view {
   grid-template-columns: var(--w-squad, 260px) 5px var(--w-thread, 320px) 5px minmax(0, 1fr);
+  transition: grid-template-columns 200ms ease-out;
+}
+body.squad-collapsed #home-view {
+  grid-template-columns: 48px 0 var(--w-thread, 320px) 5px minmax(0, 1fr);
 }
 #files-view {
   grid-template-columns: var(--w-files, 280px) minmax(0, 1fr);
@@ -597,6 +601,167 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot-ok { background: var(--ok); }
 .dot-warn { background: var(--warn); }
+
+/* ─── squad rail collapsible (PR: feat/squad-rail-collapsible) ─── */
+/* All colors below are literals on purpose — the rail is an always-dark
+   token island; do NOT swap in --text-on-accent / color:inherit (see MEMORY:
+   the --text-on-accent flip on light theme was the original landmine). */
+.rail-collapse-btn {
+  background: transparent;
+  border: 0;
+  color: #B8BCC4;
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.rail-collapse-btn:hover { background: rgba(255,255,255,0.10); color: #FFFFFF; }
+.rail-collapse-btn:focus-visible { outline: 2px solid #4F8CFF; outline-offset: 2px; }
+
+/* Internal label fade — 150ms, finishes before the 200ms width transition
+   so text doesn't 'pop' out during collapse. */
+#squad-rail .brand-title,
+#squad-rail .section-label,
+#squad-rail .squad-name,
+#squad-rail .squad-count,
+#squad-rail .squad-unread-badge,
+#squad-rail .archived-tag,
+#squad-rail .new-squad-btn,
+#squad-rail .footer-help #status-text,
+#squad-rail .brand-settings-btn,
+#squad-rail .section-label-toggle {
+  transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+body.squad-collapsed #squad-rail .brand-title,
+body.squad-collapsed #squad-rail .section-label,
+body.squad-collapsed #squad-rail .squad-name,
+body.squad-collapsed #squad-rail .squad-count,
+body.squad-collapsed #squad-rail .squad-unread-badge,
+body.squad-collapsed #squad-rail .archived-tag,
+body.squad-collapsed #squad-rail .new-squad-btn,
+body.squad-collapsed #squad-rail .footer-help #status-text,
+body.squad-collapsed #squad-rail .brand-settings-btn,
+body.squad-collapsed #squad-rail .section-label-toggle {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+  visibility: hidden;
+}
+body.squad-collapsed #squad-rail .brand {
+  padding: 0;
+  justify-content: center;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+}
+body.squad-collapsed #squad-rail .rail-collapse-btn {
+  width: 100%;
+  height: 48px;
+  border-radius: 0;
+}
+body.squad-collapsed #squad-rail .rail-section { padding: 8px 0; }
+body.squad-collapsed #squad-rail .footer-help { justify-content: center; padding: 0; }
+/* Collapsed-mode settings entry — Settings is high-frequency, can't be
+   buried (designer call: option 2, IA: footer is the utility lane). */
+.footer-settings-btn {
+  background: transparent;
+  border: 0;
+  color: #B8BCC4;
+  font-size: 16px;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+.footer-settings-btn:hover { background: rgba(255,255,255,0.10); color: #FFFFFF; transform: rotate(20deg); }
+.footer-settings-btn:focus-visible { outline: 2px solid #4F8CFF; outline-offset: 2px; }
+body.squad-collapsed #squad-rail .footer-help #status-dot,
+body.squad-collapsed #squad-rail .footer-help #status-text { display: none; }
+body.squad-collapsed #squad-rail .footer-help { height: 48px; border-top: 1px solid rgba(255,255,255,0.12); }
+body.squad-collapsed .footer-settings-btn { display: inline-flex; }
+body.squad-collapsed #squad-rail #squad-list > li .squad-delete { display: none !important; }
+body.squad-collapsed #squad-rail .squad-item {
+  grid-template-columns: 1fr;
+  padding: 4px;
+  justify-items: center;
+  position: relative;
+  height: 40px;
+}
+body.squad-collapsed #squad-rail .squad-emoji {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+body.squad-collapsed #squad-rail .squad-item { background: transparent !important; color: #B8BCC4; }
+body.squad-collapsed #squad-rail .squad-item:hover { background: transparent !important; }
+body.squad-collapsed #squad-rail .squad-item:hover .squad-emoji { background: rgba(255,255,255,0.10); color: #FFFFFF; }
+body.squad-collapsed #squad-rail .squad-item.active { background: transparent !important; }
+body.squad-collapsed #squad-rail .squad-item.active .squad-emoji {
+  background: #262626;
+  color: #FFFFFF;
+  box-shadow: 0 0 0 2px #4F8CFF;
+}
+/* Unread / @-mention red dot in collapsed mode */
+body.squad-collapsed #squad-rail .squad-item.has-unread .squad-emoji::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #FF4757;
+  box-shadow: 0 0 0 2px #0A0A0A;
+  pointer-events: none;
+}
+/* Hide the gutter when collapsed — width is fixed at 48px */
+body.squad-collapsed .col-gutter[data-gutter="squad"] { display: none; }
+
+/* Floating tooltip for collapsed-rail squad names. Literal colors. */
+#squad-rail-tooltip {
+  position: fixed;
+  z-index: 9999;
+  background: #1a1d24;
+  color: #FFFFFF;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+#squad-rail-tooltip.visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  #home-view,
+  #squad-rail .brand-title,
+  #squad-rail .section-label,
+  #squad-rail .squad-name,
+  #squad-rail .squad-count,
+  #squad-rail-tooltip { transition: none !important; }
+}
 
 /* ─── thread rail (middle) ──────────────────────────────────── */
 #thread-rail {
