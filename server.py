@@ -684,8 +684,18 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/agents":
-            # Discoverable agents = union(squad members, anything that has
-            # ~/.openclaw/agents/<id>/sessions). Used by the @-picker.
+            # Discoverable agents = union(squad members, every agent profile
+            # under ~/.openclaw/agents/<id>/, ACP employees opted in via
+            # OpenClaw config). Used by the @-picker.
+            #
+            # Historically we required ~/.openclaw/agents/<id>/sessions/ to
+            # exist as proof the agent had been used at least once, but on a
+            # fresh OpenClaw install that filter hides codex/claude-code/gemini
+            # entirely (their profile dir exists, but `sessions/` only gets
+            # created on first run). Result: brand-new users saw only `main`
+            # in the Agents component. Drop the sessions requirement and also
+            # union the ACP allowlist so opted-in runtimes show up even before
+            # their profile dir gets materialised.
             ids: set[str] = set()
             for sq in store.list_squads():
                 for m in sq.get("members") or []:
@@ -694,8 +704,12 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             agents_root = forge_paths.openclaw_agents_root()
             if agents_root.exists():
                 for child in agents_root.iterdir():
-                    if child.is_dir() and (child / "sessions").exists():
+                    if child.is_dir():
                         ids.add(child.name)
+            try:
+                ids.update(forge_employees.acp_employee_ids())
+            except Exception:
+                pass
             self._json(sorted(ids))
             return
 

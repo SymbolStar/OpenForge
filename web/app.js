@@ -1,9 +1,11 @@
 // OpenForge web app — squad / thread / posts, vanilla JS, Slack-shaped.
 
-// Legacy hardcoded list — kept ONLY as fallback for AGENT_COLOR_CLASS (avatar
-// colours) and as a last-resort fallback if /api/employees is unreachable.
-// The squad-modal member list is built dynamically from /api/employees
-// (curated roster: agents with workspace-<id>/SOUL.md). See buildMemberControls.
+// Legacy hardcoded list — kept ONLY as the key set for AGENT_COLOR_CLASS
+// (avatar colours for our internal SymbolStar staff). DO NOT use as a
+// fallback for the squad-modal member picker: it leaks private agent ids
+// (milk/sentry/milly/bugfix/kb) to users who don't have those workspaces.
+// The picker reads /api/employees; an empty result must surface as an
+// empty list + hint, never as our roster. See buildMemberControls().
 const AGENTS = ['milk', 'sentry', 'bugfix', 'milly', 'kb'];
 const POLL_MS = 8000;
 let showArchivedSquads = false;
@@ -2121,13 +2123,25 @@ async function buildMemberControls() {
     const res = await fetch('/api/employees');
     if (res.ok) employees = await res.json();
   } catch (e) { /* network error — fall back below */ }
-  if (!Array.isArray(employees) || employees.length === 0) {
-    // Last-resort fallback: legacy hardcoded list. Used only if /api/employees
-    // is unreachable AND returned nothing usable, so the picker is never empty.
-    employees = AGENTS.slice();
-  }
-  const list = employees.filter(a => typeof a === 'string' && a).sort();
+  // IMPORTANT: do NOT fall back to the hardcoded AGENTS list here. On a
+  // fresh install with zero workspace-<id>/SOUL.md, /api/employees returns
+  // []; the old fallback leaked our internal SymbolStar staff
+  // (milk/sentry/milly/bugfix/kb) into other users' pickers. Surface the
+  // empty state honestly instead.
+  const list = Array.isArray(employees)
+    ? employees.filter(a => typeof a === 'string' && a).sort()
+    : [];
   els.memberCheckboxes.innerHTML = '';
+  if (list.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'muted';
+    hint.style.fontSize = '12px';
+    hint.style.padding = '6px 2px';
+    hint.textContent = '还没有员工。在 ~/.openclaw/workspace-<id>/ 下创建 SOUL.md，或在 OpenClaw 配置里启用 ACP agent（codex / claude / gemini …）。';
+    els.memberCheckboxes.appendChild(hint);
+    syncChairOptions();
+    return;
+  }
   list.forEach(agent => {
     const label = document.createElement('label');
     label.innerHTML = `<input type="checkbox" name="members" value="${agent}" /> ${agent}`;
