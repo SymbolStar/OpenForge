@@ -18,6 +18,15 @@ def router(store, fake_home, monkeypatch):
     # ensure no leftover in-flight state from previous tests
     with pr._inflight_lock:
         pr._inflight.clear()
+    # Scott 2026-06-09: enqueue_if_needed now drops @mentions that are
+    # not known employees. Tests use synthetic agent ids (milk, sherry,
+    # other, …) under a fake $HOME with no real agent runtimes, so
+    # forge_employees.is_employee returns False for everything. Stub it
+    # to True here so the routing tests continue to exercise the actual
+    # dispatch path; test_post_router.test_unknown_mention_is_skipped
+    # restores the real lookup for the dedicated unknown-id case.
+    import forge_employees
+    monkeypatch.setattr(pr.forge_employees, "is_employee", lambda _id: True)
     return pr
 
 
@@ -253,6 +262,47 @@ def test_enqueue_dedupes_mentions(router, store, monkeypatch):
     post = {"speaker": "scott", "post_id": "p1", "mentions": ["milk", "milk"]}
     assert router.enqueue_if_needed(t["thread_id"], post) is True
     assert len(calls) == 1
+
+
+def test_enqueue_drops_unknown_mention(router, store, monkeypatch):
+    """Scott 2026-06-09: @name not in employees list → no dispatch, no chip.
+
+    Previously such mentions would still spawn a worker which produced a
+    red "Unknown agent id" failure chip. We now silently drop them at
+    the router. Only the real employee in the same post should route.
+    """
+    calls: list[str] = []
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    # Override the fixture's blanket is_employee stub: only 'milk' is real.
+    monkeypatch.setattr(
+        router.forge_employees, "is_employee",
+        lambda aid: aid == "milk",
+    )
+    t = _make_thread(store, "@name not real, @milk is")
+    post = {"speaker": "scott", "post_id": "p1",
+            "mentions": ["name", "milk"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is True
+    assert calls == ["milk"]
+
+
+def test_enqueue_all_unknown_mentions_returns_false(router, store, monkeypatch):
+    """If every @mention is unknown, enqueue returns False (no dispatch)."""
+    calls: list[str] = []
+    def fake_dispatch(tid, ag, trig):
+        calls.append(ag)
+        return True
+    monkeypatch.setattr(router, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(
+        router.forge_employees, "is_employee", lambda _id: False,
+    )
+    t = _make_thread(store, "@nobody @ghost")
+    post = {"speaker": "scott", "post_id": "p1",
+            "mentions": ["nobody", "ghost"]}
+    assert router.enqueue_if_needed(t["thread_id"], post) is False
+    assert calls == []
 
 
 def test_implicit_mention_from_reply(router, store, monkeypatch):

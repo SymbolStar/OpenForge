@@ -1329,6 +1329,61 @@ function toast(msg) {
   toast._t = setTimeout(() => { el.hidden = true; }, 2200);
 }
 
+// judy 2026-06-09 — file-chip 「第一次点击不跳转」 修复
+// 原因（scott 复现：第一次点击常常失败，第二次才行）：
+//   1) <a href="#/files/refs/ref_xxx"> 完全靠浏览器 hashchange 触发路由；
+//      当当前 hash 已等于目标（例如刚从 FILES 返回 thread，又点同一个
+//      chip），浏览器不 fire hashchange → routeFromHash 不跑 → 看起来卡死。
+//   2) 未注册的 [[ref:xxx]] 渲染成 <span class="file-chip-missing">，没有 href；
+//      虽然有 scheduleRefIndexRefresh 兜底，但用户第一次点击命中的就是这个
+//      死 span，要等 ~150ms 后才被 repaint 成 <a>，体验上就是「第一次点不动」。
+// 修法：拦截 .file-chip / .file-chip-ref / .file-chip-missing 的点击，强制
+//      把 hash 设到目标 + 直接调用 routeFromHash（同 hash 时浏览器不 fire）。
+//      对 missing 变体先 await 一次 refresh 再尝试解析。
+document.addEventListener('click', async (e) => {
+  // 让 ⭐ 收藏按钮、context menu 等先消化掉自己的事件。
+  if (e.defaultPrevented) return;
+  if (e.target.closest('.file-chip-fav')) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // 让 ⌘+click 等保留浏览器默认
+  const chip = e.target.closest('.file-chip-ref, .file-chip-missing, .file-chip');
+  if (!chip) return;
+
+  // missing 变体：强制刷新 refs 索引再试一次。
+  if (chip.classList.contains('file-chip-missing')) {
+    e.preventDefault();
+    const title = chip.getAttribute('title') || '';
+    const m = title.match(/未注册的引用:\s*(.+)$/);
+    const target = m ? m[1] : null;
+    if (!target) return;
+    try {
+      if (typeof loadRefIndex === 'function') await loadRefIndex(true);
+    } catch (_) { /* keep going */ }
+    const hit = typeof resolveChipFromRefs === 'function' ? resolveChipFromRefs(target) : null;
+    if (hit && hit.id) {
+      const next = '#/files/refs/' + encodeURIComponent(hit.id);
+      if (location.hash === next) {
+        if (typeof window.__forgeRouteFromHash === 'function') window.__forgeRouteFromHash();
+      } else {
+        location.hash = next;
+      }
+    } else if (typeof showToast === 'function') {
+      showToast('引用尚未注册，稍后再试');
+    }
+    return;
+  }
+
+  // 普通已解析 chip：href 是 #/files/refs/... 或 #/files/<root>/<name>。
+  const href = chip.getAttribute('href') || '';
+  if (!href.startsWith('#/files/')) return;
+  e.preventDefault();
+  if (location.hash === href) {
+    // 同 hash：浏览器不会 fire hashchange，直接手动跑一次路由。
+    if (typeof window.__forgeRouteFromHash === 'function') window.__forgeRouteFromHash();
+  } else {
+    location.hash = href;
+  }
+}, true); // capture phase — 确保在其他 listener 之前拿到，preventDefault 才生效
+
 // Context menu (right-click on file chips + pinned chips)
 let _ctxMenu = null;
 function _closeCtxMenu() { if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; } }
@@ -3443,6 +3498,11 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   // Expose setActive for the agents IIFE
   window.__forgeSetActive = setActive;
+  // judy 2026-06-09: expose routeFromHash so the file-chip click handler
+  // can force a re-route when the hash is already on the target ref id
+  // (hashchange does NOT fire when href === current hash, which caused
+  // chips to look dead on first click after navigating back from FILES).
+  window.__forgeRouteFromHash = routeFromHash;
 
   items.forEach(it => {
     it.addEventListener('click', () => {

@@ -296,6 +296,20 @@ def enqueue_if_needed(thread_id: str, post: dict[str, Any]) -> bool:
             continue  # self-@ no-op
         if key in _RESERVED_SPEAKERS:
             continue  # @scott / @__router__ are not routable
+        # Scott 2026-06-09: silently drop @mentions that aren't in our
+        # employees list. Previously we still dispatched and let the agent
+        # runtime fail with "Unknown agent id", which produced a noisy
+        # red failure chip for typos like `@name`. Unknown ids never
+        # resolve to a real worker, so skipping at the router avoids the
+        # chip entirely.
+        try:
+            if not forge_employees.is_employee(key):
+                continue
+        except Exception:
+            # Defensive: if employee lookup blows up, fall through to the
+            # old behaviour (dispatch) so we don't silently swallow real
+            # routes during a registry outage.
+            pass
         seen.add(key)
         ordered.append(key)
     if not ordered:
