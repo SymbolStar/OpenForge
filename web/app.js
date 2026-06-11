@@ -4039,21 +4039,19 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   function setMode(mode) {
     state.mode = mode;
+    btnToggle.textContent = '✎';
+    btnToggle.setAttribute('aria-pressed', mode === 'edit' ? 'true' : 'false');
+    btnToggle.title = mode === 'edit' ? '退出编辑' : '编辑';
+    btnToggle.setAttribute('aria-label', btnToggle.title);
     if (mode === 'edit') {
       previewEl.hidden = true;
       editorEl.hidden = false;
-      btnToggle.textContent = '👁';
-      btnToggle.title = '预览';
-      btnToggle.setAttribute('aria-label', '预览');
       btnSave.hidden = false;
       btnSave.disabled = !state.dirty;
       editorEl.focus();
     } else {
       editorEl.hidden = true;
       previewEl.hidden = false;
-      btnToggle.textContent = '✎';
-      btnToggle.title = '编辑';
-      btnToggle.setAttribute('aria-label', '编辑');
       btnSave.hidden = true;
     }
     if (typeof updateDangerBanner === 'function') updateDangerBanner();
