@@ -1,18 +1,29 @@
 name: bot-review
 
-# Phase 1 of "bot review / auto-approve" plan: comment-only.
-# Posts (or updates) ONE sticky PR review comment with:
-#   - diff stats
-#   - red-line checks (xiaof A-7.5, SSE event order, forge restart race)
-#   - "needs human review" flags for paths we never want auto-approved
-#     (server.py, migrations, bin/forge, .github/, plist)
+# Phase 2: review-comment + auto-approve + auto-merge when clean.
 #
-# Does NOT call --approve. Promotion to auto-approve happens in a
-# follow-up PR once we have 1-2 weeks of clean review-comment runs.
+# Job 1 (review) — always runs:
+#   - posts sticky red-line review comment (diff, A-7.5, SSE, forge race)
+#   - emits outputs: has_findings, has_needs_human, is_internal
+#
+# Job 2 (auto-approve) — runs only when ALL of:
+#   - PR author is an internal SymbolStar member (no fork PRs)
+#   - PR is not draft
+#   - PR has no `no-auto-merge` label
+#   - red-line checks produced zero ❌ findings
+#   - changed paths hit zero `needs human review` entries
+#   then: gh pr review --approve  +  gh pr merge --auto --squash
+#   (auto-merge waits for required CI checks if branch protection is set)
+#
+# Escape hatches:
+#   - add label `no-auto-merge` on the PR
+#   - put `[no-auto-merge]` in PR title
+#   - touch any `needs human` path (server.py, migrations/, bin/forge,
+#     .github/workflows/, *.plist, forge_xiaof.py)
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     branches: [main]
 
 permissions:
@@ -47,6 +58,36 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           STATS=$(git diff --shortstat "$BASE" "$HEAD" || echo "(no diff)")
           echo "stats=$STATS" >> "$GITHUB_OUTPUT"
+
+      - name: Check author membership (internal vs fork)
+        id: membership
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          ORG: SymbolStar
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          set +e
+          internal="false"
+          # Fork PRs are never internal.
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "PR head is a fork ($HEAD_REPO) — treating as external."
+          else
+            # Bot accounts (e.g. dependabot[bot], github-actions[bot]) — allow.
+            case "$AUTHOR" in
+              dependabot\[bot\]|github-actions\[bot\]|copilot-pull-request-reviewer\[bot\]|coderabbitai\[bot\])
+                internal="true" ;;
+              *)
+                status=$(gh api -i "orgs/${ORG}/members/${AUTHOR}" 2>/dev/null | head -1 | awk '{print $2}')
+                if [ "$status" = "204" ]; then
+                  internal="true"
+                fi
+                ;;
+            esac
+          fi
+          echo "internal=$internal" >> "$GITHUB_OUTPUT"
+          echo "author=$AUTHOR internal=$internal"
 
       - name: Run red-line checks
         id: checks
@@ -104,7 +145,11 @@ jobs:
             esac
           done <<< "$changed"
 
-          # Persist outputs for the comment step.
+          # Persist outputs for the comment + auto-approve steps.
+          has_findings="false"
+          has_needs_human="false"
+          if printf '%s' "$findings" | grep -q '❌'; then has_findings="true"; fi
+          if [ -n "${needs_human// }" ]; then has_needs_human="true"; fi
           {
             echo "findings<<EOF"
             printf '%s' "$findings"
@@ -114,6 +159,8 @@ jobs:
             printf '%s' "$needs_human"
             echo
             echo "EOF"
+            echo "has_findings=$has_findings"
+            echo "has_needs_human=$has_needs_human"
           } >> "$GITHUB_OUTPUT"
 
       - name: Post / update sticky review comment
@@ -137,7 +184,7 @@ jobs:
           # Build body with printf to dodge YAML's literal-block indentation
           # rules (heredocs whose inner lines start at column 1 break the
           # `run: |` parser).
-          body=$(printf '%s\n### \xf0\x9f\xa4\x96 bot-review (comment-only \xc2\xb7 phase 1)\n\n**Diff:** `%s` @ `%s`\n\n**Red-line checks:**\n%s\n%s\n\n---\n_Phase 1: this bot leaves comments only. Auto-approve will be enabled per-path after 1\xe2\x80\x932 weeks of clean runs. Promotion plan: judy PR #42 follow-up._\n' \
+          body=$(printf '%s\n### \xf0\x9f\xa4\x96 bot-review (comment-only \xc2\xb7 phase 1)\n\n**Diff:** `%s` @ `%s`\n\n**Red-line checks:**\n%s\n%s\n\n---\n_Phase 2: auto-approve + auto-merge fire only when red-lines are clean, author is internal, and no needs-human path is touched. Block with `no-auto-merge` label or `[no-auto-merge]` in title._\n' \
             "$MARKER" "$STATS" "${SHA:0:7}" "$FINDINGS" "$needs_block")
 
           # Find an existing sticky comment by marker, edit if present, else create.
@@ -151,4 +198,42 @@ jobs:
           else
             gh pr comment "${PR}" --body "$body"
             echo "Created sticky comment on PR ${PR}"
+          fi
+
+      - name: Decide auto-approve eligibility
+        id: decide
+        env:
+          INTERNAL: ${{ steps.membership.outputs.internal }}
+          HAS_FINDINGS: ${{ steps.checks.outputs.has_findings }}
+          HAS_NEEDS_HUMAN: ${{ steps.checks.outputs.has_needs_human }}
+          LABELS: ${{ toJson(github.event.pull_request.labels) }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -e
+          eligible="true"
+          reason=""
+          if [ "$INTERNAL" != "true" ];      then eligible="false"; reason="author not internal SymbolStar member"; fi
+          if [ "$HAS_FINDINGS" = "true" ];   then eligible="false"; reason="red-line ❌ findings present"; fi
+          if [ "$HAS_NEEDS_HUMAN" = "true" ];then eligible="false"; reason="changed paths require human review"; fi
+          if echo "$LABELS" | grep -q '"no-auto-merge"'; then eligible="false"; reason="no-auto-merge label set"; fi
+          case "$TITLE" in *"[no-auto-merge]"*) eligible="false"; reason="[no-auto-merge] in title";; esac
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason"   >> "$GITHUB_OUTPUT"
+          echo "decision: eligible=$eligible reason='$reason'"
+
+      - name: Auto-approve + enable auto-merge
+        if: steps.decide.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          echo "Approving PR #${PR} on behalf of github-actions[bot]…"
+          gh pr review "$PR" --repo "$REPO" --approve \
+            --body "✅ Auto-approved by bot-review: red-line checks clean, internal author, no needs-human paths."
+          echo "Enabling auto-merge (squash)…"
+          if ! gh pr merge "$PR" --repo "$REPO" --auto --squash; then
+            echo "::warning::auto-merge enable failed — repo may not have 'Allow auto-merge' enabled, or no required checks set. Falling back to direct squash merge."
+            gh pr merge "$PR" --repo "$REPO" --squash --delete-branch || true
           fi
