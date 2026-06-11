@@ -1154,6 +1154,21 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
 }
 .ghost-btn[disabled] { opacity: 0.45; cursor: default; }
 
+.ghost-btn.primary-btn {
+  background: var(--accent-blue, #1264a3);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+}
+.ghost-btn.primary-btn:hover:not([disabled]) {
+  background: var(--accent-blue-hover, #0b4f87);
+  border-color: transparent;
+}
+.ghost-btn.primary-btn[disabled] {
+  opacity: 0.55;
+  color: #fff;
+}
+
 .avatar-stack {
   display: flex;
   align-items: center;
