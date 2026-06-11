@@ -865,6 +865,15 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   cursor: default;
   pointer-events: none;
 }
+.icon-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.icon-btn[aria-pressed="true"]:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: none;
+}
 .btn-danger {
   background: var(--bg);
   color: #c0392b;
