@@ -681,7 +681,25 @@ body.squad-collapsed #squad-rail .rail-collapse-btn {
   min-width: 48px;
   height: 48px;
   border-radius: 0;
-  font-size: 18px;
+  /* Visual upgrade (designer follow-up): paint a 28px circular halo
+     centered in the 48×48 cell via radial-gradient, so visual weight
+     matches the squad emoji icons below. Hit area stays the full 48×48
+     button (kept transparent outside the gradient circle), preserving
+     the PR #72 P0 fix. */
+  font-size: 16px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: radial-gradient(circle 14px at center, rgba(255,255,255,0.10) 0 14px, transparent 14px);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+body.squad-collapsed #squad-rail .rail-collapse-btn:hover {
+  background: radial-gradient(circle 14px at center, rgba(255,255,255,0.20) 0 14px, transparent 14px);
+  color: #FFFFFF;
+}
+body.squad-collapsed #squad-rail .rail-collapse-btn:focus-visible {
+  outline: 2px solid #4F8CFF;
+  outline-offset: -8px;
+  border-radius: 50%;
 }
 body.squad-collapsed #squad-rail .rail-section { padding: 8px 0; }
 body.squad-collapsed #squad-rail .footer-help { justify-content: center; padding: 0; }
