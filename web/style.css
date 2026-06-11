@@ -888,7 +888,16 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   overflow-y: auto;
   flex: 1 1 0;
   min-height: 0;
+  /* Hide scrollbar chrome by default — the rail looks cleaner without
+     the always-on bar (matches squad-rail collapsed style). Still
+     scrollable via wheel/touch/keyboard. Restored via :focus-within
+     so keyboard users (PageUp/PageDown / arrow keys) still see a bar
+     when interacting (a11y, designer call: WCAG SC 2.1.1). */
+  scrollbar-width: none;
 }
+#thread-list::-webkit-scrollbar { display: none; }
+#thread-list:focus-within { scrollbar-width: auto; }
+#thread-list:focus-within::-webkit-scrollbar { display: initial; }
 .thread-item button {
   width: 100%;
   min-height: 60px;
@@ -1257,7 +1266,13 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   min-height: 0;
   overflow-y: auto;
   padding: 14px 18px 20px;
+  /* Hide scrollbar chrome by default — cleaner reading surface; bar
+     reappears on :focus-within for keyboard users (a11y). */
+  scrollbar-width: none;
 }
+#post-list::-webkit-scrollbar { display: none; }
+#post-list:focus-within { scrollbar-width: auto; }
+#post-list:focus-within::-webkit-scrollbar { display: initial; }
 .empty {
   color: var(--text-soft);
   padding: 48px 12px;
