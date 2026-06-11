@@ -1,14 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <title>OpenForge — Forge F</title>
-  <rect width="256" height="256" rx="40" fill="#0E0F11"/>
-  <!-- F vertical stem in ember orange -->
-  <rect x="64" y="48" width="26" height="160" rx="5" fill="#FF6B35"/>
-  <!-- F top arm: a dispatch branch to agent node -->
-  <rect x="64" y="48" width="120" height="26" rx="5" fill="#F5F5F4"/>
-  <rect x="178" y="42" width="38" height="38" rx="7" fill="#F5F5F4"/>
-  <!-- F mid arm: second dispatch branch to agent node -->
-  <rect x="64" y="118" width="84" height="22" rx="5" fill="#F5F5F4"/>
-  <rect x="142" y="113" width="32" height="32" rx="6" fill="#F5F5F4"/>
-  <!-- ember glow at stem base -->
-  <circle cx="77" cy="208" r="14" fill="#FFD8B0" opacity="0.55"/>
+  <rect width="256" height="256" rx="56" fill="#0E0F11"/>
+  <!-- Content scaled 0.82 and re-centered inside icon for proper safe-zone / dock padding -->
+  <g transform="translate(13.61 19.76) scale(0.82)">
+    <!-- F vertical stem in ember orange -->
+    <rect x="64" y="48" width="26" height="160" rx="5" fill="#FF6B35"/>
+    <!-- F top arm: a dispatch branch to agent node -->
+    <rect x="64" y="48" width="120" height="26" rx="5" fill="#F5F5F4"/>
+    <rect x="178" y="42" width="38" height="38" rx="7" fill="#F5F5F4"/>
+    <!-- F mid arm: second dispatch branch to agent node -->
+    <rect x="64" y="118" width="84" height="22" rx="5" fill="#F5F5F4"/>
+    <rect x="142" y="113" width="32" height="32" rx="6" fill="#F5F5F4"/>
+    <!-- ember glow at stem base -->
+    <circle cx="77" cy="208" r="14" fill="#FFD8B0" opacity="0.55"/>
+  </g>
 </svg>
