@@ -3315,3 +3315,38 @@ a.mini-avatar.avatar-link:focus-visible {
   cursor: pointer; border-radius: 4px;
 }
 .chip-ctx-item:hover { background: var(--surface-hover); }
+
+/* ─── thread popout (feat/thread-popout-page) ─────────────────────────
+   alice/judy 拍板：thread 单独 URL，独立 tab 打开；功能与主面板等价；
+   靠 BroadcastChannel 做同浏览器多 tab 间的状态同步。
+   - thread-header 右上角 ↗ 按钮 → window.open('#/thread/<id>')
+   - body.is-popout：隐藏 icon-rail / squad-rail / thread-rail / gutters，
+     thread-pane 占满整屏，复用一切既有 selectThread / SSE / composer。 */
+.ghost-btn.icon-only-btn {
+  width: 30px;
+  padding: 4px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mute);
+}
+.ghost-btn.icon-only-btn:hover:not([disabled]) {
+  color: var(--text);
+}
+.ghost-btn.icon-only-btn svg {
+  display: block;
+}
+
+body.is-popout #icon-rail,
+body.is-popout #squad-rail,
+body.is-popout #thread-rail,
+body.is-popout #home-view > .col-gutter,
+body.is-popout #btn-popout-thread {
+  display: none !important;
+}
+body.is-popout #home-view {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.is-popout #thread-pane {
+  border-left: 0;
+}
