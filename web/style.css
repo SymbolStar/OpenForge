@@ -769,6 +769,17 @@ body.squad-collapsed #squad-rail .squad-item.has-unread .squad-emoji::after {
 /* Hide the gutter when collapsed — width is fixed at 48px */
 body.squad-collapsed .col-gutter[data-gutter="squad"] { display: none; }
 
+/* Hide the squad-list scrollbar when the rail is collapsed.
+   In a 48px-wide rail, the WebKit/Firefox scrollbar (~7px) is visually
+   awful and lands right on the icon column; squad-list itself stays
+   scrollable, only the bar chrome is suppressed. Same pattern already
+   used by #thread-composer / #post-composer textareas. */
+body.squad-collapsed #squad-list {
+  scrollbar-width: none;            /* Firefox */
+  overflow-x: hidden;               /* no horizontal bar either */
+}
+body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKit */
+
 /* Floating tooltip for collapsed-rail squad names. Literal colors. */
 #squad-rail-tooltip {
   position: fixed;
