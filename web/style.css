@@ -639,7 +639,6 @@ body.col-resizing * { cursor: col-resize !important; user-select: none !importan
 #squad-rail .section-label-toggle {
   transition: opacity 150ms ease-out, transform 150ms ease-out;
 }
-body.squad-collapsed #squad-rail .brand-title,
 body.squad-collapsed #squad-rail .section-label,
 body.squad-collapsed #squad-rail .squad-name,
 body.squad-collapsed #squad-rail .squad-count,
@@ -647,12 +646,21 @@ body.squad-collapsed #squad-rail .squad-unread-badge,
 body.squad-collapsed #squad-rail .archived-tag,
 body.squad-collapsed #squad-rail .new-squad-btn,
 body.squad-collapsed #squad-rail .footer-help #status-text,
-body.squad-collapsed #squad-rail .brand-settings-btn,
 body.squad-collapsed #squad-rail .section-label-toggle {
   opacity: 0;
   transform: translateX(-8px);
   pointer-events: none;
   visibility: hidden;
+}
+/* brand-title / brand-settings-btn must leave flex flow entirely in
+   collapsed mode — visibility:hidden still reserves layout space, which
+   squeezes .rail-collapse-btn down to a few px wide and makes the toggle
+   visually disappear ("folded and can't come back" bug). Drop them with
+   display:none and skip the 150ms label fade for these two elements;
+   they're inside the 48px-wide brand row, so the fade is imperceptible. */
+body.squad-collapsed #squad-rail .brand-title,
+body.squad-collapsed #squad-rail .brand-settings-btn {
+  display: none;
 }
 body.squad-collapsed #squad-rail .brand {
   padding: 0;
@@ -660,9 +668,11 @@ body.squad-collapsed #squad-rail .brand {
   border-bottom: 1px solid rgba(255,255,255,0.12);
 }
 body.squad-collapsed #squad-rail .rail-collapse-btn {
-  width: 100%;
+  width: 48px;
+  min-width: 48px;
   height: 48px;
   border-radius: 0;
+  font-size: 18px;
 }
 body.squad-collapsed #squad-rail .rail-section { padding: 8px 0; }
 body.squad-collapsed #squad-rail .footer-help { justify-content: center; padding: 0; }
