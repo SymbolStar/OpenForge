@@ -3697,8 +3697,8 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       previewEl.hidden = false;
       btnSave.hidden = true;
       btnToggle.disabled = true;
-      btnToggle.textContent = '编辑';
-      btnToggle.title = state.isMdRef ? '' : 'v1 仅支持 .md 文件编辑';
+      btnToggle.textContent = '✎';
+      btnToggle.title = state.isMdRef ? '编辑' : 'v1 仅支持 .md 文件编辑';
       const r = await fetch('/api/refs/' + encodeURIComponent(refId) + '/content');
       if (!r.ok) {
         previewEl.innerHTML = '<p class="meta">加载失败: HTTP ' + r.status + '</p>';
@@ -3863,7 +3863,8 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     editorEl.hidden = true;
     previewEl.hidden = false;
     btnToggle.disabled = true;
-    btnToggle.textContent = '编辑';
+    btnToggle.textContent = '✎';
+    btnToggle.title = '编辑';
     btnSave.hidden = true;
     btnSave.disabled = true;
     if (typeof setViewerFavTarget === 'function') setViewerFavTarget(null);
@@ -4041,14 +4042,18 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     if (mode === 'edit') {
       previewEl.hidden = true;
       editorEl.hidden = false;
-      btnToggle.textContent = '预览';
+      btnToggle.textContent = '👁';
+      btnToggle.title = '预览';
+      btnToggle.setAttribute('aria-label', '预览');
       btnSave.hidden = false;
       btnSave.disabled = !state.dirty;
       editorEl.focus();
     } else {
       editorEl.hidden = true;
       previewEl.hidden = false;
-      btnToggle.textContent = '编辑';
+      btnToggle.textContent = '✎';
+      btnToggle.title = '编辑';
+      btnToggle.setAttribute('aria-label', '编辑');
       btnSave.hidden = true;
     }
     if (typeof updateDangerBanner === 'function') updateDangerBanner();
