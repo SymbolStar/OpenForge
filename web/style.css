@@ -858,6 +858,13 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   color: var(--text);
   transform: rotate(-12deg) scale(1.08);
 }
+.icon-btn[disabled],
+.icon-btn:disabled {
+  opacity: 1;
+  color: var(--text-mute);
+  cursor: default;
+  pointer-events: none;
+}
 .btn-danger {
   background: var(--bg);
   color: #c0392b;
