@@ -231,8 +231,17 @@ button { cursor: pointer; }
   transition: grid-template-columns 200ms ease-out;
 }
 body.squad-collapsed #home-view {
-  grid-template-columns: 48px 0 var(--w-thread, 320px) 5px minmax(0, 1fr);
+  /* 4-column track — the squad gutter is display:none below so source-order
+     stays consistent (squad-rail / thread-rail / thread-gutter / thread-pane).
+     The earlier 5-col template with a 0px placeholder mis-mapped thread-rail
+     onto the 0px track and parked thread-pane on the 5px gutter, leaving the
+     final 1fr track empty — that’s the “ghost gray panel” designer flagged
+     in PR72 review. */
+  grid-template-columns: 48px var(--w-thread, 320px) 5px minmax(0, 1fr);
 }
+/* Pin the rail width too — in case a stale inline --w-squad ever leaks in,
+   the rail itself stays at 48px and can’t spill into the next track. */
+body.squad-collapsed #squad-rail { width: 48px; min-width: 48px; max-width: 48px; }
 #files-view {
   grid-template-columns: var(--w-files, 280px) minmax(0, 1fr);
 }
