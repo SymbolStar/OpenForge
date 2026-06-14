@@ -1342,7 +1342,7 @@ async function _pinRef(refId) {
   try {
     const r = await fetch(`/api/threads/${encodeURIComponent(tid)}/pinned-refs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-OpenForge-UI': '1' },
       body: JSON.stringify({ ref_id: refId, actor: 'scott' }),
     });
     if (r.status === 409) {
@@ -1362,7 +1362,7 @@ async function _unpinRef(refId) {
   try {
     const r = await fetch(
       `/api/threads/${encodeURIComponent(tid)}/pinned-refs/${encodeURIComponent(refId)}?actor=scott`,
-      { method: 'DELETE' }
+      { method: 'DELETE', headers: { 'X-OpenForge-UI': '1' } }
     );
     if (!r.ok) { toast('unpin 失败'); return; }
     _refExistsCache.delete(refId);
