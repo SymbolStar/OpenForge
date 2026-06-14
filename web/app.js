@@ -700,6 +700,15 @@ function updateUnreadTitle() {
   const n = totalUnread();
   // feat/thread-popout-page: popout tab 对应独立 thread，用 thread 标题起 page title。
   if (document.body.classList.contains('is-popout')) {
+    // file popout (#/file/<refId>) 优先；ref 是用独立 URL 打开的唯一实体。
+    if ((location.hash || '').startsWith('#/file/')) {
+      // state 在 FILES IIFE 内部，从 DOM 拿 title 最稳。
+      const ft = document.getElementById('file-title');
+      const subj = (ft?.textContent || 'File').toString().slice(0, 60).trim() || 'File';
+      document.title = `${subj} · ${BASE_TITLE}`;
+      maybeNotifyNewUnread();
+      return;
+    }
     const t = state.currentThread;
     const subj = (t?.title || t?.preview || 'Thread').toString().slice(0, 60).trim() || 'Thread';
     document.title = `${subj} · ${BASE_TITLE}`;
@@ -3553,6 +3562,22 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         return;
       }
     }
+    // feat/file-popout-page: #/file/<refId> 路由 — file 独立页模式
+    // 跟 thread popout 同形态：复用 selectRef + FILES 视图，独立 tab
+    // 隐藏 icon-rail / files-rail / popout 按钮本身，files-pane 占满屏。
+    {
+      const m = h.match(/^#\/file\/(ref_[A-Za-z0-9]+)(?:\?.*)?$/);
+      if (m) {
+        document.body.classList.add('is-popout');
+        setActive('files');
+        const rid = decodeURIComponent(m[1]);
+        // selectRef 与本函数同一 IIFE 可直接调。
+        if (typeof selectRef === 'function') {
+          selectRef(rid).catch?.(() => {});
+        }
+        return;
+      }
+    }
     // 从 popout hash 用户手动跳出时，清掉 class。
     if (document.body.classList.contains('is-popout')) {
       document.body.classList.remove('is-popout');
@@ -3655,6 +3680,17 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const rootSelect = document.getElementById('file-root-select');
   const btnToggle = document.getElementById('btn-toggle-edit');
   const btnSave = document.getElementById('btn-save-file');
+  // feat/file-popout-page: 独立页按钮——只在 ref 被选中时启用（v0.8 ref 是文件页唯一能
+  // 被独立 URL 寻址到的实体）。Workspace 文件 v2 已不走 routing，不入场。
+  const btnPopoutFile = document.getElementById('btn-popout-file');
+  if (btnPopoutFile) {
+    btnPopoutFile.addEventListener('click', () => {
+      const ref = state.currentRef;
+      if (!ref || !ref.id) return;
+      const url = `${location.pathname}#/file/${encodeURIComponent(ref.id)}`;
+      window.open(url, '_blank', 'noopener');
+    });
+  }
   // v0.8
   const tabRefs = document.getElementById('files-tab-refs');
   const tabFavorites = document.getElementById('files-tab-favorites');
@@ -3775,6 +3811,13 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       state.refEtag = null;
       state.isMdRef = /\.md$/i.test(ref.label || '');
       titleEl.textContent = ref.label;
+      if (btnPopoutFile) btnPopoutFile.disabled = false;
+      // feat/file-popout-page: popout tab 需要拿文件名起 page title。
+      // updateUnreadTitle 可根据 is-popout + #/file/ 路由拿 DOM 里的标题。
+      if (document.body.classList.contains('is-popout')
+          && typeof updateUnreadTitle === 'function') {
+        updateUnreadTitle();
+      }
       subEl.textContent = (ref.source_agent ? ref.source_agent + ' · ' : '')
         + fmtSize(ref.size_hint || 0) + ' · 注册于 ' + fmtTime(ref.registered_at)
         + ' · ' + ref.abs_path;
@@ -3960,6 +4003,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     btnToggle.title = '编辑';
     btnSave.hidden = true;
     btnSave.disabled = true;
+    if (btnPopoutFile) btnPopoutFile.disabled = true;
     if (typeof setViewerFavTarget === 'function') setViewerFavTarget(null);
   }
 
