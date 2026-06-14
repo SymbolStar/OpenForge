@@ -252,8 +252,8 @@ body.squad-collapsed #squad-rail { width: 48px; min-width: 48px; max-width: 48px
 
 /* ─── icon rail (leftmost, v0.6) ────────────────────────────── */
 #icon-rail {
-  flex: 0 0 72px;
-  width: 72px;
+  flex: 0 0 56px;
+  width: 56px;
   background: #1a1d24;
   color: #cfd2d8;
   display: flex;
