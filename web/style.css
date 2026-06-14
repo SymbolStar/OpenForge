@@ -280,6 +280,15 @@ body.squad-collapsed #squad-rail { width: 48px; min-width: 48px; max-width: 48px
   cursor: pointer;
   text-decoration: none;
   color: inherit;
+  outline: none;
+}
+.icon-rail-logo:hover,
+.icon-rail-logo:focus,
+.icon-rail-logo:focus-visible,
+.icon-rail-logo:active {
+  background: transparent;
+  outline: none;
+  box-shadow: none;
 }
 .icon-rail-logo img {
   width: 28px;
