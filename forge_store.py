@@ -273,6 +273,7 @@ def append_thread_event(thread_id: str, event: dict[str, Any]) -> dict[str, Any]
 # written event to all live subscribers of that thread. Bounded queue so
 # a stuck client cannot blow up server memory.
 import threading as _threading_sse  # local alias to avoid touching top imports
+from datetime import UTC
 from queue import Queue as _SseQueue
 
 _sse_subs_lock = _threading_sse.Lock()
@@ -1224,8 +1225,8 @@ def summarize_thread(thread_id: str) -> dict | None:
     # presence avatar sticks forever (scott observed dora pinned to a 7-day-
     # old thread). Front-end STALE_MS=5min only greys the ring; we need a
     # server-side cull so the slot disappears.
-    from datetime import datetime, timezone
-    now_dt = datetime.now(timezone.utc)
+    from datetime import datetime
+    now_dt = datetime.now(UTC)
     ACTIVE_CHIP_HARD_CUTOFF_SEC = 30 * 60  # 30 min
 
     def _is_chip_stale(ts_val) -> bool:
@@ -1234,11 +1235,11 @@ def summarize_thread(thread_id: str) -> dict | None:
         try:
             if isinstance(ts_val, (int, float)):
                 ts_sec = ts_val / 1000.0 if ts_val > 1e12 else float(ts_val)
-                chip_dt = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+                chip_dt = datetime.fromtimestamp(ts_sec, tz=UTC)
             else:
                 chip_dt = datetime.fromisoformat(str(ts_val))
                 if chip_dt.tzinfo is None:
-                    chip_dt = chip_dt.replace(tzinfo=timezone.utc)
+                    chip_dt = chip_dt.replace(tzinfo=UTC)
             return (now_dt - chip_dt).total_seconds() > ACTIVE_CHIP_HARD_CUTOFF_SEC
         except (ValueError, TypeError, OSError):
             return False
