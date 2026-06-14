@@ -33,6 +33,7 @@ const els = {
   detailParticipants: document.getElementById('detail-participants'),
   btnCloseThread: document.getElementById('btn-close-thread'),
   btnRefreshDetail: document.getElementById('btn-refresh-detail'),
+  btnPopoutThread: document.getElementById('btn-popout-thread'),
   postList: document.getElementById('post-list'),
   pinnedArea: document.getElementById('pinned-area'),
   postComposerInput: document.getElementById('post-composer-input'),
@@ -90,6 +91,37 @@ const state = {
 // soft-sync currentSquadId when a cross-squad thread is selected (alice's
 // edge case: detail-shown thread should also be selected in Threads view).
 window.state = state;
+
+// feat/thread-popout-page: 同浏览器多 tab 状态同步
+// 主面板 tab 跟 popout tab 可能在看同一个 thread。SSE 会双边都推，
+// 但本地发 post / close 之后再用 BC 立即 ping 其他 tab refetch，
+// 避免用户感到「两边状态不一致」。仅同浏览器同 origin 生效；
+// 其他 tab 的 SSE 会在几百 ms 内补上。
+const FORGE_BC_NAME = 'openforge-thread-sync';
+let forgeBC = null;
+try {
+  if (typeof BroadcastChannel !== 'undefined') {
+    forgeBC = new BroadcastChannel(FORGE_BC_NAME);
+    forgeBC.onmessage = (ev) => {
+      const msg = ev?.data;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.type === 'thread-changed') {
+        if (msg.threadId && msg.threadId === state.currentThreadId) {
+          // 比 SSE 赶一步拉最新 thread。
+          refreshCurrentThread();
+        }
+      }
+    };
+  }
+} catch (_) {
+  forgeBC = null;
+}
+function broadcastThreadChange(threadId) {
+  if (!forgeBC || !threadId) return;
+  try {
+    forgeBC.postMessage({ type: 'thread-changed', threadId, ts: Date.now() });
+  } catch (_) { /* ignore */ }
+}
 
 const MENTION_RE = /@([\w\-\u4e00-\u9fff]+)/g;
 const AGENT_COLOR_CLASS = new Map(AGENTS.map(a => [a, `av-${a}`]));
@@ -666,6 +698,14 @@ function totalUnread() {
 }
 function updateUnreadTitle() {
   const n = totalUnread();
+  // feat/thread-popout-page: popout tab 对应独立 thread，用 thread 标题起 page title。
+  if (document.body.classList.contains('is-popout')) {
+    const t = state.currentThread;
+    const subj = (t?.title || t?.preview || 'Thread').toString().slice(0, 60).trim() || 'Thread';
+    document.title = `${subj} · ${BASE_TITLE}`;
+    maybeNotifyNewUnread();
+    return;
+  }
   document.title = n > 0 ? `(${n}) ${BASE_TITLE}` : BASE_TITLE;
   maybeNotifyNewUnread();
 }
@@ -1148,13 +1188,28 @@ function renderDetail({ keepScroll = false } = {}) {
     els.btnCloseThread.disabled = true;
     els.postComposerInput.disabled = true;
     els.btnSendPost.disabled = true;
+    if (els.btnPopoutThread) els.btnPopoutThread.disabled = true;
     els.postList.innerHTML = '<div class="empty">从中栏选择一个 thread，或在中栏底部输入开始一个新 thread。</div>';
     return;
   }
   els.detailTitle.textContent = t.title || t.preview || '(empty)';
   const startedRel = formatRelative(t.started_at);
+  // feat/thread-popout-page: 独立页中没 squad-rail 给上下文，把 squad
+  // 名字加到 sub 里（主面板也算收益，thread header 本来就应该
+  // 告诉你这是哪个讨论组的 thread）。
+  let squadPrefix = '';
+  try {
+    const sid = t.squad_id;
+    if (sid) {
+      const s = state.squads.find(x => x.id === sid);
+      if (s) {
+        const emoji = s.emoji ? s.emoji + ' ' : '';
+        squadPrefix = `${emoji}${s.name || s.id} · `;
+      }
+    }
+  } catch (_) {}
   els.detailSub.textContent =
-    `${t.created_by} started · ${startedRel} · ${t.post_count} posts`;
+    `${squadPrefix}${t.created_by} started · ${startedRel} · ${t.post_count} posts`;
   els.detailStatus.textContent = t.in_progress ? 'open' : 'closed';
   els.detailStatus.className = 'status-chip ' + (t.in_progress ? 'chip-open' : 'chip-closed');
   renderParticipants(t.participants);
@@ -1163,6 +1218,7 @@ function renderDetail({ keepScroll = false } = {}) {
   els.btnCloseThread.textContent = t.in_progress ? 'Close' : 'Closed';
   els.postComposerInput.disabled = !t.in_progress;
   els.btnSendPost.disabled = !t.in_progress;
+  if (els.btnPopoutThread) els.btnPopoutThread.disabled = false;
 
   const prevScroll = els.postList.scrollTop;
   const wasNearBottom = els.postList.scrollHeight - prevScroll - els.postList.clientHeight < 80;
@@ -1989,6 +2045,8 @@ async function submitPost() {
     refreshThreadsForCurrentSquad();  // update preview/last_post_at
     // v0.5+: if Activity view is showing, optimistically refresh its rows.
     try { window.__forgeActivityNudge && window.__forgeActivityNudge(); } catch (_) {}
+    // feat/thread-popout-page: notify same-origin tabs (popout / main)
+    broadcastThreadChange(state.currentThreadId);
   } catch (err) {
     setStatus(`发送失败: ${err.message}`, false);
   } finally {
@@ -2014,6 +2072,8 @@ async function closeCurrentThread() {
     );
     renderDetail();
     refreshThreadsForCurrentSquad();
+    // feat/thread-popout-page: same-origin sync
+    broadcastThreadChange(state.currentThreadId);
   } catch (err) {
     setStatus(`关闭失败: ${err.message}`, false);
   }
@@ -2640,6 +2700,15 @@ els.btnSendPost.onclick = submitPost;
 els.btnCloseThread.onclick = closeCurrentThread;
 els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
 els.btnRefreshDetail.onclick = refreshCurrentThread;
+if (els.btnPopoutThread) {
+  els.btnPopoutThread.addEventListener('click', () => {
+    const tid = state.currentThreadId;
+    if (!tid) return;
+    const url = `${location.pathname}#/thread/${encodeURIComponent(tid)}`;
+    // 独立 tab 打开；noopener 避免子窗反向率取进程。
+    window.open(url, '_blank', 'noopener');
+  });
+}
 
 const toggleArchivedBtn = document.getElementById('toggle-archived');
 if (toggleArchivedBtn) {
@@ -2889,6 +2958,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         const [sid, tid] = m.split(':', 2);
         if (sid) selectSquad(sid).then(() => tid && selectThread(tid));
       }
+    } catch (_) {}
+    // feat/thread-popout-page: 页面初加载时如果 hash 是 #/thread/<tid>，
+    // routeFromHash 会走独立页分支。hashchange 只在后续变动时 fire，
+    // 这里补上初次调用。
+    try {
+      if (typeof window.__forgeRouteFromHash === 'function') window.__forgeRouteFromHash();
     } catch (_) {}
   });
 });
@@ -3464,6 +3539,24 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 
   function routeFromHash() {
     const h = location.hash || '';
+    // feat/thread-popout-page: #/thread/<tid> 路由 — 独立页模式
+    {
+      const m = h.match(/^#\/thread\/(th_[A-Za-z0-9_]+)(?:\?.*)?$/);
+      if (m) {
+        document.body.classList.add('is-popout');
+        setActive('home');
+        const tid = decodeURIComponent(m[1]);
+        if (typeof selectThread === 'function' && state.currentThreadId !== tid) {
+          // squads 加载完后 boot 也会调本函数一次，安全。
+          selectThread(tid).catch(() => {});
+        }
+        return;
+      }
+    }
+    // 从 popout hash 用户手动跳出时，清掉 class。
+    if (document.body.classList.contains('is-popout')) {
+      document.body.classList.remove('is-popout');
+    }
     if (h.startsWith('#/activity')) {
       setActive('activity');
       const m = h.match(/^#\/activity\/(th_[A-Za-z0-9_]+)$/);
