@@ -4474,6 +4474,8 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   let scale = 1;
   let dragging = false;
   let dragStart = null;
+  let didDrag = false;
+  let suppressNextClick = false;
 
   function setCropState(state) {
     if (dropzone) dropzone.dataset.state = state;
@@ -4608,7 +4610,12 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     }
   }
 
-  dropzone?.addEventListener('click', () => input?.click());
+  dropzone?.addEventListener('click', () => {
+    // judy 2026-06-14 bugfix: 拖动裁剪头像时 pointerup 触发的 click 会冒泡到
+    // dropzone，错误地弹出文件选择。只在“真·单点”时才打开文件选择器。
+    if (suppressNextClick) { suppressNextClick = false; return; }
+    input?.click();
+  });
   dropzone?.addEventListener('dragover', e => { e.preventDefault(); setCropState('dragging'); });
   dropzone?.addEventListener('dragleave', () => setCropState('default'));
   dropzone?.addEventListener('drop', e => {
@@ -4625,22 +4632,29 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   canvas?.addEventListener('pointerdown', e => {
     if (!img) return;
     dragging = true;
+    didDrag = false;
     dragStart = { x: e.clientX, y: e.clientY, pos: { ...pos } };
     canvas.setPointerCapture(e.pointerId);
     setCropState('dragging');
   });
   canvas?.addEventListener('pointermove', e => {
     if (!dragging || !dragStart) return;
-    pos.x = dragStart.pos.x + (e.clientX - dragStart.x);
-    pos.y = dragStart.pos.y + (e.clientY - dragStart.y);
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (!didDrag && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) didDrag = true;
+    pos.x = dragStart.pos.x + dx;
+    pos.y = dragStart.pos.y + dy;
     drawImage();
   });
   canvas?.addEventListener('pointerup', e => {
     dragging = false;
     dragStart = null;
+    if (didDrag) suppressNextClick = true;
     try { canvas.releasePointerCapture(e.pointerId); } catch {}
     setCropState('default');
   });
+  // 已经载入图片后，canvas 上的单击也不应该再打开 file picker（避免覆盖到 dropzone 的 click）。
+  canvas?.addEventListener('click', e => { if (img) e.stopPropagation(); });
   btnSave?.addEventListener('click', save);
   btnReset?.addEventListener('click', openConfirm);
   btnCancel?.addEventListener('click', close);
