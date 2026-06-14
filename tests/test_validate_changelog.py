@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 # Pull the function under test from the script. The script is not a package,
 # so we exec it once into a namespace for direct access.
 import pathlib
 import runpy
+
+import pytest
 
 _NS = runpy.run_path(
     str(pathlib.Path(__file__).resolve().parent.parent / "scripts" / "validate_changelog.py"),
