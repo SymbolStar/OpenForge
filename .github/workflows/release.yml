@@ -1,20 +1,32 @@
 name: release
 
-# Auto-tag the green main with a date-based version, then cut a GitHub
-# Release with auto-generated notes. Only runs after CI on main passes.
+# Tag and release flow:
+# - Nightly: workflow_run on green ci → date-based tag (vYYYY.MM.DD[-sha]),
+#   GitHub auto-generated notes only. No changelog gate, no tarball asset.
+# - Stable: manual semver tag push (vX.Y.Z) → changelog gate runs against
+#   CHANGELOG.md, then we build the `openforge-<tag>.tar.gz` asset (+ sha256)
+#   used by the npm @symbolstar/openforge installer.
+#
+# Stable gate enforces SPEC §9.1: no user-facing changelog → no release.
 
 on:
   workflow_run:
     workflows: [ci]
     types: [completed]
     branches: [main]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'   # stable semver tags
 
 permissions:
-  contents: write   # need to push tag + create release
+  contents: write
 
 jobs:
-  tag-and-release:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+  # ───────────────────────────────────────────────────────────────────────
+  # Nightly: existing date-based auto-tag flow (preserved verbatim).
+  # ───────────────────────────────────────────────────────────────────────
+  nightly:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +39,6 @@ jobs:
         run: |
           MSG=$(git log -1 --format=%s)
           echo "commit message: $MSG"
-          # Skip pure doc / chore / test commits — they don't move user-visible behavior.
           if echo "$MSG" | grep -qiE '^(docs|chore|test|ci)(\(|:)'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "→ skipping release for $MSG"
@@ -41,7 +52,6 @@ jobs:
         run: |
           SHORT=$(git rev-parse --short HEAD)
           STAMP=$(date -u +%Y.%m.%d)
-          # If a tag for today already exists, append the short sha to avoid clash.
           BASE="v${STAMP}"
           if git rev-parse "$BASE" >/dev/null 2>&1; then
             TAG="${BASE}-${SHORT}"
@@ -59,7 +69,7 @@ jobs:
           git tag -a "${{ steps.tag.outputs.tag }}" -m "Auto-release ${{ steps.tag.outputs.tag }}"
           git push origin "${{ steps.tag.outputs.tag }}"
 
-      - name: Create GitHub release
+      - name: Create GitHub release (prerelease)
         if: steps.gate.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,4 +77,58 @@ jobs:
           gh release create "${{ steps.tag.outputs.tag }}" \
             --target "${{ github.event.workflow_run.head_sha }}" \
             --title "${{ steps.tag.outputs.tag }}" \
+            --prerelease \
             --generate-notes
+
+  # ───────────────────────────────────────────────────────────────────────
+  # Stable: triggered by manually pushing a vX.Y.Z tag.
+  # 1. changelog gate (SPEC §9.1)
+  # 2. build openforge-<tag>.tar.gz asset + sha256
+  # 3. publish GitHub release marked as latest
+  # 4. (future #F) npm publish ./cli with version injected from tag
+  # ───────────────────────────────────────────────────────────────────────
+  stable:
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate CHANGELOG (gate)
+        run: |
+          python3 scripts/validate_changelog.py "${GITHUB_REF_NAME}"
+
+      - name: Build release tarball
+        id: tarball
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ARCHIVE="openforge-${TAG}.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="openforge-${TAG}/" \
+            -o "${ARCHIVE}" \
+            HEAD \
+            ':(exclude)tests' \
+            ':(exclude)memory' \
+            ':(exclude)__pycache__' \
+            ':(exclude).github' \
+            ':(exclude)design'
+          shasum -a 256 "${ARCHIVE}" | tee "${ARCHIVE}.sha256"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release (stable, latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --latest \
+            --generate-notes \
+            "${{ steps.tarball.outputs.archive }}" \
+            "${{ steps.tarball.outputs.archive }}.sha256"
