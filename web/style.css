@@ -3391,3 +3391,50 @@ body.is-popout #home-view {
 body.is-popout #thread-pane {
   border-left: 0;
 }
+
+/* ─── PWA standalone / window-controls-overlay (WCO) titlebar ───
+ * macOS / Windows installed PWAs reserve a chrome titlebar above the
+ * webview (traffic-light buttons / window controls). Without WCO opt-in,
+ * the OS keeps that region opaque and our app starts at y=titlebar-height
+ * — visually it looks like the squad rail / icon rail "leaves a gap" at
+ * the top (scott's report 06-14: the dark band above the toggle button).
+ *
+ * Our manifest already has `display_override: ["window-controls-overlay",
+ * "standalone"]`. Pair it with CSS so the rails and brand row paint into
+ * that titlebar region:
+ *   - In WCO mode, env(titlebar-area-*) is non-zero and we make the
+ *     `.brand` / `.icon-rail-logo` rows reserve titlebar-area-x as
+ *     left padding (so traffic-lights aren't covered) and become a
+ *     drag region (the toggle / logo buttons themselves stay no-drag).
+ *   - In iOS/iPadOS standalone, env(safe-area-inset-top) > 0 and the
+ *     same rows pad-top to clear the status bar.
+ * Both selectors are progressive: env() falls back to 0 / no-op on
+ * environments that don't expose them, so non-PWA browsers see no change.
+ */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body { padding-top: env(safe-area-inset-top, 0); }
+}
+@media (display-mode: window-controls-overlay) {
+  /* App can fully paint the title bar; reserve the OS-side overlay. */
+  #icon-rail,
+  #squad-rail {
+    padding-top: env(titlebar-area-y, 0);
+  }
+  /* The first row of each rail (logo / brand) becomes a draggable area
+     so the user can still drag the window from the title bar zone. */
+  .icon-rail-logo,
+  #squad-rail .brand {
+    -webkit-app-region: drag;
+            app-region: drag;
+  }
+  /* Buttons inside those rows must opt back out of drag, otherwise they
+     swallow clicks. */
+  .icon-rail-logo > *,
+  #squad-rail .brand > *,
+  #squad-rail .brand button {
+    -webkit-app-region: no-drag;
+            app-region: no-drag;
+  }
+  /* Reserve the left inset where the OS draws traffic-light controls. */
+  #icon-rail { padding-left: env(titlebar-area-x, 0); }
+}
