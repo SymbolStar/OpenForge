@@ -3213,21 +3213,22 @@ a.mini-avatar.avatar-link:focus-visible {
 .notify-toggle input[type="checkbox"] { margin: 0; }
 .notify-status { color: var(--text-mute); font-size: 12px; }
 
-/* ─── theme toggle (icon-rail bottom) ───────────────────────────
+/* ─── theme toggle (Settings modal) ───────────────────────────
    Three-state: ☀ light / 🌙 dark / 💻 system. Persisted via
    localStorage.openforge.theme; bootstrap script in index.html
-   sets <html data-theme> before first paint. */
-.icon-rail-bottom {
-  margin-top: auto;
-  padding: 6px 0 4px;
-  border-top: 1px solid rgba(255,255,255,0.06);
+   sets <html data-theme> before first paint.
+   Moved from icon-rail bottom → Settings 主题 fieldset (用户反馈：不常用). */
+.settings-theme-row {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .theme-toggle {
   display: inline-flex;
   gap: 2px;
-  background: rgba(255,255,255,0.04);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 2px;
 }
@@ -3236,21 +3237,21 @@ a.mini-avatar.avatar-link:focus-visible {
   -webkit-appearance: none;
   background: transparent;
   border: 0;
-  color: #cfd2d8;
-  width: 22px;
-  height: 22px;
+  color: var(--text-mute);
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0.7;
   position: relative;
   transition: background 0.12s ease, opacity 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
 }
-.theme-toggle-btn:hover { opacity: 1; background: rgba(255,255,255,0.10); }
+.theme-toggle-btn:hover { opacity: 1; background: var(--surface-hover); }
 /* Strong active state: blue pill + full opacity + subtle inner glow, easily distinguishable from inactive. */
 .theme-toggle-btn.is-active {
   background: #3B82F6;
