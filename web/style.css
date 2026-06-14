@@ -3453,3 +3453,17 @@ body.is-popout #thread-pane {
   /* Reserve the left inset where the OS draws traffic-light controls. */
   #icon-rail { padding-left: env(titlebar-area-x, 0); }
 }
+
+/* feat/file-popout-page: file 独立页 — 跟 thread popout 同魂。
+   #/file/<refId> 路由 → body.is-popout + files-view 激活。
+   隐藏 files-rail 和 popout 按钮本身，files-pane 占满屏。 */
+body.is-popout #files-rail,
+body.is-popout #btn-popout-file {
+  display: none !important;
+}
+body.is-popout #files-view {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.is-popout #files-pane {
+  border-left: 0;
+}
