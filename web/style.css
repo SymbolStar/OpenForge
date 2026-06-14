@@ -1318,8 +1318,23 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   scrollbar-width: none;
 }
 #post-list::-webkit-scrollbar { display: none; }
+/* Show scrollbar when the user hovers the messages pane (Slack-style: bar
+   lives at the right edge, appears as soon as the pointer enters the pane,
+   hides again when it leaves). :focus-within keeps it visible for keyboard
+   users (a11y). */
+#post-list:hover,
 #post-list:focus-within { scrollbar-width: auto; }
+#post-list:hover::-webkit-scrollbar,
 #post-list:focus-within::-webkit-scrollbar { display: initial; }
+#post-list::-webkit-scrollbar { width: 10px; }
+#post-list::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.25);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+#post-list::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.45); background-clip: padding-box; border: 2px solid transparent; }
+#post-list::-webkit-scrollbar-track { background: transparent; }
 .empty {
   color: var(--text-soft);
   padding: 48px 12px;
