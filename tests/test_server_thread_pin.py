@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 
-from tests.test_server import _get, _post  # noqa: F401
 from tests.conftest import server  # noqa: F401
+from tests.test_server import _get, _post  # noqa: F401
 
 
 def _http(method, url, body=None):
