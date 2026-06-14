@@ -74,20 +74,20 @@ jobs:
           if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
             echo "PR head is a fork ($HEAD_REPO) — treating as external."
           else
-            # Bot accounts (e.g. dependabot[bot], github-actions[bot]) — allow.
+            # Same-repo PR: author must already have push access to have created
+            # the branch, so we can safely treat them as internal. (The previous
+            # `gh api orgs/{org}/members/{user}` check requires the token itself
+            # to be an org member, which GITHUB_TOKEN is not — it always returned
+            # 404 and falsely marked everyone external. See bot-review postmortem.)
             case "$AUTHOR" in
               dependabot\[bot\]|github-actions\[bot\]|copilot-pull-request-reviewer\[bot\]|coderabbitai\[bot\])
                 internal="true" ;;
               *)
-                status=$(gh api -i "orgs/${ORG}/members/${AUTHOR}" 2>/dev/null | head -1 | awk '{print $2}')
-                if [ "$status" = "204" ]; then
-                  internal="true"
-                fi
-                ;;
+                internal="true" ;;
             esac
           fi
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
-          echo "author=$AUTHOR internal=$internal"
+          echo "author=$AUTHOR internal=$internal head_repo=$HEAD_REPO base_repo=$BASE_REPO"
 
       - name: Run red-line checks
         id: checks
