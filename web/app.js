@@ -4109,8 +4109,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     const ref = state.currentRef;
     if (!ref || !state.dirty || !state.isMdRef) return;
     btnSave.disabled = true;
-    const origLabel = btnSave.textContent;
-    btnSave.textContent = '保存中…';
+    const origTitle = btnSave.title;
+    btnSave.title = '保存中…';
+    btnSave.setAttribute('aria-label', '保存中');
+    btnSave.classList.add('is-saving');
     editorEl.readOnly = true;
     const actor = 'scott';
     const threadId = state.currentThreadId || null;
@@ -4125,12 +4127,16 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     } catch (e) {
       editorEl.readOnly = false;
       btnSave.disabled = false;
-      btnSave.textContent = origLabel || '保存';
+      btnSave.title = origTitle || '保存';
+      btnSave.setAttribute('aria-label', '保存');
+      btnSave.classList.remove('is-saving');
       toast('网络错误，未保存（本地改动已保留）');
       return;
     }
     editorEl.readOnly = false;
-    btnSave.textContent = origLabel || '保存';
+    btnSave.title = origTitle || '保存';
+    btnSave.setAttribute('aria-label', '保存');
+    btnSave.classList.remove('is-saving');
     if (resp.status === 409) {
       const data = await resp.json().catch(() => ({}));
       const remote = data.current_etag || '?';
