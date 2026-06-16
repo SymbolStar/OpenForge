@@ -11,7 +11,6 @@ import pytest
 
 from migrations import runner
 
-
 REPO = Path(__file__).resolve().parent.parent
 
 
