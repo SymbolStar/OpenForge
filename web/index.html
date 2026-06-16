@@ -220,7 +220,13 @@
         <div class="files-toolbar-actions">
           <button id="btn-viewer-fav" type="button" class="btn-viewer-fav" hidden aria-pressed="false" aria-label="收藏此文件" title="收藏">☆</button>
           <button id="btn-toggle-edit" type="button" class="icon-btn" title="编辑" aria-label="编辑" aria-pressed="false" disabled>✎</button>
-          <button id="btn-save-file" type="button" class="ghost-btn primary-btn" hidden disabled>保存</button>
+          <button id="btn-save-file" type="button" class="ghost-btn icon-only-btn" title="保存" aria-label="保存" hidden disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path d="M5 3h11l3 3v15a0 0 0 0 1 0 0H5a0 0 0 0 1 0 0V3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M7 3v6h9V3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M7 21v-7h10v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
           <button id="btn-popout-file" type="button" class="ghost-btn icon-only-btn" title="在独立页打开 (新窗口)" aria-label="在独立页打开" disabled>
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
               <path d="M14 4h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
