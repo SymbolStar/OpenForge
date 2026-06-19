@@ -1583,12 +1583,12 @@ a.mini-avatar.avatar-link:focus-visible {
 /* scope to the direct send-button child only; nested buttons like
    .composer-preview-remove (× on attachment thumbs) must keep their
    own 14×14 styling and not inherit this 38px green pill. */
-/* Forge 发送按钮：透明底 + ember 描边（V2 1.5px），铁砧靠 ember 色填充、不靠实底填充 */
+/* Forge 发送按钮 v1.2 (方案 B 火苗)：火苗多色钉死在 SVG，按钮承载暖红底；
+   disabled 按 MEMORY 规矩用 mask + 单色填充把活火苗换成熄灭剪影，不靠 opacity 压渐变。 */
 #post-composer > button#btn-send-post {
-  border: 1.5px solid #FF6B35;
+  border: 0;
   border-radius: 10px;
-  background: transparent;
-  color: #FF6B35;              /* 铁砧剖面/立柱/底座 currentColor = ember */
+  background: #DC2626;
   width: 44px;
   height: 44px;
   padding: 0;
@@ -1596,23 +1596,29 @@ a.mini-avatar.avatar-link:focus-visible {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+  transition: background 0.12s ease, box-shadow 0.15s ease, transform 0.05s ease;
 }
 #post-composer > button#btn-send-post:hover:not([disabled]) {
-  background: rgba(255, 107, 53, 0.10);
-  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.28);  /* hover 借 V4 火烉余温 glow */
+  background: #B91C1C;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.22);
 }
-#post-composer > button#btn-send-post:active:not([disabled]) { transform: scale(0.96); }
+#post-composer > button#btn-send-post:active:not([disabled]) {
+  background: #991B1B;
+  transform: scale(0.96);
+}
 #post-composer > button#btn-send-post[disabled] {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--text-muted, #6b7280);
+  background: #E5E7EB;
   cursor: not-allowed;
-  opacity: 1;                  /* icon 不调透明度，靠 color 控灰度，避免砧形被抹平 */
+  opacity: 1;
 }
-#post-composer > button#btn-send-post[disabled] .send-icon__sparks,
-#post-composer > button#btn-send-post[disabled] .send-icon__ember {
-  display: none;               /* disabled 态隐藏彩色火星 / ember，只留灰色砧形 */
+#post-composer > button#btn-send-post[disabled] .send-icon { display: none; }
+#post-composer > button#btn-send-post[disabled]::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  -webkit-mask: url("/branding/icon-send-flame-sm.svg") center / contain no-repeat;
+          mask: url("/branding/icon-send-flame-sm.svg") center / contain no-repeat;
+  background: #9CA3AF;
 }
 #post-composer > button#btn-send-post .send-icon { display: block; }
 
