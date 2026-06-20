@@ -99,7 +99,7 @@ def collect(threads_dir, max_threads, days, agent_filter):
                             if err and ph == "failed":
                                 chips[pid]["error"] = err
 
-        for pid, c in chips.items():
+        for _pid, c in chips.items():
             ag = c.get("agent") or "?"
             if agent_filter and ag != agent_filter:
                 continue
@@ -158,21 +158,17 @@ def _pct(arr, q):
 
 def _fmt(ms):
     if ms >= 60_000:
-        return "{:.1f}m".format(ms / 60_000)
+        return f"{ms / 60_000:.1f}m"
     if ms >= 1000:
-        return "{:.1f}s".format(ms / 1000)
-    return "{:.0f}ms".format(ms)
+        return f"{ms / 1000:.1f}s"
+    return f"{ms:.0f}ms"
 
 
 def _row(name, arr):
     if not arr:
-        return "  {:50s} n=0".format(name)
-    return ("  {:50s} n={:4d}  med={:>8s}  p95={:>8s}  p99={:>8s}  max={:>8s}"
-            .format(name, len(arr),
-                    _fmt(st.median(arr)),
-                    _fmt(_pct(arr, 0.95)),
-                    _fmt(_pct(arr, 0.99)),
-                    _fmt(max(arr))))
+        return f"  {name:50s} n=0"
+    return (f"  {name:50s} n={len(arr):4d}  med={_fmt(st.median(arr)):>8s}  p95={_fmt(_pct(arr, 0.95)):>8s}  p99={_fmt(_pct(arr, 0.99)):>8s}  max={_fmt(max(arr)):>8s}"
+            )
 
 
 def render_text(d):
@@ -214,7 +210,7 @@ def render_text(d):
         lines.append("Recent failure tails (truncated):")
         for ag, errs in d["failures"].items():
             for e in errs[-2:]:
-                lines.append("  [{}] {}".format(ag, e))
+                lines.append(f"  [{ag}] {e}")
     return chr(10).join(lines)
 
 
@@ -261,12 +257,12 @@ def main():
     ap.add_argument("--agent", default=None, help="filter to a single agent id")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--threads-dir", default=str(THREADS_DIR),
-                    help="override threads dir (default {})".format(THREADS_DIR))
+                    help=f"override threads dir (default {THREADS_DIR})")
     args = ap.parse_args()
 
     td = Path(args.threads_dir).expanduser()
     if not td.exists():
-        print("threads dir not found: {}".format(td), file=sys.stderr)
+        print(f"threads dir not found: {td}", file=sys.stderr)
         sys.exit(2)
     d = collect(td, args.threads, args.days, args.agent)
     if args.json:
