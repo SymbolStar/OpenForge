@@ -20,6 +20,7 @@ Routes:
   GET    /api/threads/<id>                -> thread detail (posts)
   POST   /api/threads/<id>/posts          -> append post
                                               body: { content, speaker? }
+  PATCH  /api/threads/<id>                -> rename title { title }
   POST   /api/threads/<id>/close          -> mark closed
   POST   /api/threads/<id>/posts/<pid>/reactions  -> toggle {emoji, actor?}
 
@@ -1714,6 +1715,30 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                     })
             except forge_favorites.FavoriteValidationError as e:
                 self._json({"error": str(e)}, 400)
+            return
+        # v0.10: PATCH /api/threads/<id> — rename thread title.
+        # Body: { title: str }. Empty string allowed (clears explicit title).
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}$", url.path)
+        if m:
+            tid = m.group(1)
+            if store.project_thread(tid) is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            opts = self._read_json()
+            if opts is None:
+                return
+            if not isinstance(opts, dict):
+                self._json({"error": "body must be object"}, 400)
+                return
+            if "title" not in opts:
+                self._json({"error": "`title` field required"}, 400)
+                return
+            try:
+                store.set_thread_title(tid, opts["title"])
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            self._json(_serializable_thread(store.project_thread(tid)))
             return
         m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}$", url.path)
         if m:

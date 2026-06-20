@@ -2707,6 +2707,28 @@ attachComposerPreview(els.postComposerInput);
 attachComposerPreview(els.threadComposerInput);
 els.btnSendPost.onclick = submitPost;
 els.btnCloseThread.onclick = closeCurrentThread;
+// v0.10: double-click thread title to rename.
+els.detailTitle.addEventListener('dblclick', async () => {
+  const tid = state.currentThreadId;
+  if (!tid) return;
+  const current = state.currentThread?.title || els.detailTitle.textContent || '';
+  const next = window.prompt('重命名 thread（最多 80 字）：', current);
+  if (next === null) return;
+  const title = next.trim();
+  if (title === current.trim()) return;
+  try {
+    const updated = await apiJson(`/api/threads/${encodeURIComponent(tid)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    state.currentThread = updated;
+    els.detailTitle.textContent = updated.title || updated.preview || '(empty)';
+    refreshThreadsForCurrentSquad();
+  } catch (e) {
+    alert('重命名失败：' + (e?.message || e));
+  }
+});
 els.btnRefreshThreads.onclick = refreshThreadsForCurrentSquad;
 els.btnRefreshDetail.onclick = refreshCurrentThread;
 if (els.btnPopoutThread) {
