@@ -167,3 +167,83 @@ def test_server_create_thread_legacy_content_only(server):
     # title is auto-derived from first line
     assert th["title"]
     assert th["title"] in "legacy-style opening"
+
+
+# ─── rename (PATCH) ────────────────────────────────────────────────
+
+
+def _patch(url: str, body: dict) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
+        method="PATCH",
+    )
+    with urllib.request.urlopen(req, timeout=2) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def test_store_set_thread_title_renames(store):
+    store.create_squad({
+        "id": "rn1", "name": "rn1", "members": ["scott"], "chair": "scott",
+    })
+    t = store.create_thread("rn1", "scott", title="old name")
+    store.set_thread_title(t["thread_id"], "new name")
+    proj = store.project_thread(t["thread_id"])
+    assert proj["title"] == "new name"
+    # summarize / list also reflect new title
+    assert store.summarize_thread(t["thread_id"])["title"] == "new name"
+    assert store.list_threads_for_squad("rn1")[0]["title"] == "new name"
+
+
+def test_store_set_thread_title_length_validation(store):
+    store.create_squad({
+        "id": "rn2", "name": "rn2", "members": ["scott"], "chair": "scott",
+    })
+    t = store.create_thread("rn2", "scott", title="ok")
+    with pytest.raises(ValueError):
+        store.set_thread_title(t["thread_id"], "x" * 81)
+
+
+def test_server_patch_thread_title(server):
+    _post(f"{server}/api/squads", {
+        "id": "rnsv", "name": "rnsv", "members": ["scott"], "chair": "scott",
+    })
+    th = _post(f"{server}/api/squads/rnsv/threads", {
+        "title": "before", "created_by": "scott",
+    })
+    tid = th["thread_id"]
+    out = _patch(f"{server}/api/threads/{tid}", {"title": "after"})
+    assert out["title"] == "after"
+    # GET returns the new title
+    assert _get(f"{server}/api/threads/{tid}")["title"] == "after"
+
+
+def test_server_patch_thread_title_unknown_thread(server):
+    req = urllib.request.Request(
+        f"{server}/api/threads/th_does_not_exist",
+        data=json.dumps({"title": "x"}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
+        method="PATCH",
+    )
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        urllib.request.urlopen(req, timeout=2)
+    assert excinfo.value.code == 404
+
+
+def test_server_patch_thread_title_missing_field(server):
+    _post(f"{server}/api/squads", {
+        "id": "rnmf", "name": "rnmf", "members": ["scott"], "chair": "scott",
+    })
+    th = _post(f"{server}/api/squads/rnmf/threads", {
+        "title": "x", "created_by": "scott",
+    })
+    req = urllib.request.Request(
+        f"{server}/api/threads/{th['thread_id']}",
+        data=json.dumps({}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-OpenForge-UI": "1"},
+        method="PATCH",
+    )
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        urllib.request.urlopen(req, timeout=2)
+    assert excinfo.value.code == 400
