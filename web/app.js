@@ -1854,10 +1854,16 @@ function renderAgentStatusChip(post) {
   const sep = `<span class="asc-sep">·</span>`;
 
   if (phase === 'thinking') {
-    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">思考中…</span><span class="asc-spinner"></span>`;
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">思考中…</span><span class="asc-spinner"></span>` +
+      `<button type="button" class="asc-cancel" title="中断" aria-label="中断">✕</button>`;
+    chip.querySelector('.asc-cancel').onclick = (e) => { e.stopPropagation(); _chipCancel(pid, agent); };
   } else if (phase === 'running') {
     const tool = post.tool_name ? ` · ${escapeHtml(post.tool_name)}` : '';
-    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">执行中${tool}</span><span class="asc-dot"></span>`;
+    chip.innerHTML = `${avatar}${nameHtml}${sep}<span class="asc-phase">执行中${tool}</span><span class="asc-dot"></span>` +
+      `<button type="button" class="asc-cancel" title="中断" aria-label="中断">✕</button>`;
+    chip.querySelector('.asc-cancel').onclick = (e) => { e.stopPropagation(); _chipCancel(pid, agent); };
+  } else if (phase === 'cancelled') {
+    chip.innerHTML = `<span class="asc-avatar ${avClass}"${avStyleAttr}>${escapeHtml(avLetter)}</span><span class="asc-name">${escapeHtml(name)}</span>${sep}<span class="asc-phase">已中断</span><span class="asc-icon">⛔</span>`;
   } else if (phase === 'done') {
     const dur = post.duration_ms != null
       ? ` · ${(post.duration_ms / 1000).toFixed(1)}s` : '';
@@ -1924,6 +1930,38 @@ async function _chipSkip(pid) {
   } catch (err) {
     setStatus(`跳过失败: ${err.message}`, false);
   }
+}
+
+// Cancel a thinking/running chip. Optimistically flips it to 'cancelled'
+// immediately so the click feels crisp; the SSE/refresh path will reconcile
+// (the backend writes the same phase, so usually a no-op rerender). On
+// 409 already_completed, we revert and rely on the upcoming refresh to
+// show the real final phase.
+async function _chipCancel(pid, agentId) {
+  if (!state.currentThreadId || !pid) return;
+  // Optimistic UI: find the chip in the DOM and morph it to 'cancelled'
+  // so the user sees an instant reaction.
+  const chipEl = document.querySelector(`.agent-status-chip[data-post-id="${cssQuoteEscape(pid)}"]`);
+  if (chipEl) {
+    chipEl.dataset.phase = 'cancelled';
+    chipEl.classList.add('asc-cancelling');
+  }
+  try {
+    await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}/posts/${encodeURIComponent(pid)}/cancel`, {
+      method: 'POST', body: '{}',
+    });
+    refreshCurrentThread();
+  } catch (err) {
+    // Server says it's already in a terminal phase — rollback the optimistic
+    // morph by triggering a fresh fetch which will repaint the real state.
+    if (chipEl) chipEl.classList.remove('asc-cancelling');
+    setStatus(`中断失败: ${err.message}`, false);
+    refreshCurrentThread();
+  }
+}
+
+function cssQuoteEscape(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
 }
 
 // One-line preview of a post's content for use inside quote cards / banners.

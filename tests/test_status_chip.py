@@ -193,3 +193,97 @@ def test_from_chip_post_id_in_wire_payload(server):
         wire = json.loads(r.read().decode("utf-8"))
     reply = next(p for p in wire["posts"] if p["speaker"] == "milk")
     assert reply["from_chip_post_id"] == chip["post_id"]
+
+
+def test_cancel_endpoint_marks_chip_and_audits(store, monkeypatch):
+    """POST /posts/<chip>/cancel: chip flips to 'cancelled', router marks
+    the chip so a late reply is dropped, an audit __router__ post is added,
+    and a best-effort SIGTERM is sent to the bound subprocess group."""
+    import sys
+    sys.modules.pop("server", None)
+    import server as srv
+    import post_router
+
+    t = _make_thread(store)
+    chip = store.add_thread_post(
+        t["thread_id"], "__router__", "milk thinking",
+        post_type="status_chip", phase="thinking",
+        trigger_post_id=t["posts"][0]["id"], agent_id="milk",
+    )
+
+    sigterm_calls = []
+    monkeypatch.setattr(
+        "agent_runtime.cancel_chip_subprocess",
+        lambda pid: sigterm_calls.append(("native", pid)) or True,
+    )
+    monkeypatch.setattr(
+        "acp_runtime.cancel_acp_chip_subprocess",
+        lambda pid: sigterm_calls.append(("acp", pid)) or False,
+    )
+
+    handler = object.__new__(srv.OpenForgeHandler)
+    handler.path = f"/api/threads/{t['thread_id']}/posts/{chip['post_id']}/cancel"
+    handler.headers = {}
+    handler.rfile = io.BytesIO(b"{}")
+    out = {}
+    monkeypatch.setattr(handler, "_check_auth", lambda: True)
+    monkeypatch.setattr(handler, "_json", lambda obj, status=200, extra_headers=None: out.update(status=status, obj=obj))
+    handler.do_POST()
+
+    assert out["status"] == 200
+    assert out["obj"]["phase"] == "cancelled"
+    assert post_router.is_cancelled(chip["post_id"])
+    # Both cancel hooks invoked best-effort.
+    kinds = {k for k, _ in sigterm_calls}
+    assert kinds == {"native", "acp"}
+    # Audit post landed.
+    proj = store.project_thread(t["thread_id"])
+    audits = [p for p in proj["posts"]
+              if p.get("speaker") == "__router__"
+              and p.get("post_type") != "status_chip"
+              and "已被中断" in (p.get("content") or "")]
+    assert len(audits) == 1
+
+
+def test_cancel_endpoint_idempotent_on_already_cancelled(store, monkeypatch):
+    import sys
+    sys.modules.pop("server", None)
+    import server as srv
+    t = _make_thread(store)
+    chip = store.add_thread_post(
+        t["thread_id"], "__router__", "milk thinking",
+        post_type="status_chip", phase="cancelled",
+        trigger_post_id=t["posts"][0]["id"], agent_id="milk",
+    )
+    handler = object.__new__(srv.OpenForgeHandler)
+    handler.path = f"/api/threads/{t['thread_id']}/posts/{chip['post_id']}/cancel"
+    handler.headers = {}
+    handler.rfile = io.BytesIO(b"{}")
+    out = {}
+    monkeypatch.setattr(handler, "_check_auth", lambda: True)
+    monkeypatch.setattr(handler, "_json", lambda obj, status=200, extra_headers=None: out.update(status=status, obj=obj))
+    handler.do_POST()
+    assert out["status"] == 200
+    assert out["obj"]["phase"] == "cancelled"
+
+
+def test_cancel_endpoint_rejects_terminal_phase(store, monkeypatch):
+    import sys
+    sys.modules.pop("server", None)
+    import server as srv
+    t = _make_thread(store)
+    chip = store.add_thread_post(
+        t["thread_id"], "__router__", "milk thinking",
+        post_type="status_chip", phase="done",
+        trigger_post_id=t["posts"][0]["id"], agent_id="milk",
+    )
+    handler = object.__new__(srv.OpenForgeHandler)
+    handler.path = f"/api/threads/{t['thread_id']}/posts/{chip['post_id']}/cancel"
+    handler.headers = {}
+    handler.rfile = io.BytesIO(b"{}")
+    out = {}
+    monkeypatch.setattr(handler, "_check_auth", lambda: True)
+    monkeypatch.setattr(handler, "_json", lambda obj, status=200, extra_headers=None: out.update(status=status, obj=obj))
+    handler.do_POST()
+    assert out["status"] == 409
+    assert out["obj"]["error"] == "already_completed"

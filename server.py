@@ -98,7 +98,7 @@ SQUAD_ID_RE = re.compile(r"^[A-Za-z0-9][\w-]{0,31}$")
 SQUAD_ROUTE_RE = r"([\w-]{1,32})"
 THREAD_ROUTE_RE = r"(th_[0-9a-f]+_[0-9a-f]+)"
 POST_ID_ROUTE_RE = r"(p_[A-Za-z0-9_]+)"
-STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped"}
+STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped", "cancelled"}
 
 
 def _is_local(host: str) -> bool:
@@ -1313,6 +1313,83 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._json({"error": str(e)}, 400)
                 return
+            self._json(_serializable_post(updated))
+            return
+
+        m = re.match(rf"^/api/threads/{THREAD_ROUTE_RE}/posts/{POST_ID_ROUTE_RE}/cancel$", url.path)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            thread = store.project_thread(tid)
+            if thread is None:
+                self._json({"error": "unknown thread"}, 404)
+                return
+            post = (thread.get("posts_by_id") or {}).get(pid)
+            if post is None:
+                self._json({"error": "unknown post"}, 404)
+                return
+            if post.get("post_type") != "status_chip":
+                self._json({"error": "post must be status_chip"}, 400)
+                return
+            current_phase = post.get("phase")
+            # Idempotent: already cancelled is a no-op success; terminal
+            # phases (done/failed/skipped/cancelled) cannot be cancelled.
+            if current_phase == "cancelled":
+                self._json(_serializable_post(post))
+                return
+            if current_phase in ("done", "failed", "skipped"):
+                self._json({
+                    "error": "already_completed",
+                    "phase": current_phase,
+                }, 409)
+                return
+            # 1) Mark the chip as cancelled so the worker discards any
+            #    reply the subprocess may still emit.
+            post_router.mark_cancelled(pid)
+            # 2) Best-effort SIGTERM the subprocess group so the worker
+            #    returns fast. Either side independently lands the
+            #    cancellation; router-side suppression is the guarantee.
+            try:
+                from agent_runtime import cancel_chip_subprocess
+                cancel_chip_subprocess(pid)
+            except Exception:
+                pass
+            try:
+                from acp_runtime import cancel_acp_chip_subprocess
+                cancel_acp_chip_subprocess(pid)
+            except Exception:
+                pass
+            # 3) Patch chip phase to 'cancelled' immediately. The worker,
+            #    when it returns, will see is_cancelled() and noop on
+            #    chip patching/reply writing.
+            try:
+                updated = store.patch_post(tid, pid, {
+                    "phase": "cancelled",
+                    "error": None,
+                })
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+                return
+            # 4) Audit post so anyone reading the thread later understands
+            #    why no reply appeared.
+            try:
+                agent_id = post.get("agent_id")
+                if not agent_id:
+                    import re as _re
+                    mm = _re.match(r"^([a-z][a-z0-9_-]*)\s+thinking$",
+                                   (post.get("content") or "").strip(),
+                                   _re.IGNORECASE)
+                    if mm:
+                        agent_id = mm.group(1)
+                trigger_pid = post.get("trigger_post_id") or post.get("parent_post_id")
+                display = agent_id or "agent"
+                store.add_thread_post(
+                    tid, post_router.ROUTER_SPEAKER_FALLBACK,
+                    f"⛔ {display} 的本轮回复已被中断。",
+                    parent_post_id=trigger_pid,
+                )
+            except Exception as e:
+                print(f"⚠️  cancel audit-post failed: {e!r}", flush=True)
             self._json(_serializable_post(updated))
             return
 

@@ -177,6 +177,43 @@ import threading as _threading  # noqa: E402
 _active_procs: dict[int, subprocess.Popen] = {}
 _active_procs_lock = _threading.Lock()
 
+# Map chip_post_id → pgid for in-flight agent turns. Lets the cancel
+# endpoint (POST /api/.../posts/<chip_id>/cancel) SIGTERM the specific
+# subprocess group when a user clicks ✖ on a thinking/running chip.
+_chip_to_pgid: dict[str, int] = {}
+_chip_to_pgid_lock = _threading.Lock()
+
+
+def _bind_chip(chip_post_id: str, pgid: int) -> None:
+    if not chip_post_id:
+        return
+    with _chip_to_pgid_lock:
+        _chip_to_pgid[chip_post_id] = pgid
+
+
+def _unbind_chip(chip_post_id: str) -> None:
+    if not chip_post_id:
+        return
+    with _chip_to_pgid_lock:
+        _chip_to_pgid.pop(chip_post_id, None)
+
+
+def cancel_chip_subprocess(chip_post_id: str) -> bool:
+    """SIGTERM the subprocess group bound to ``chip_post_id`` if any.
+
+    Returns True iff a live process group was signalled. The worker thread
+    itself owns lifecycle cleanup (unregister + chip patching) — we only
+    nudge the subprocess so the worker's ``communicate()`` returns fast and
+    the cancellation can be observed by the router (which then drops the
+    reply). Idempotent: missing/already-gone groups are silent.
+    """
+    with _chip_to_pgid_lock:
+        pgid = _chip_to_pgid.get(chip_post_id)
+    if pgid is None:
+        return False
+    _killpg_safe(pgid, signal.SIGTERM)
+    return True
+
 
 def _register_active(pgid: int, proc: subprocess.Popen) -> None:
     with _active_procs_lock:
@@ -271,7 +308,7 @@ def _killpg_safe(pgid: int, sig: int) -> None:
         pass
 
 
-def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str, str] | None = None) -> str:
+def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str, str] | None = None, chip_post_id: str | None = None) -> str:
     """Invoke `openclaw agent --local --json`. Raises AgentError on failure.
 
     --local keeps the run fully sandboxed in a subprocess so
@@ -298,7 +335,7 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
     from forge_employees import acp_employee_ids
     if agent_id in acp_employee_ids():
         from acp_runtime import call_acp_agent
-        return call_acp_agent(agent_id, session_id, prompt, extra_env)
+        return call_acp_agent(agent_id, session_id, prompt, extra_env, chip_post_id=chip_post_id)
 
     argv = [
         OPENCLAW_BIN, "agent",
@@ -327,10 +364,13 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
 
     pgid = proc.pid  # equals process group id thanks to start_new_session
     _register_active(pgid, proc)
+    if chip_post_id:
+        _bind_chip(chip_post_id, pgid)
     try:
         stdout, stderr = proc.communicate(timeout=AGENT_TIMEOUT + 30)
     except subprocess.TimeoutExpired:
         _unregister_active(pgid)
+        _unbind_chip(chip_post_id or "")
         _killpg_safe(pgid, signal.SIGTERM)
         try:
             proc.wait(timeout=_GROUP_KILL_GRACE_SECONDS)
@@ -352,6 +392,7 @@ def call_agent(agent_id: str, session_id: str, prompt: str, extra_env: dict[str,
         ) from None
 
     _unregister_active(pgid)
+    _unbind_chip(chip_post_id or "")
     if proc.returncode != 0:
         tail = (stderr or stdout or "").strip().splitlines()[-3:]
         raise AgentError(

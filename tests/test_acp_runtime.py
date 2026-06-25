@@ -5,16 +5,46 @@ import subprocess
 import pytest
 
 
+class _FakePopen:
+    """Drop-in replacement for subprocess.Popen used by acp_runtime tests.
+
+    The real implementation runs in its own process group so the cancel
+    endpoint (PR feature/interrupt-dispatch) can SIGTERM it. We only need
+    to fake `communicate()` + `returncode` + `pid` here.
+    """
+
+    def __init__(self, argv, cwd=None, env=None, stdout=None, stderr=None,
+                 text=False, start_new_session=False, _result=None, _raise=None):
+        self.argv = argv
+        self.cwd = cwd
+        self.env = env
+        self.text = text
+        self._result = _result or ("", "", 0)
+        self._raise = _raise
+        self.pid = 999_999
+        self.returncode = 0
+
+    def communicate(self, timeout=None):
+        if self._raise:
+            raise self._raise
+        out, err, rc = self._result
+        self.returncode = rc
+        return out, err
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
 def test_call_acp_agent_success(monkeypatch):
     import acp_runtime
 
     calls = []
 
-    def fake_run(argv, cwd, env, capture_output, text, timeout):
-        calls.append((argv, cwd, env, capture_output, text, timeout))
-        return subprocess.CompletedProcess(argv, 0, stdout=" reply \n", stderr="")
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return _FakePopen(argv, _result=(" reply \n", "", 0), **{k: v for k, v in kwargs.items() if k in ("cwd", "env", "text", "start_new_session")}, stdout=kwargs.get("stdout"), stderr=kwargs.get("stderr"))
 
-    monkeypatch.setattr(acp_runtime.subprocess, "run", fake_run)
+    monkeypatch.setattr(acp_runtime.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(acp_runtime, "ACP_AGENT_TIMEOUT", 9)
 
     out = acp_runtime.call_acp_agent(
@@ -22,27 +52,29 @@ def test_call_acp_agent_success(monkeypatch):
     )
 
     assert out == "reply"
-    assert calls[0][0] == [
+    argv, kwargs = calls[0]
+    assert argv == [
         "codex", "exec",
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
         "do it",
     ]
-    assert calls[0][1] == "/tmp/project"
-    assert calls[0][2]["OPENFORGE_PROJECT_DIR"] == "/tmp/project"
-    assert calls[0][3] is True
-    assert calls[0][4] is True
-    assert calls[0][5] == 9
+    assert kwargs["cwd"] == "/tmp/project"
+    assert kwargs["env"]["OPENFORGE_PROJECT_DIR"] == "/tmp/project"
+    assert kwargs["text"] is True
+    assert kwargs["start_new_session"] is True
 
 
 def test_call_acp_agent_timeout(monkeypatch):
     import acp_runtime
     from agent_runtime import AgentError
 
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(args[0], timeout=1)
+    def fake_popen(argv, **kwargs):
+        return _FakePopen(argv, _raise=subprocess.TimeoutExpired(argv[0], timeout=1))
 
-    monkeypatch.setattr(acp_runtime.subprocess, "run", fake_run)
+    monkeypatch.setattr(acp_runtime.subprocess, "Popen", fake_popen)
+    # Avoid SIGTERM on bogus pid.
+    monkeypatch.setattr(acp_runtime, "_killpg_safe", lambda pgid, sig: None)
     monkeypatch.setattr(acp_runtime, "ACP_AGENT_TIMEOUT", 1)
 
     with pytest.raises(AgentError, match="timeout after 1s"):
@@ -53,10 +85,10 @@ def test_call_acp_agent_failure(monkeypatch):
     import acp_runtime
     from agent_runtime import AgentError
 
-    def fake_run(argv, **kwargs):
-        return subprocess.CompletedProcess(argv, 7, stdout="", stderr="bad\nfailed")
+    def fake_popen(argv, **kwargs):
+        return _FakePopen(argv, _result=("", "bad\nfailed", 7))
 
-    monkeypatch.setattr(acp_runtime.subprocess, "run", fake_run)
+    monkeypatch.setattr(acp_runtime.subprocess, "Popen", fake_popen)
 
     with pytest.raises(AgentError, match=r"exited 7: bad \| failed"):
         acp_runtime.call_acp_agent("claude", "sid", "hi")
