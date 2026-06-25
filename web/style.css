@@ -52,6 +52,7 @@
   --warn-soft: #FBF1DC;
   --danger: #D04A4A;
   --danger-soft: #FAE3E3;
+  --danger-soft-strong: rgba(208, 74, 74, 0.16);
   --info: #3B82F6;
   --info-soft: #EFF6FF;
   --closed: #8D8D8D;
@@ -116,6 +117,7 @@
     --warn-soft: #3A2C0F;
     --danger: #F87171;
     --danger-soft: #3A1818;
+    --danger-soft-strong: rgba(248, 113, 113, 0.22);
     --info: #60A5FA;
     --info-soft: #1E2A3F;
     --closed: #6E7682;
@@ -173,6 +175,7 @@
   --warn-soft: #3A2C0F;
   --danger: #F87171;
   --danger-soft: #3A1818;
+  --danger-soft-strong: rgba(248, 113, 113, 0.22);
   --info: #60A5FA;
   --info-soft: #1E2A3F;
   --closed: #6E7682;
@@ -1324,7 +1327,7 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
 }
 .agent-status-chip:hover .asc-cancel { opacity: 1; }
 .agent-status-chip .asc-cancel:hover {
-  opacity: 1; color: var(--danger); background: var(--danger-soft);
+  opacity: 1; color: var(--danger); background: var(--danger-soft-strong);
 }
 .agent-status-chip .asc-cancel:focus-visible {
   outline: 2px solid var(--danger);
@@ -1346,7 +1349,26 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
 .agent-status-chip[data-phase="cancelled"] .asc-name { font-weight: 400; color: var(--text-soft); }
 .agent-status-chip[data-phase="cancelled"] .asc-phase { color: var(--text-soft); }
 .agent-status-chip[data-phase="cancelled"] .asc-icon { color: var(--text-soft); }
-.agent-status-chip.asc-cancelling .asc-phase { text-decoration: line-through; opacity: .7; transition: opacity .4s; }
+.agent-status-chip.asc-cancelling .asc-phase {
+  /* During the half-second optimistic transition we pull the phase
+     text up to full --text contrast (out of --text-soft) and thicken
+     the strike-through so the "click was registered" feedback is
+     unmistakable in dark mode (designer 2026-06-25 verdict: the soft
+     strike on soft text in dark was "barely visible" and killed the
+     0ms perceived latency win). After the 0.5s fade it eases back to
+     soft so the cancelled pill rests at low-key gravity. */
+  color: var(--text);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  opacity: 1;
+  transition: color .5s ease .4s, opacity .5s ease .4s;
+  animation: ascCancelFade .9s ease forwards;
+}
+@keyframes ascCancelFade {
+  0% { color: var(--text); opacity: 1; }
+  60% { color: var(--text); opacity: 1; }
+  100% { color: var(--text-soft); opacity: .8; }
+}
 
 @keyframes ascSpin { to { transform: rotate(360deg); } }
 @keyframes ascPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
