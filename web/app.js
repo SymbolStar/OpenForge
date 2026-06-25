@@ -84,6 +84,7 @@ const state = {
   pollTimer: null,
   threadEventSource: null,  // EventSource for the currently-open thread
   threadEventThreadId: null,
+  threadEventHealthy: false,  // true once SSE has delivered hello/event; gates poll fallback
   settings: loadSettings(),
   replyTo: null,  // { post_id, speaker, content } when composing a reply
 };
@@ -1147,15 +1148,22 @@ function openThreadEventStream(threadId) {
     const es = new EventSource(url);
     state.threadEventSource = es;
     state.threadEventThreadId = threadId;
+    state.threadEventHealthy = false;
     es.onmessage = () => {
       // any new event → refetch projection (cheap; reads jsonl).
+      // refreshCurrentThread short-circuits via thread sig when nothing
+      // visible changed, so this is safe even when SSE fires bursts.
+      state.threadEventHealthy = true;
       if (state.currentThreadId === threadId) refreshCurrentThread();
       if (state.currentSquadId) refreshThreadsForCurrentSquad();
     };
-    es.addEventListener('hello', () => { /* connected */ });
+    es.addEventListener('hello', () => {
+      state.threadEventHealthy = true;
+    });
     es.onerror = () => {
-      // EventSource auto-reconnects; if it permanently closes the
-      // 8s poll fallback will keep things working.
+      // EventSource auto-reconnects; the poll fallback below keeps the
+      // current thread in sync while we're disconnected.
+      state.threadEventHealthy = false;
     };
   } catch {
     /* ignore — poll fallback still runs */
@@ -1168,22 +1176,121 @@ function closeThreadEventStream() {
   }
   state.threadEventSource = null;
   state.threadEventThreadId = null;
+  state.threadEventHealthy = false;
 }
 
 async function refreshCurrentThread() {
   if (!state.currentThreadId) return;
   try {
-    state.currentThread = await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}`);
+    const t = await apiJson(`/api/threads/${encodeURIComponent(state.currentThreadId)}`);
+    state.currentThread = t;
     // user is actively viewing → keep last-seen current as new posts stream in
-    markThreadSeen(state.currentThreadId, state.currentThread?.last_post_at || Date.now());
-    renderDetail({ keepScroll: true });
+    markThreadSeen(state.currentThreadId, t?.last_post_at || Date.now());
     updateUnreadTitle();
+    // ─── flicker fix: signature short-circuit ──────────────────────
+    // SSE, 8s poll, BroadcastChannel, scheduleRefIndexRefresh and chip
+    // collapse timers can all funnel into refreshCurrentThread within
+    // a few hundred ms of each other. Re-rendering when nothing visible
+    // changed is the dominant cause of post-list flicker. If the signature
+    // of the thread matches the last one we actually rendered, skip the
+    // render entirely — the diff renderer below would no-op anyway, but
+    // skipping spares us a redundant pass and avoids any subtle reflow.
+    const sig = _threadSig(t);
+    if (sig === _lastThreadSig && state.currentThreadId === _lastRenderedThreadId) {
+      return;
+    }
+    _lastThreadSig = sig;
+    renderDetail({ keepScroll: true });
   } catch (err) {
     /* ignore transient */
   }
 }
 
-function renderDetail({ keepScroll = false } = {}) {
+// ─── flicker fix: per-post + per-thread signatures ────────────────────
+// Any field below that affects rendered output must be in the post sig so
+// diff knows when to rebuild a node. `prevPid` captures parent-adjacency
+// for the inline quote card (renderPostNode skips the card when the parent
+// is the immediately-preceding live post).
+function _reactionsKey(r) {
+  if (!r) return '';
+  const keys = Object.keys(r).sort();
+  const parts = [];
+  for (const k of keys) {
+    const actors = (r[k] || []).slice().sort();
+    parts.push(k + ':' + actors.join(','));
+  }
+  return parts.join('|');
+}
+function _postSig(p, prevPid) {
+  const pid = p.id || p.post_id || '';
+  return [
+    pid,
+    p.speaker || '',
+    p.post_type || '',
+    p.phase || '',
+    p.edited_at || p.ts || '',
+    p.parent_post_id || '',
+    p.superseded ? 1 : 0,
+    p._inlineDurationMs == null ? '' : p._inlineDurationMs,
+    p.duration_ms == null ? '' : p.duration_ms,
+    p.tool_name || '',
+    p.error || '',
+    p.agent_id || '',
+    _chipCollapsed && _chipCollapsed.has(pid) ? 1 : 0,
+    _reactionsKey(p.reactions),
+    prevPid || '',
+    (p.content || '').length,
+    p.content || '',
+  ].join('\u0001');
+}
+function _threadSig(t) {
+  if (!t || !t.posts) return '';
+  // Pre-compute chip suppression to keep sig consistent with what render
+  // would actually display (suppressed chips don't enter target list).
+  const posts = t.posts;
+  const live = posts.filter(p => !p.superseded);
+  const chipById = new Map();
+  for (const p of live) {
+    if (p.post_type === 'status_chip') {
+      const pid = p.id || p.post_id;
+      if (pid) chipById.set(pid, p);
+    }
+  }
+  const suppressed = new Set();
+  const durByReply = new Map();
+  for (const p of live) {
+    if (p.post_type === 'status_chip') continue;
+    const cid = p.from_chip_post_id;
+    if (!cid) continue;
+    const chip = chipById.get(cid);
+    if (chip && chip.phase === 'done') {
+      suppressed.add(cid);
+      if (chip.duration_ms != null) durByReply.set(p.id || p.post_id, chip.duration_ms);
+    }
+  }
+  const parts = [
+    t.in_progress ? 1 : 0,
+    t.title || '',
+    t.preview || '',
+    t.post_count || 0,
+    t.last_post_at || '',
+    (t.participants || []).join(','),
+    (t.pinned_refs || []).map(x => (x && x.id) || x).join(','),
+  ];
+  let prevPid = '';
+  for (const p of live) {
+    const pid = p.id || p.post_id;
+    if (p.post_type === 'status_chip' && suppressed.has(pid)) continue;
+    // Mirror the inlineDuration field renderPosts will inject.
+    const inlineDur = durByReply.has(pid) ? durByReply.get(pid) : (p._inlineDurationMs == null ? '' : p._inlineDurationMs);
+    const tmp = { ...p, _inlineDurationMs: inlineDur };
+    parts.push(_postSig(tmp, prevPid));
+    prevPid = pid;
+  }
+  return parts.join('\u0002');
+}
+
+function renderDetail({ keepScroll = false, force = false } = {}) {
   const t = state.currentThread;
   if (!t) {
     els.detailTitle.textContent = state.currentSquadId
@@ -1231,12 +1338,18 @@ function renderDetail({ keepScroll = false } = {}) {
 
   const prevScroll = els.postList.scrollTop;
   const wasNearBottom = els.postList.scrollHeight - prevScroll - els.postList.clientHeight < 80;
-  renderPosts(t.posts);
+  renderPosts(t.posts, { force });
+  // Diff renderer preserves scroll position naturally when nothing changed;
+  // we only need to adjust when the user was at the bottom (auto-follow new
+  // posts) or when keepScroll wasn't requested.
   if (keepScroll && !wasNearBottom) {
     els.postList.scrollTop = prevScroll;
-  } else {
+  } else if (!keepScroll || wasNearBottom) {
     els.postList.scrollTop = els.postList.scrollHeight;
   }
+  // Refresh the signature baseline so the next refreshCurrentThread can
+  // short-circuit when nothing visible has changed.
+  _lastThreadSig = _threadSig(t);
 }
 
 function renderParticipants(members) {
@@ -1539,8 +1652,14 @@ let _postLookup = new Map();
 // (Scott 2026-05-24: "Sherry 回复中的 消息引用 我觉得没必要").
 let _liveIndex = new Map();
 
-function renderPosts(posts) {
-  els.postList.innerHTML = '';
+// Flicker fix: persistent node cache for keyed-diff renderPosts.
+// post_id → { node: HTMLElement, sig: string }
+let _postNodes = new Map();
+let _lastRenderedThreadId = null;
+let _lastThreadSig = null;
+
+function renderPosts(posts, opts = {}) {
+  const force = !!opts.force;
   const live = (posts || []).filter(p => !p.superseded);
   _postLookup = new Map();
   (posts || []).forEach(p => {
@@ -1552,16 +1671,12 @@ function renderPosts(posts) {
     const pid = p.id || p.post_id;
     if (pid) _liveIndex.set(pid, i);
   });
-  if (!live.length) {
-    els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
-    return;
-  }
-  // Build chip → reply pairing (PR 20:18). A regular post with
-  // from_chip_post_id pointing at a phase=done chip means the agent's
-  // real reply has landed; render duration inline on the reply header
-  // and suppress the chip. Only phase=done suppresses — failed/skipped
-  // chips are the only evidence and must stay visible.
-  const _suppressedChipIds = new Set();
+
+  // Chip → reply pairing: suppress phase=done chips when the agent's real
+  // reply has landed, and stash the chip's duration on the reply for inline
+  // header rendering. Only phase=done suppresses — failed/skipped chips are
+  // the only evidence so they must stay visible.
+  const suppressedChipIds = new Set();
   const chipById = new Map();
   live.forEach(p => {
     if (p.post_type === 'status_chip') {
@@ -1575,25 +1690,80 @@ function renderPosts(posts) {
     if (!chipId) return;
     const chip = chipById.get(chipId);
     if (chip && chip.phase === 'done') {
-      _suppressedChipIds.add(chipId);
-      // Stash duration on the reply post object for renderPostNode header.
+      suppressedChipIds.add(chipId);
       if (chip.duration_ms != null) p._inlineDurationMs = chip.duration_ms;
     }
   });
-  // V1.1: flat chronological list. Reply context is rendered as an inline
-  // quote card at the top of each child post (see renderPostNode), not as
-  // tree nesting — that was too visually heavy in real threads.
-  live.forEach(p => {
-    if (p.post_type === 'status_chip') {
-      const pid = p.id || p.post_id;
-      if (_suppressedChipIds.has(pid)) return; // duration moved to reply header
-      els.postList.appendChild(renderAgentStatusChip(p));
+
+  // Target ordered list after suppression.
+  const target = [];
+  for (const p of live) {
+    const pid = p.id || p.post_id;
+    if (p.post_type === 'status_chip' && suppressedChipIds.has(pid)) continue;
+    target.push({ pid, post: p });
+  }
+
+  // Thread switch (or force) invalidates the cache: previously-cached
+  // nodes belong to a different thread and must not be reused. Settings
+  // changes (avatar color, etc.) also pass force=true to repaint.
+  const threadSwitched = _lastRenderedThreadId !== state.currentThreadId;
+  if (threadSwitched || force) {
+    _postNodes.clear();
+    els.postList.innerHTML = '';
+  } else if (els.postList.firstElementChild && els.postList.firstElementChild.classList
+             && els.postList.firstElementChild.classList.contains('empty')) {
+    // Strip the empty-state placeholder if it was the only child.
+    els.postList.innerHTML = '';
+    _postNodes.clear();
+  }
+  _lastRenderedThreadId = state.currentThreadId;
+
+  if (!target.length) {
+    _postNodes.clear();
+    els.postList.innerHTML = '<div class="empty">这条 thread 还没有 post。</div>';
+    return;
+  }
+
+  // Keyed diff: walk the target list and align children of postList
+  // in place. Nodes whose signature is unchanged stay mounted (so their
+  // mermaid SVGs, code highlighters, event handlers and scroll-anchored
+  // sub-DOM all survive). Only changed/new posts touch the DOM.
+  const newCache = new Map();
+  let prevPid = '';
+  let domCursor = els.postList.firstElementChild;
+  for (const { pid, post } of target) {
+    const sig = _postSig(post, prevPid);
+    const cached = _postNodes.get(pid);
+    let node;
+    if (cached && cached.sig === sig) {
+      node = cached.node;
     } else {
-      els.postList.appendChild(renderPostNode(p, false));
+      node = (post.post_type === 'status_chip')
+        ? renderAgentStatusChip(post)
+        : renderPostNode(post, false);
+      node.dataset.sig = sig;
     }
-  });
-  // Mermaid: turn ```mermaid fenced blocks (rendered by marked as
-  // <pre><code class="language-mermaid">…</code></pre>) into live SVG.
+    newCache.set(pid, { node, sig });
+
+    if (domCursor === node) {
+      domCursor = node.nextElementSibling;
+    } else {
+      els.postList.insertBefore(node, domCursor);
+      // domCursor unchanged: we inserted before it, it's still next.
+    }
+    prevPid = pid;
+  }
+  // Drop any trailing nodes (deleted/suppressed posts at the end).
+  while (domCursor) {
+    const next = domCursor.nextElementSibling;
+    domCursor.remove();
+    domCursor = next;
+  }
+  _postNodes = newCache;
+
+  // Mermaid: render any newly-mounted ```mermaid blocks. Existing nodes
+  // carry data-mermaid-rendered="1" on their <pre> wrappers, so this is
+  // a no-op for unchanged posts.
   renderMermaidIn(els.postList);
 }
 
@@ -2860,7 +3030,7 @@ els.settingsForm && els.settingsForm.addEventListener('change', (e) => {
   else state.settings[t.name] = t.value;
   saveSettings(state.settings);
   refreshAvatarPreview();
-  if (state.currentThread) renderDetail({ keepScroll: true });
+  if (state.currentThread) renderDetail({ keepScroll: true, force: true });
   // (V1.1: reply is always on; no-op kept for call-site stability)
 });
 els.settingsForm && els.settingsForm.addEventListener('input', (e) => {
@@ -2869,7 +3039,7 @@ els.settingsForm && els.settingsForm.addEventListener('input', (e) => {
   state.settings[t.name] = t.value;
   saveSettings(state.settings);
   refreshAvatarPreview();
-  if (state.currentThread) renderDetail({ keepScroll: true });
+  if (state.currentThread) renderDetail({ keepScroll: true, force: true });
 });
 // emoji quick picks: set myAvatar text + sync
 document.querySelectorAll('.emoji-quick button').forEach(btn => {
@@ -2881,7 +3051,7 @@ document.querySelectorAll('.emoji-quick button').forEach(btn => {
     if (input) input.value = v;
     saveSettings(state.settings);
     refreshAvatarPreview();
-    if (state.currentThread) renderDetail({ keepScroll: true });
+    if (state.currentThread) renderDetail({ keepScroll: true, force: true });
   });
 });
 const btnResetAvatar = document.getElementById('btn-reset-avatar');
@@ -2894,16 +3064,22 @@ btnResetAvatar && btnResetAvatar.addEventListener('click', () => {
   if (tc) tc.value = '#616061';
   saveSettings(state.settings);
   refreshAvatarPreview();
-  if (state.currentThread) renderDetail({ keepScroll: true });
+  if (state.currentThread) renderDetail({ keepScroll: true, force: true });
 });
 
 // (btn-cancel-reply listener gone — see renderQuoteCard cancelable handler)
 
-// poll for updates while a thread is open
+// poll for updates while a thread is open. When SSE is healthy we skip
+// the per-thread refetch (it was a duplicate of SSE-driven refresh and
+// the dominant source of post-list flicker before the diff renderer
+// landed) and only keep the cross-squad unread sweep — that one still
+// needs polling because SSE is scoped to the open thread.
 function startPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.pollTimer = setInterval(() => {
-    if (state.currentThreadId) refreshCurrentThread();
+    if (state.currentThreadId && !state.threadEventHealthy) {
+      refreshCurrentThread();
+    }
     // Refresh every squad's detail — unread badges on un-selected squads
     // need to react to new posts too. This subsumes the per-current-squad
     // refresh (it's a strict superset).
