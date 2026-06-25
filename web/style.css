@@ -1304,6 +1304,50 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
 .agent-status-chip[data-phase="skipped"] .asc-avatar { width: 16px; height: 16px; font-size: 10px; opacity: .7; }
 .agent-status-chip[data-phase="skipped"] .asc-name { font-weight: 400; color: var(--text-soft); }
 
+/* ✕ cancel button on thinking/running chips. Default semi-opaque so the
+   user can find it without hover; full opacity + danger color on hover.
+   Touch devices keep opacity:1 always — hover-only on iPad/phone = invisible.
+   28×28 hit area via transparent padding around a 16px visual target;
+   no confirm dialog (cancel is cheap + reversible by re-@'ing the agent). */
+.agent-status-chip .asc-cancel {
+  margin-left: 4px;
+  width: 28px; height: 28px;
+  padding: 0; border: 0; background: transparent;
+  color: var(--text-soft);
+  font-size: 14px; line-height: 1;
+  cursor: pointer;
+  opacity: .45;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity .12s ease, color .12s ease, background-color .12s ease;
+  font-family: inherit;
+}
+.agent-status-chip:hover .asc-cancel { opacity: 1; }
+.agent-status-chip .asc-cancel:hover {
+  opacity: 1; color: var(--danger); background: var(--danger-soft);
+}
+.agent-status-chip .asc-cancel:focus-visible {
+  outline: 2px solid var(--danger);
+  outline-offset: 1px;
+  opacity: 1;
+}
+@media (hover: none) {
+  .agent-status-chip .asc-cancel { opacity: 1; }
+}
+
+/* cancelled phase: minimal pill, soft danger color so it's visible as a
+   thread artifact but doesn't shout. No avatar block, no actions. */
+.agent-status-chip[data-phase="cancelled"] {
+  background: transparent; border-color: transparent;
+  color: var(--text-soft); font-size: 12px;
+  padding: 2px 8px;
+}
+.agent-status-chip[data-phase="cancelled"] .asc-avatar { width: 16px; height: 16px; font-size: 10px; opacity: .6; }
+.agent-status-chip[data-phase="cancelled"] .asc-name { font-weight: 400; color: var(--text-soft); }
+.agent-status-chip[data-phase="cancelled"] .asc-phase { color: var(--text-soft); }
+.agent-status-chip[data-phase="cancelled"] .asc-icon { color: var(--text-soft); }
+.agent-status-chip.asc-cancelling .asc-phase { text-decoration: line-through; opacity: .7; transition: opacity .4s; }
+
 @keyframes ascSpin { to { transform: rotate(360deg); } }
 @keyframes ascPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 @keyframes ascIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }

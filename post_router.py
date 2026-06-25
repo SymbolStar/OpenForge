@@ -58,7 +58,7 @@ import forge_project  # PR-B1: shared project_dir validator (lazy + 60s cache)
 
 # ─── config ──────────────────────────────────────────────────────────
 ROUTER_SPEAKER_FALLBACK = "__router__"
-STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped"}
+STATUS_PHASES = {"thinking", "running", "done", "failed", "skipped", "cancelled"}
 ERROR_TAIL_LIMIT = 2048
 
 # Concurrency cap across all in-flight agent subprocesses. --local agent
@@ -71,6 +71,39 @@ MAX_PARALLEL_ROUTES = int(os.environ.get("OPENFORGE_MAX_PARALLEL_ROUTES", "6"))
 # pair is dropped silently if re-enqueued while still running.
 _inflight: set[tuple[str, str]] = set()
 _inflight_lock = threading.Lock()
+
+# Set of chip_post_ids that have been cancelled by the user. The worker
+# checks this BEFORE writing the agent's reply post and, if present,
+# discards the reply (so a hung subprocess that finally returns can't
+# pollute the thread after cancel).
+_cancelled_chips: set[str] = set()
+_cancelled_chips_lock = threading.Lock()
+
+
+def mark_cancelled(chip_post_id: str) -> None:
+    if not chip_post_id:
+        return
+    with _cancelled_chips_lock:
+        _cancelled_chips.add(chip_post_id)
+
+
+def _consume_cancelled(chip_post_id: str) -> bool:
+    with _cancelled_chips_lock:
+        return _cancelled_chips.discard(chip_post_id) or False  # noqa
+
+
+def is_cancelled(chip_post_id: str) -> bool:
+    if not chip_post_id:
+        return False
+    with _cancelled_chips_lock:
+        return chip_post_id in _cancelled_chips
+
+
+def _clear_cancelled(chip_post_id: str) -> None:
+    if not chip_post_id:
+        return
+    with _cancelled_chips_lock:
+        _cancelled_chips.discard(chip_post_id)
 
 # Set to True by drain_and_terminate() when forge is shutting down.
 # Once set, enqueue_if_needed() refuses to spawn new workers — those
@@ -529,12 +562,33 @@ def _route_to_agent(thread_id: str, agent_id: str, trigger: dict,
                 _patch_chip(thread_id, placeholder_id, phase="running")
             if agent_id in forge_employees.acp_employee_ids():
                 prompt = _render_acp_preamble(thread_id, agent_id, trigger) + prompt
-            reply = call_agent(agent_id, session_id, prompt, extra_env=spawn_env)
+            reply = call_agent(agent_id, session_id, prompt, extra_env=spawn_env, chip_post_id=placeholder_id)
         except AgentError as e:
+            # If the user cancelled this chip mid-flight, the SIGTERM we
+            # sent surfaces here as a non-zero exit. Convert to phase
+            # 'cancelled' so the UI matches intent (no misleading 'failed').
+            if is_cancelled(placeholder_id or ""):
+                if placeholder_id:
+                    _patch_chip(thread_id, placeholder_id,
+                                phase="cancelled",
+                                duration_ms=_duration_ms(started))
+                _clear_cancelled(placeholder_id or "")
+                return
             if placeholder_id:
                 _patch_chip(thread_id, placeholder_id,
                             phase="failed", error=_error_tail(e),
                             duration_ms=_duration_ms(started))
+            return
+        # Late cancel: subprocess produced a reply but the user clicked
+        # the cancel button while we were rendering. Drop the reply
+        # silently — router is the single source of truth for what lands
+        # in the thread, so a hung agent can never pollute it post-cancel.
+        if is_cancelled(placeholder_id or ""):
+            if placeholder_id:
+                _patch_chip(thread_id, placeholder_id,
+                            phase="cancelled",
+                            duration_ms=_duration_ms(started))
+            _clear_cancelled(placeholder_id or "")
             return
         reply = clean(reply)
         if is_empty(reply):
