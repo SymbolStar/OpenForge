@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <title>OpenForge — Forge F</title>
   <rect width="256" height="256" rx="56" fill="#0E0F11"/>
-  <!-- Content scaled 0.82 and re-centered inside icon for proper safe-zone / dock padding -->
-  <g transform="translate(13.61 19.76) scale(0.82)">
+  <!-- Content scaled 0.72 and re-centered: tighter safe-zone after dock 反馈「F 太大」(2026-06-26) -->
+  <g transform="translate(20.4 26.4) scale(0.78)">
     <!-- F vertical stem in ember orange -->
     <rect x="64" y="48" width="26" height="160" rx="5" fill="#FF6B35"/>
     <!-- F top arm: a dispatch branch to agent node -->
