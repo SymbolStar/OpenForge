@@ -1382,6 +1382,12 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   /* Hide scrollbar chrome by default — cleaner reading surface; bar
      reappears on :focus-within for keyboard users (a11y). */
   scrollbar-width: none;
+  /* Always reserve the scrollbar gutter on the right so the Slack-style
+     hover-reveal scrollbar below doesn't reflow the post column when the
+     pointer enters/leaves. Without this, toggling scrollbar-width from
+     `none` to `auto` on :hover physically pushes content ~10px left, then
+     back — the user-reported "闪" when the cursor moves over post-list. */
+  scrollbar-gutter: stable;
 }
 #post-list::-webkit-scrollbar { display: none; }
 /* Show scrollbar when the user hovers the messages pane (Slack-style: bar
