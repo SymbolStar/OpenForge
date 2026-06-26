@@ -27,6 +27,7 @@ auto-generated notes — but stable semver tags must pass.
 ## Unreleased
 
 - Thread view no longer flickers on every refresh. The post list is now diffed in place (keyed by post id), so unchanged posts keep their existing DOM nodes — SSE bursts, the 8s poll fallback, and cross-tab broadcasts can all fire together without repainting the column. When SSE is healthy the per-thread poll is suppressed entirely.
+- Post column no longer shifts left/right when the pointer hovers the thread view. The Slack-style hover-reveal scrollbar now reserves its gutter at all times, so toggling the bar in/out doesn't reflow the column.
 - _Add entries here as they ship. They get cut into the next `v<semver>` section at release time._
 
 <!--
