@@ -11,7 +11,7 @@ import signal
 import subprocess
 import threading
 
-from agent_runtime import AgentError, clean, _killpg_safe
+from agent_runtime import AgentError, _killpg_safe, clean
 
 ACP_AGENT_TIMEOUT = int(os.environ.get("OPENFORGE_ACP_AGENT_TIMEOUT", "240"))
 
