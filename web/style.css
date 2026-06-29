@@ -1379,34 +1379,45 @@ body.squad-collapsed #squad-list::-webkit-scrollbar { display: none; }  /* WebKi
   min-height: 0;
   overflow-y: auto;
   padding: 14px 18px 20px;
-  /* Hide scrollbar chrome by default — cleaner reading surface; bar
-     reappears on :focus-within for keyboard users (a11y). */
-  scrollbar-width: none;
-  /* Always reserve the scrollbar gutter on the right so the Slack-style
-     hover-reveal scrollbar below doesn't reflow the post column when the
-     pointer enters/leaves. Without this, toggling scrollbar-width from
-     `none` to `auto` on :hover physically pushes content ~10px left, then
-     back — the user-reported "闪" when the cursor moves over post-list. */
-  scrollbar-gutter: stable;
+  /* Keep the scrollbar ALWAYS mounted with a fixed width, but make the
+     thumb fully transparent by default — hovering the post column then
+     just changes the thumb color, never the layout. The earlier attempt
+     (`scrollbar-width: none` + toggling to `auto` on :hover, optionally
+     with `scrollbar-gutter: stable`) doesn't work: `gutter: stable` is a
+     no-op when scrollbar-width is `none` per spec, so hovering still
+     reflowed the column by ~10px. This approach uses fixed-width WebKit
+     scrollbars (Chromium/Safari) and Firefox's `scrollbar-width: thin`
+     with an invisible track/thumb until hover. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.15s ease;
 }
-#post-list::-webkit-scrollbar { display: none; }
-/* Show scrollbar when the user hovers the messages pane (Slack-style: bar
-   lives at the right edge, appears as soon as the pointer enters the pane,
-   hides again when it leaves). :focus-within keeps it visible for keyboard
-   users (a11y). */
-#post-list:hover,
-#post-list:focus-within { scrollbar-width: auto; }
-#post-list:hover::-webkit-scrollbar,
-#post-list:focus-within::-webkit-scrollbar { display: initial; }
 #post-list::-webkit-scrollbar { width: 10px; }
+#post-list::-webkit-scrollbar-track { background: transparent; }
 #post-list::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.25);
+  background: transparent;
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
+  transition: background 0.15s ease;
 }
-#post-list::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.45); background-clip: padding-box; border: 2px solid transparent; }
-#post-list::-webkit-scrollbar-track { background: transparent; }
+/* Slack-style: thumb only becomes visible while the user is interacting
+   with the messages pane. :focus-within keeps it visible for keyboard
+   users (a11y). */
+#post-list:hover,
+#post-list:focus-within {
+  scrollbar-color: rgba(0,0,0,0.25) transparent;
+}
+#post-list:hover::-webkit-scrollbar-thumb,
+#post-list:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.25);
+  background-clip: padding-box;
+}
+#post-list:hover::-webkit-scrollbar-thumb:hover,
+#post-list:focus-within::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.45);
+  background-clip: padding-box;
+}
 .empty {
   color: var(--text-soft);
   padding: 48px 12px;
