@@ -1405,17 +1405,12 @@ async function _resolveRefExistsBatch(ids) {
 }
 
 function _findRefLabelFromThread(refId) {
-  // Scan posts for [[ref:id]] tokens we've already resolved into chips —
-  // fall back to ref_id when unknown.
-  const t = state.currentThread;
-  if (!t) return refId;
-  for (const p of t.posts || []) {
-    const re = new RegExp(`\\[\\[ref:${refId}\\]\\]`);
-    if (re.test(p.content || '')) {
-      // No reliable per-chip label here without re-resolving; reuse refId.
-      break;
-    }
-  }
+  // Prefer the ref index (window._forgeRefs) — it carries the real filename
+  // (label). Falls back to ref_id only when the index hasn't loaded yet or
+  // the ref is unknown.
+  const idx = window._forgeRefs;
+  const hit = idx && idx.byId && idx.byId.get(refId);
+  if (hit && hit.label) return hit.label;
   return refId;
 }
 
@@ -1428,6 +1423,9 @@ async function renderPinnedArea(t) {
     root.hidden = true;
     return;
   }
+  // Ensure the ref index is loaded so we can show real filenames (labels)
+  // instead of opaque ref ids. Cheap if already cached.
+  try { await loadRefIndex(); } catch (_) { /* offline; fall back to ids */ }
   root.hidden = false;
   root.innerHTML =
     `<div class="pinned-header"><span class="pinned-icon">📌</span>` +
@@ -1439,7 +1437,7 @@ async function renderPinnedArea(t) {
       const by = escapeHtml(p.pinned_by || 'scott');
       const when = p.pinned_at ? escapeHtml(formatRelative(p.pinned_at)) : '';
       const stale = _refExistsCache.get(rid) === false;
-      return `<div class="pinned-chip${stale ? ' is-stale' : ''}" data-ref-id="${escapeAttr(rid)}" tabindex="0" role="button" title="${stale ? '文件已失效，点击移除' : '打开 ' + escapeAttr(rid)}">` +
+      return `<div class="pinned-chip${stale ? ' is-stale' : ''}" data-ref-id="${escapeAttr(rid)}" tabindex="0" role="button" title="${stale ? '文件已失效，点击移除' : '打开 ' + label}">` +
         `<span class="pinned-chip-icon">📄</span>` +
         `<span class="pinned-chip-label">${label}</span>` +
         `<span class="pinned-chip-meta">pinned by ${by}${when ? ' · ' + when : ''}</span>` +
@@ -1524,6 +1522,25 @@ document.addEventListener('click', async (e) => {
   // 让 ⭐ 收藏按钮、context menu 等先消化掉自己的事件。
   if (e.defaultPrevented) return;
   if (e.target.closest('.file-chip-fav')) return;
+  // pinned chip has its own click semantics: the × (data-unpin) and the
+  // ⌥/contextmenu actions are handled by dedicated listeners; for plain
+  // left-click we want to route to the file preview, same as a regular
+  // file-chip-ref.
+  const pinned = e.target.closest('.pinned-chip');
+  if (pinned) {
+    if (e.target.closest('.pinned-chip-close')) return; // let unpin handler run
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const rid = pinned.getAttribute('data-ref-id');
+    if (!rid) return;
+    e.preventDefault();
+    const next = '#/files/refs/' + encodeURIComponent(rid);
+    if (location.hash === next) {
+      if (typeof window.__forgeRouteFromHash === 'function') window.__forgeRouteFromHash();
+    } else {
+      location.hash = next;
+    }
+    return;
+  }
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // 让 ⌘+click 等保留浏览器默认
   const chip = e.target.closest('.file-chip-ref, .file-chip-missing, .file-chip');
   if (!chip) return;
