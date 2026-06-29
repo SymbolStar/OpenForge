@@ -246,7 +246,51 @@ def _chunk_text(text: str, size: int) -> Iterable[str]:
 # ── adapter registry ────────────────────────────────────────────────
 
 _ADAPTERS: dict[str, Adapter] = {"stub": stub_adapter}
-_DEFAULT_ADAPTER_NAME = "stub"
+_DEFAULT_ADAPTER_NAME = "default"
+
+
+def default_adapter(payload: Mapping[str, Any]) -> Iterator[XiaofEvent]:
+    """
+    Routing adapter (the one the route looks up by default).
+
+    Decision matrix:
+      - intent == general_qa
+          └ local A-4 builtin matches (time/date/tz) → stub (no LLM call)
+          └ OpenAI-compat env present                  → openai_compatible_adapter
+          └ otherwise                                   → stub neutral copy
+      - intent == thread_search                          → stub (M2 owns this)
+
+    Keeping the local builtin first preserves PRD A-4 sub-5s latency for
+    time queries even when an LLM is wired up; the LLM only ever sees
+    open-ended general questions, never thread retrieval.
+    """
+    # Late import: forge_xiaof_openai depends on this module, so we
+    # cannot import it at module load time.
+    try:
+        from forge_xiaof_openai import openai_compatible_adapter, openai_enabled
+    except Exception:  # noqa: BLE001 - defensive
+        openai_compatible_adapter = None  # type: ignore[assignment]
+        openai_enabled = lambda: False  # noqa: E731
+
+    query = str(payload.get("query") or "")
+    intent = classify_intent(query)
+    client = payload.get("client") if isinstance(payload, Mapping) else None
+    if not isinstance(client, Mapping):
+        client = {}
+
+    if (
+        intent == "general_qa"
+        and answer_general_qa(query, client) is None
+        and openai_enabled()
+        and openai_compatible_adapter is not None
+    ):
+        yield from openai_compatible_adapter(payload)
+        return
+
+    yield from stub_adapter(payload)
+
+
+_ADAPTERS["default"] = default_adapter
 
 
 def register_adapter(name: str, adapter: Adapter) -> None:
