@@ -2,14 +2,21 @@
  *
  * Strategy:
  *   - /api/*           → network-only, never cached (live data, SSE, etc.)
- *   - same-origin GET  → stale-while-revalidate for a small allow-list of
- *                        static shell assets; everything else falls through
- *                        to network without touching the cache.
+ *   - shell allow-list → network-first with cache fallback. Fresh code
+ *                        wins on every load; cache is only used when the
+ *                        network actually fails (offline). This is what
+ *                        keeps a single hard refresh (Cmd+Shift+R) enough
+ *                        to pick up new app.js / style.css — the older
+ *                        stale-while-revalidate strategy meant the user
+ *                        always saw the previous version on the first
+ *                        load after a deploy.
+ *   - everything else → falls through to the network without touching
+ *                        the cache.
  *
  * Bump CACHE_VERSION whenever you change cached files or this file itself
  * so old clients pull fresh copies on activate.
  */
-const CACHE_VERSION = 'openforge-shell-v1';
+const CACHE_VERSION = 'openforge-shell-v2';
 
 // Allow-list of path prefixes we are willing to cache. Anything outside this
 // list (HTML pages, /api/*, ad-hoc endpoints) is left to the network.
@@ -65,16 +72,19 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_VERSION);
-    const cached = await cache.match(req);
-    const network = fetch(req)
-      .then((res) => {
-        // Only cache successful, basic (same-origin) responses.
-        if (res && res.ok && res.type === 'basic') {
-          cache.put(req, res.clone()).catch(() => {});
-        }
-        return res;
-      })
-      .catch(() => cached); // offline: fall back to cache if we have it
-    return cached || network;
+    try {
+      const res = await fetch(req);
+      // Only cache successful, basic (same-origin) responses.
+      if (res && res.ok && res.type === 'basic') {
+        cache.put(req, res.clone()).catch(() => {});
+      }
+      return res;
+    } catch (_e) {
+      // Network failed (offline / DNS / etc.) → serve from cache if we
+      // have it; otherwise let the browser surface the network error.
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      throw _e;
+    }
   })());
 });

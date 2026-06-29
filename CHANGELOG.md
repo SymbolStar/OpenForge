@@ -28,6 +28,7 @@ auto-generated notes — but stable semver tags must pass.
 
 - Thread view no longer flickers on every refresh. The post list is now diffed in place (keyed by post id), so unchanged posts keep their existing DOM nodes — SSE bursts, the 8s poll fallback, and cross-tab broadcasts can all fire together without repainting the column. When SSE is healthy the per-thread poll is suppressed entirely.
 - Post column no longer shifts left/right when the pointer hovers the thread view. The Slack-style hover-reveal scrollbar now reserves its gutter at all times, so toggling the bar in/out doesn't reflow the column.
+- A single hard refresh (Cmd+Shift+R) is now enough to pick up new app.js / style.css after a deploy. The PWA service worker was using stale-while-revalidate for shell assets, which always served the previous version on the first load and only swapped in the new one on the next refresh — it now uses network-first with cache fallback, so the cache is only consulted when the network actually fails (offline).
 - _Add entries here as they ship. They get cut into the next `v<semver>` section at release time._
 
 <!--
