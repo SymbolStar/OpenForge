@@ -201,8 +201,8 @@ def test_cancel_endpoint_marks_chip_and_audits(store, monkeypatch):
     and a best-effort SIGTERM is sent to the bound subprocess group."""
     import sys
     sys.modules.pop("server", None)
-    import server as srv
     import post_router
+    import server as srv
 
     t = _make_thread(store)
     chip = store.add_thread_post(
