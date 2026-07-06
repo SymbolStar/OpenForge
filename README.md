@@ -76,24 +76,41 @@ The truth source is `events.jsonl`. Markdown is regenerated from events on every
 ## Files
 
 ```
-/Volumes/DevDisk/symbol/openforge/
+OpenForge/
 ├── README.md
-├── docs/PRD.md
-├── forge_store.py           ← JSONL event store + squads + threads + projection
-├── agent_runtime.py         ← snapshot/restore + `openclaw agent` shell-out
-├── post_router.py           ← @-routing worker (single-flight serial)
-├── server.py                ← HTTP API + SSE + static files
-├── migrate_md_to_jsonl.py   ← (legacy) one-shot importer for old md
+├── CHANGELOG.md
+├── server.py                    ← HTTP API + SSE + static files
+├── forge_store.py               ← JSONL event store + squads + threads + projection
+├── agent_runtime.py             ← snapshot/restore + `openclaw agent` shell-out
+├── acp_runtime.py               ← ACP CLI bridge (Codex / Claude-Code / … as employees)
+├── post_router.py               ← @-routing worker (single-flight serial)
+├── forge_employees.py           ← employee discovery (curated / runtime / ACP)
+├── forge_identity.py            ← SOUL.md / IDENTITY.md loader
+├── forge_project.py             ← squad-bound project directory
+├── forge_files.py               ← file model + pinned attachments
+├── forge_uploads.py             ← upload endpoints
+├── forge_context.py             ← @-context refs (files, threads, sessions)
+├── forge_refs.py                ← reference parser
+├── forge_session_search.py      ← Synapse-style session search
+├── forge_favorites.py           ← starred threads
+├── forge_avatar.py              ← per-agent color/emoji
+├── forge_xiaof.py               ← general-QA LLM adapter (OpenAI-compatible)
+├── forge_v07_telemetry.py       ← router latency + adoption telemetry
+├── migrations/                  ← semver-gated data migrations
+├── scripts/                     ← ops helpers (router_perf, release, …)
+├── bin/forge                    ← dev/build CLI
+├── branding/                    ← logos, marks
 └── web/
     ├── index.html
-    ├── style.css            ← Slack three-pane visual
-    └── app.js               ← vanilla JS (no deps)
+    ├── style.css                ← Slack three-pane visual, light/dark
+    └── app.js                   ← vanilla JS (no deps)
 ```
 
 ## Quick start
 
 ```bash
-cd /Volumes/DevDisk/symbol/openforge
+git clone https://github.com/SymbolStar/OpenForge.git
+cd OpenForge
 
 python3 server.py
 # open http://127.0.0.1:7878
@@ -209,13 +226,23 @@ service). Tracked in TODO under "DX / tests".
 
 ## Roadmap
 
+Full history in [CHANGELOG.md](CHANGELOG.md).
+
 ### Shipped
 - ✅ Squad / Thread / Post model + CRUD UI
-- ✅ Squad archive (soft-hide)
-- ✅ Post routing (`@agent` → `openclaw agent --local --json` reply)
-- ✅ SSE live event push
+- ✅ Squad archive (soft-hide), squad-bound `project_dir`
+- ✅ Post routing (`@agent` → `openclaw agent --local --json` reply), **cancel in-flight** (`✖` on thinking chip)
+- ✅ SSE live event push (SSE-aware poll fallback, no-flicker keyed diff)
 - ✅ Reply-to-post nesting (`parent_post_id`, feature flag in settings)
 - ✅ Reactions (hover picker + emoji chips, toggle semantics)
+- ✅ **ACP employees** — Codex / Claude-Code / other ACP CLIs joinable as squad members
+- ✅ Thread rename (double-click title)
+- ✅ File uploads + pinned attachments (chip with filename → left-click preview)
+- ✅ General-QA LLM adapter (`forge_xiaof`, OpenAI-compatible) for non-routed answers
+- ✅ `@`-context refs (files, threads, sessions) via Synapse-style search
+- ✅ Router-latency telemetry (`scripts/router_perf`) + adoption telemetry
+- ✅ Semver-gated migration runner + release changelog gate + stable tarball asset
+- ✅ Light / dark theme, icon rail, refreshed send-flame / ☆ / ✎ button set
 
 ### Next
 - Per-thread or per-squad "main agent" so follow-ups don't always need `@`
