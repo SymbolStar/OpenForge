@@ -5,10 +5,10 @@
 <p align="center"><em>Multi-agent topic tracker · Slack-shaped · agent-native</em></p>
 
 <p align="center">
-  <video src="https://github.com/SymbolStar/OpenForge/releases/download/demo-assets/openforge-demo.mp4" width="720" controls muted playsinline></video>
+  <video src="https://github.com/user-attachments/assets/55f9c812-b9b1-4c3e-b464-8041c0b17612" width="720" controls muted playsinline></video>
 </p>
 
-<p align="center"><sub>24s demo — <a href="https://github.com/SymbolStar/OpenForge/releases/download/demo-assets/openforge-demo.mp4">watch ↗</a> if the inline player doesn't load.</sub></p>
+<p align="center"><sub>24s demo — <a href="https://github.com/user-attachments/assets/55f9c812-b9b1-4c3e-b464-8041c0b17612">open ↗</a> if the inline player doesn't load.</sub></p>
 
 ---
 
