@@ -62,8 +62,8 @@
         <span class="icon-rail-dot" hidden aria-hidden="true"></span>
         <span class="icon-rail-badge" hidden aria-label="unread"></span>
       </button>
-      <button class="icon-rail-item is-dim" type="button" data-view="later" title="Later">
-        <span class="icon">🔖</span><span class="label">Later</span>
+      <button class="icon-rail-item" type="button" data-view="workflows" data-enabled="1" title="Workflows">
+        <span class="icon">⏰</span><span class="label">Workflows</span>
       </button>
       <button class="icon-rail-item is-dim" type="button" data-view="more" title="More">
         <span class="icon">⋯</span><span class="label">More</span>
@@ -263,6 +263,66 @@
       <div id="activity-detail-error" class="activity-detail-error" hidden>
         <p data-msg>加载失败</p>
         <button type="button" data-retry>重试</button>
+      </div>
+    </main>
+  </section>
+
+  <section id="workflows-view" class="view-shell" hidden>
+    <aside id="wf-sidebar">
+      <div class="wf-cl-header">
+        Workflows <span id="wf-header-count" class="wf-count"></span>
+      </div>
+      <div id="wf-sidebar-body"></div>
+      <p id="wf-sidebar-empty" class="wf-empty" hidden>还没有 workflow。</p>
+      <p id="wf-sidebar-error" class="wf-empty wf-empty-err" hidden>加载失败 <button type="button" id="wf-sidebar-retry" class="wf-btn wf-btn-ghost">重试</button></p>
+    </aside>
+    <main id="wf-main">
+      <header class="wf-main-header">
+        <div class="wf-header-info">
+          <h1>Workflows</h1>
+          <div class="wf-sub">定时任务 · 数据源 <code class="wf-src">~/.openclaw/cron/jobs.json</code>（v0.1 UI 壳，不改 runtime）</div>
+        </div>
+        <div class="wf-header-actions">
+          <button id="wf-btn-refresh" type="button" class="wf-btn">↻ Refresh</button>
+          <button id="wf-btn-new" type="button" class="wf-btn wf-btn-primary" disabled title="v0.2">+ New workflow</button>
+        </div>
+      </header>
+      <div class="wf-health-wrap">
+        <div class="wf-health-title">Run activity · today</div>
+        <div id="wf-health" class="wf-health">
+          <div class="wf-tile wf-tile-ok" data-filter="ok"><div class="wf-tile-k">Succeeded</div><div class="wf-tile-v">— runs</div><div class="wf-tile-sub"></div></div>
+          <div class="wf-tile wf-tile-err" data-filter="failed"><div class="wf-tile-k">Failed</div><div class="wf-tile-v">— runs</div><div class="wf-tile-sub"></div></div>
+          <div class="wf-tile wf-tile-warn" data-filter="running"><div class="wf-tile-k">Running</div><div class="wf-tile-v">— runs</div><div class="wf-tile-sub"></div></div>
+          <div class="wf-tile wf-tile-neutral" data-filter="upcoming"><div class="wf-tile-k">Upcoming · next 6h</div><div class="wf-tile-v">— runs</div><div class="wf-tile-sub"></div></div>
+        </div>
+      </div>
+      <div class="wf-filter-bar">
+        <input id="wf-search" type="search" placeholder="搜索 workflow name / agent…" class="wf-search-input" />
+        <div id="wf-chips" class="wf-chips"></div>
+      </div>
+      <div class="wf-table-wrap">
+        <table class="wf-table">
+          <thead>
+            <tr>
+              <th class="wf-col-toggle"></th>
+              <th>Name</th>
+              <th>Schedule</th>
+              <th>Last run</th>
+              <th>Next</th>
+              <th class="wf-col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="wf-tbody"></tbody>
+        </table>
+        <p id="wf-table-empty" class="wf-empty" hidden>没有匹配的 workflow。</p>
+        <p id="wf-table-loading" class="wf-empty" hidden>加载中…</p>
+      </div>
+      <div class="wf-legend">
+        <span class="wf-legend-k"><span class="wf-dot wf-dot-ok"></span> ok</span>
+        <span class="wf-legend-k"><span class="wf-dot wf-dot-warn"></span> running</span>
+        <span class="wf-legend-k"><span class="wf-dot wf-dot-err"></span> failed</span>
+        <span class="wf-legend-k"><span class="wf-dot wf-dot-off"></span> disabled</span>
+        <span class="wf-legend-hint">hover schedule 单元格看原 cron 表达式</span>
       </div>
     </main>
   </section>
