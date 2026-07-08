@@ -3760,6 +3760,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
 (function () {
   const homeView = document.getElementById('home-view');
   const filesView = document.getElementById('files-view');
+  const workflowsView = document.getElementById('workflows-view');
   const items = Array.from(document.querySelectorAll('.icon-rail-item'));
   const toastEl = document.getElementById('toast');
 
@@ -3780,6 +3781,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       filesView.hidden = true;
       if (agentsView) agentsView.hidden = true;
       if (activityView) activityView.hidden = true;
+      if (workflowsView) workflowsView.hidden = true;
     };
     if (view === 'files') {
       hideAll();
@@ -3792,10 +3794,15 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
       hideAll();
       if (activityView) activityView.hidden = false;
       if (window.__forgeActivityActivate) window.__forgeActivityActivate();
+    } else if (view === 'workflows') {
+      hideAll();
+      if (workflowsView) workflowsView.hidden = false;
+      if (window.__forgeWorkflowsActivate) window.__forgeWorkflowsActivate();
     } else {
       hideAll();
       homeView.hidden = false;
       if (window.__forgeActivityDeactivate) window.__forgeActivityDeactivate();
+      if (window.__forgeWorkflowsDeactivate) window.__forgeWorkflowsDeactivate();
     }
   }
 
@@ -3834,6 +3841,10 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
     // 从 popout hash 用户手动跳出时，清掉 class。
     if (document.body.classList.contains('is-popout')) {
       document.body.classList.remove('is-popout');
+    }
+    if (h.startsWith('#/workflows')) {
+      setActive('workflows');
+      return;
     }
     if (h.startsWith('#/activity')) {
       setActive('activity');
@@ -3896,6 +3907,7 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
         if (v === 'files') location.hash = '#/files';
         else if (v === 'agents') location.hash = '#/agents';
         else if (v === 'activity') location.hash = '#/activity';
+        else if (v === 'workflows') location.hash = '#/workflows';
         else location.hash = '#/squads';
       } else {
         toast('「' + (it.querySelector('.label')?.textContent || v) + '」敬请期待');
@@ -5936,4 +5948,358 @@ Promise.all([loadWebchatBase(), loadEmployeeSet()]).finally(() => {
   const realBtn = document.getElementById('btn-settings');
   if (!collapsedBtn || !realBtn) return;
   collapsedBtn.addEventListener('click', () => realBtn.click());
+})();
+
+/* ─── Workflows tab (v0.1 UI shell) ─── */
+/* See issue #115. Talks to /api/workflows (list) and
+ * /api/workflows/<id>/run (POST). 30s poll while view is active. */
+(function workflowsView() {
+  const view = document.getElementById('workflows-view');
+  if (!view) return;
+  const tbody = view.querySelector('#wf-tbody');
+  const sidebar = view.querySelector('#wf-sidebar-body');
+  const sidebarEmpty = view.querySelector('#wf-sidebar-empty');
+  const sidebarErr = view.querySelector('#wf-sidebar-error');
+  const sidebarRetry = view.querySelector('#wf-sidebar-retry');
+  const sidebarCount = view.querySelector('#wf-header-count');
+  const chipsWrap = view.querySelector('#wf-chips');
+  const searchInput = view.querySelector('#wf-search');
+  const tableEmpty = view.querySelector('#wf-table-empty');
+  const tableLoading = view.querySelector('#wf-table-loading');
+  const btnRefresh = view.querySelector('#wf-btn-refresh');
+  const health = {
+    ok: view.querySelector('.wf-tile-ok'),
+    err: view.querySelector('.wf-tile-err'),
+    warn: view.querySelector('.wf-tile-warn'),
+    upcoming: view.querySelector('.wf-tile-neutral'),
+  };
+
+  let jobs = [];
+  let filter = 'all'; // all | on | off | failed | agent:<id>
+  let query = '';
+  let selectedId = null;
+  let pollTimer = null;
+  let inflight = null;
+  let active = false;
+
+  function fmtDuration(ms) {
+    if (ms == null || ms < 0) return '';
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rs = s - m * 60;
+    if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
+    const h = Math.floor(m / 60);
+    const rm = m - h * 60;
+    return rm ? `${h}h ${rm}m` : `${h}h`;
+  }
+  function fmtRelPast(ms) {
+    if (!ms) return '';
+    const delta = Date.now() - ms;
+    if (delta < 0) return 'in the future';
+    const s = Math.floor(delta / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) {
+      const rm = m - h * 60;
+      return rm ? `${h}h ${rm}m ago` : `${h}h ago`;
+    }
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  }
+  function fmtRelFuture(ms) {
+    if (!ms) return '';
+    const delta = ms - Date.now();
+    if (delta < 0) return '';
+    const s = Math.floor(delta / 1000);
+    if (s < 60) return `in ${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `in ${m}m`;
+    const h = Math.floor(m / 60);
+    const rm = m - h * 60;
+    if (h < 24) return rm ? `in ${h}h ${rm}m` : `in ${h}h`;
+    const d = Math.floor(h / 24);
+    return `in ${d}d`;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function jobStatus(j) {
+    // 'failing' | 'running' | 'ok' | 'off'
+    if (!j.enabled) return 'off';
+    if (j.lastRun && j.lastRun.status === 'running') return 'running';
+    if (j.lastRun && j.lastRun.status === 'failed') return 'failing';
+    return 'ok';
+  }
+
+  function computeHealth() {
+    const now = Date.now();
+    const sixH = now + 6 * 3600 * 1000;
+    let ok = 0, err = 0, running = 0;
+    const errList = [];
+    const runList = [];
+    const upcoming = [];
+    jobs.forEach(j => {
+      if (j.lastRun && j.lastRun.status === 'ok' && j.lastRun.startedAt && (now - j.lastRun.startedAt) < 24 * 3600 * 1000) ok++;
+      if (j.lastRun && j.lastRun.status === 'failed' && j.lastRun.startedAt && (now - j.lastRun.startedAt) < 24 * 3600 * 1000) {
+        err++;
+        errList.push(j);
+      }
+      if (j.lastRun && j.lastRun.status === 'running') {
+        running++;
+        runList.push(j);
+      }
+      if (j.enabled && j.schedule.nextRunAt && j.schedule.nextRunAt > now && j.schedule.nextRunAt <= sixH) {
+        upcoming.push(j);
+      }
+    });
+    upcoming.sort((a, b) => a.schedule.nextRunAt - b.schedule.nextRunAt);
+    setTile(health.ok, `${ok} runs`, ok ? `succeeded today` : '');
+    const errSub = errList.slice(0, 2).map(j => `${j.name} (${fmtRelPast(j.lastRun.startedAt)})`).join(' · ') || '—';
+    setTile(health.err, `${err} runs`, errSub);
+    const runSub = runList.slice(0, 1).map(j => `${j.name} · elapsed ${fmtDuration(now - j.lastRun.startedAt)}`).join('') || '—';
+    setTile(health.warn, `${running} run${running === 1 ? '' : 's'}`, runSub);
+    const upSub = upcoming[0] ? `next ${new Date(upcoming[0].schedule.nextRunAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })} · ${upcoming[0].name}` : '—';
+    setTile(health.upcoming, `${upcoming.length} runs`, upSub);
+  }
+  function setTile(el, v, sub) {
+    if (!el) return;
+    const vEl = el.querySelector('.wf-tile-v');
+    const subEl = el.querySelector('.wf-tile-sub');
+    if (vEl) vEl.textContent = v;
+    if (subEl) subEl.textContent = sub || '';
+  }
+
+  function renderChips() {
+    if (!chipsWrap) return;
+    const total = jobs.length;
+    const on = jobs.filter(j => j.enabled).length;
+    const off = total - on;
+    const failed = jobs.filter(j => jobStatus(j) === 'failing').length;
+    const agents = Array.from(new Set(jobs.map(j => j.agent))).sort();
+    const chips = [
+      ['all', `All · ${total}`],
+      ['on', `On · ${on}`],
+      ['off', `Off · ${off}`],
+      ['failed', `Failing · ${failed}`],
+    ];
+    agents.forEach(a => chips.push([`agent:${a}`, `agent: ${a}`]));
+    chipsWrap.innerHTML = chips.map(([k, label]) =>
+      `<button type="button" class="wf-chip${k === filter ? ' is-active' : ''}" data-chip="${escapeHtml(k)}">${escapeHtml(label)}</button>`
+    ).join('');
+    chipsWrap.querySelectorAll('.wf-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filter = btn.dataset.chip;
+        renderChips();
+        renderTable();
+      });
+    });
+  }
+
+  function jobPassesFilter(j) {
+    if (query) {
+      const q = query.toLowerCase();
+      if (!(j.name.toLowerCase().includes(q) || (j.agent || '').toLowerCase().includes(q))) return false;
+    }
+    if (filter === 'all') return true;
+    if (filter === 'on') return j.enabled;
+    if (filter === 'off') return !j.enabled;
+    if (filter === 'failed') return jobStatus(j) === 'failing';
+    if (filter.startsWith('agent:')) return j.agent === filter.slice(6);
+    return true;
+  }
+
+  function statusPill(j) {
+    const st = jobStatus(j);
+    const lr = j.lastRun;
+    if (st === 'off') return `<span class="wf-status-pill wf-pill-off">◯ disabled</span>`;
+    if (st === 'running') {
+      const started = lr && lr.startedAt ? new Date(lr.startedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+      return `<span class="wf-status-pill wf-pill-running">● running · started ${escapeHtml(started)}</span>`;
+    }
+    if (st === 'failing') {
+      return `<span class="wf-status-pill wf-pill-err">✕ failed · ${escapeHtml(fmtRelPast(lr && lr.startedAt))}</span>`;
+    }
+    if (lr && lr.startedAt) {
+      return `<span class="wf-status-pill wf-pill-ok">✓ ok · ${escapeHtml(fmtRelPast(lr.startedAt))}</span>`;
+    }
+    return `<span class="wf-status-pill wf-pill-off">— no runs yet</span>`;
+  }
+
+  function lastRunSub(j) {
+    const lr = j.lastRun;
+    if (!lr) return '—';
+    if (lr.status === 'running') return `elapsed ${fmtDuration(Date.now() - lr.startedAt)}`;
+    if (lr.status === 'failed') {
+      const bits = [];
+      if (lr.exitCode != null) bits.push(`exit ${lr.exitCode}`);
+      if (lr.resultDetail) bits.push(lr.resultDetail);
+      if (lr.durationMs != null) bits.push(`duration ${fmtDuration(lr.durationMs)}`);
+      return bits.join(' · ') || '—';
+    }
+    const bits = [];
+    if (lr.resultDetail) bits.push(lr.resultDetail);
+    if (lr.durationMs != null) bits.push(`duration ${fmtDuration(lr.durationMs)}`);
+    return bits.join(' · ') || '—';
+  }
+
+  function renderRow(j) {
+    const st = jobStatus(j);
+    const cls = [];
+    if (st === 'failing') cls.push('is-failing');
+    if (!j.enabled) cls.push('is-disabled');
+    const actions = st === 'running'
+      ? `<button type="button" class="wf-icon-btn wf-icon-danger" data-act="cancel" title="Cancel" disabled>⏹</button>`
+      : `<button type="button" class="wf-icon-btn wf-icon-run" data-act="run" title="Run now">▶</button>`;
+    const del = (j.schedule.kind === 'at' && j.schedule.nextRunAt == null)
+      ? `<button type="button" class="wf-icon-btn wf-icon-danger" data-act="delete" title="Delete" disabled>🗑</button>`
+      : '';
+    return `<tr class="${cls.join(' ')}" data-id="${escapeHtml(j.id)}">
+      <td><button type="button" class="wf-toggle${j.enabled ? ' is-on' : ''}" aria-label="toggle" disabled></button></td>
+      <td class="wf-name-cell">${escapeHtml(j.name)}<div class="wf-meta"><span class="wf-agent-tag">${escapeHtml(j.agent)}</span>${escapeHtml(j.target.label)} · ${escapeHtml(j.delivery.mode)}${j.delivery.to ? ' → ' + escapeHtml(j.delivery.to) : ''}</div></td>
+      <td class="wf-schedule-cell">${escapeHtml(j.schedule.human)}<span class="wf-tz">${escapeHtml(j.schedule.tz)}</span><span class="wf-cron-raw">${escapeHtml(j.schedule.raw)}</span></td>
+      <td>${statusPill(j)}<div class="wf-time-sub">${escapeHtml(lastRunSub(j))}</div></td>
+      <td class="wf-time-cell">${escapeHtml(j.schedule.nextRunHuman || '—')}</td>
+      <td><div class="wf-row-actions">
+        ${actions}
+        <button type="button" class="wf-icon-btn" data-act="logs" title="View logs" disabled>📋</button>
+        <button type="button" class="wf-icon-btn" data-act="edit" title="Edit" disabled>✎</button>
+        ${del}
+      </div></td>
+    </tr>`;
+  }
+
+  function renderTable() {
+    if (!tbody) return;
+    const filtered = jobs.filter(jobPassesFilter);
+    tbody.innerHTML = filtered.map(renderRow).join('');
+    if (tableEmpty) tableEmpty.hidden = filtered.length > 0;
+    tbody.querySelectorAll('button[data-act="run"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const tr = btn.closest('tr');
+        const id = tr && tr.dataset.id;
+        if (!id) return;
+        btn.disabled = true;
+        try {
+          const resp = await fetch(`/api/workflows/${encodeURIComponent(id)}/run`, { method: 'POST' });
+          const j = await resp.json().catch(() => ({}));
+          if (!resp.ok || j.error) {
+            if (typeof toast === 'function') toast('Run failed: ' + (j.error || resp.status));
+          } else {
+            if (typeof toast === 'function') toast('Triggered ▶');
+          }
+        } catch (err) {
+          if (typeof toast === 'function') toast('Run failed: ' + err.message);
+        } finally {
+          btn.disabled = false;
+        }
+        // 3s / 6s / 12s poll for status updates
+        setTimeout(() => refresh(true), 3000);
+        setTimeout(() => refresh(true), 6000);
+        setTimeout(() => refresh(true), 12000);
+      });
+    });
+  }
+
+  function renderSidebar() {
+    if (!sidebar) return;
+    if (sidebarCount) {
+      const on = jobs.filter(j => j.enabled).length;
+      sidebarCount.textContent = `${jobs.length} · ${on} on`;
+    }
+    const failing = jobs.filter(j => jobStatus(j) === 'failing');
+    const running = jobs.filter(j => jobStatus(j) === 'running');
+    const others = jobs.filter(j => !failing.includes(j) && !running.includes(j));
+    const chunk = (title, list, extraCls) =>
+      list.length
+        ? `<div class="wf-cl-section">${escapeHtml(title)} · ${list.length}</div>` +
+          list.map(j => {
+            const dot = jobStatus(j);
+            const dotCls = dot === 'failing' ? 'wf-dot-err' : dot === 'running' ? 'wf-dot-warn' : dot === 'off' ? 'wf-dot-off' : 'wf-dot-ok';
+            return `<div class="wf-cl-row${j.id === selectedId ? ' is-active' : ''}" data-id="${escapeHtml(j.id)}"><span class="wf-dot ${dotCls}"></span><span class="wf-name">${escapeHtml(j.name)}</span><span class="wf-badge">${escapeHtml(j.agent)}</span></div>`;
+          }).join('')
+        : '';
+    const html = chunk('Failing today', failing) + chunk('Running now', running) + chunk('All workflows', others);
+    sidebar.innerHTML = html;
+    if (sidebarEmpty) sidebarEmpty.hidden = jobs.length > 0;
+    sidebar.querySelectorAll('.wf-cl-row').forEach(row => {
+      row.addEventListener('click', () => {
+        selectedId = row.dataset.id;
+        sidebar.querySelectorAll('.wf-cl-row').forEach(r => r.classList.toggle('is-active', r === row));
+        query = '';
+        if (searchInput) searchInput.value = '';
+        const job = jobs.find(j => j.id === selectedId);
+        if (job) {
+          filter = `agent:${job.agent}`;
+          renderChips();
+          renderTable();
+          // Scroll matching row into view.
+          const tr = tbody && tbody.querySelector(`tr[data-id="${CSS.escape(selectedId)}"]`);
+          if (tr) tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      });
+    });
+  }
+
+  async function refresh(quiet) {
+    if (inflight) return;
+    if (!quiet && tableLoading && !jobs.length) tableLoading.hidden = false;
+    if (sidebarErr) sidebarErr.hidden = true;
+    inflight = fetch('/api/workflows').then(r => r.json()).then(data => {
+      jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      if (tableLoading) tableLoading.hidden = true;
+      renderChips();
+      renderSidebar();
+      renderTable();
+      computeHealth();
+    }).catch(err => {
+      if (tableLoading) tableLoading.hidden = true;
+      if (sidebarErr) sidebarErr.hidden = false;
+      console.warn('[workflows] load failed', err);
+    }).finally(() => {
+      inflight = null;
+    });
+    return inflight;
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      query = searchInput.value.trim();
+      renderTable();
+    });
+  }
+  if (btnRefresh) btnRefresh.addEventListener('click', () => refresh());
+  if (sidebarRetry) sidebarRetry.addEventListener('click', () => refresh());
+  view.querySelectorAll('.wf-tile').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const f = tile.dataset.filter;
+      if (f === 'failed') filter = 'failed';
+      else if (f === 'ok') filter = 'all';
+      else if (f === 'running') filter = 'all';
+      else if (f === 'upcoming') filter = 'on';
+      view.querySelectorAll('.wf-tile').forEach(t => t.classList.toggle('is-filtered', t === tile));
+      renderChips();
+      renderTable();
+    });
+  });
+
+  function activate() {
+    if (active) return;
+    active = true;
+    refresh();
+    pollTimer = setInterval(() => { if (active && !document.hidden) refresh(true); }, 30000);
+  }
+  function deactivate() {
+    active = false;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  window.__forgeWorkflowsActivate = activate;
+  window.__forgeWorkflowsDeactivate = deactivate;
 })();

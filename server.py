@@ -730,6 +730,14 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
                 self._json(forge_employees.list_employees())
             return
 
+        if path == "/api/workflows":
+            try:
+                import forge_workflows
+                self._json(forge_workflows.list_workflows())
+            except Exception as e:  # noqa: BLE001
+                self._json({"error": str(e), "jobs": []}, 500)
+            return
+
         if path == "/api/config":
             # V1.0.0 §4.3: front-end pulls this at boot to learn the
             # webchat base URL (employee-avatar deep-links). Cheap GET,
@@ -1017,6 +1025,17 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if not self._check_auth():
             self.send_error(401, "auth required for non-local host")
+            return
+
+        # Workflows (issue #115): trigger an immediate cron run.
+        m = re.match(r"^/api/workflows/([A-Za-z0-9._-]+)/run$", url.path)
+        if m:
+            try:
+                import forge_workflows
+                res = forge_workflows.run_now(m.group(1))
+                self._json(res)
+            except Exception as e:  # noqa: BLE001
+                self._json({"error": str(e)}, 500)
             return
 
         # PRD v1.2 follow-up (judy review #2 of PR #53): observable v0.7
