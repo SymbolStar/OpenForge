@@ -335,6 +335,25 @@ def test_http_content_round_trip(server, tmp_path):
     assert headers.get("X-Ref-Source-Agent") == "milk"
 
 
+def test_http_content_cjk_label_does_not_crash(server, tmp_path):
+    # Regression: labels with CJK / non-latin-1 chars used to blow up
+    # BaseHTTPRequestHandler when writing X-Ref-Label, killing the
+    # connection (curl exit 52 / "Empty reply from server").
+    from urllib.parse import quote
+    base = server
+    note = tmp_path / "SWAT-\u4f7f\u7528\u6307\u5357.md"
+    note.write_text("# 你好\n", encoding="utf-8")
+    _, body, _ = _call("POST", f"{base}/api/refs", {
+        "label": note.name, "abs_path": str(note), "source_agent": "milk",
+    })
+    rid = body["id"]
+    status, body, headers = _call("GET", f"{base}/api/refs/{rid}/content")
+    assert status == 200
+    assert "你好" in (body if isinstance(body, str) else body.decode("utf-8"))
+    # Header value must be latin-1-safe; ours is percent-encoded.
+    assert headers.get("X-Ref-Label") == quote(note.name, safe="")
+
+
 def test_http_put_content_non_md_400(server, tmp_path):
     # v1: non-md rejected at validation layer -> 400.
     base = server

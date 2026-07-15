@@ -1001,14 +1001,26 @@ class OpenForgeHandler(BaseHTTPRequestHandler):
             self._json({"error": str(e) or "blocked"}, 403)
             return
         etag = forge_refs._compute_etag(data)
+        # Non-ASCII (CJK) header values crash http.server on send; percent-
+        # encode label + source_agent so the response actually reaches the
+        # client. Without this, python's BaseHTTPRequestHandler raises
+        # UnicodeEncodeError writing headers and drops the connection
+        # (curl exit 52 / "Empty reply from server").
+        def _ascii(v: str) -> str:
+            from urllib.parse import quote
+            try:
+                v.encode("latin-1")
+                return v
+            except UnicodeEncodeError:
+                return quote(v, safe="")
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("ETag", etag)
         self.send_header("X-Ref-Etag", etag)
-        self.send_header("X-Ref-Label", ref.get("label", ""))
-        self.send_header("X-Ref-Source-Agent", ref.get("source_agent", ""))
+        self.send_header("X-Ref-Label", _ascii(ref.get("label", "")))
+        self.send_header("X-Ref-Source-Agent", _ascii(ref.get("source_agent", "")))
         self.send_header("X-Ref-Id", ref.get("id", ""))
         self.end_headers()
         self.wfile.write(data)
